@@ -5,19 +5,19 @@ Vybes is a DSP, designed for flexibility and multiple presets for room correctio
 ## Internals
 At the core of the device is a Teensy 4.0 with a 600MHz processor. The Teensy is responsible for all the digital audio manipulations, including delays and parametric EQ.
 
-An ESP8266 is responsible for connecting to WIFI, serving a web UI and API, and managing Teensy state.
+An ESP8266 NodeMCU development board is responsible for connecting to WIFI, serving a web UI and API, and managing Teensy state. The ESP8266 flash memory will be used to remember preset configurations and for serving up assets for the web UI.
 
-An SPDIF Toslink optical input allows for direct digital audio into the Teensy without losing audio quality converting from analogue.
+An SPDIF Toslink optical input with digital I2S output allows for direct digital audio into the Teensy without losing audio quality converting from analogue.
 
-Output consists of four RCAs connected to two PCM5102A DAC boards. Two will be used for L & R channels, and one will be used as a subwoofer output. The fourth will not be used at this point.
+Output consists of four RCAs connected to two PCM5102A DAC boards. Two will be used for L & R channels, and one will be used as a subwoofer output. The fourth will be connected, but not used at this point. It could be used for a second subwoofer st some point in the future.
 
 To ensure a smooth power supply, a linear regulator will take a 5V input from a standard power supply via USB-C and output a stable 3.3V that can be used by the DACs.
 
-An internal microphone connected to the Teensy can detect room volume levels so that EQ can be adjusted dynamically.
+An internal microphone (ICS-43434 with digital I2S output) connected to the Teensy can detect room volume levels so that EQ can be adjusted dynamically.
 
-A 1602A backlit LCD screen will show the current preset name.
+A 1602A backlit LCD screen will show the current preset name. The backlight turns on when the preset changes, and turns off after 5 seconds of inactivity.
 
-A button on the front will allow changing between presets and if held for more than 5 seconds, will put the device into config portal state so it can be connected to and authentication details provided for the local network.
+A button on the front will allow changing between presets and if held for more than 5 seconds, will put the device into config portal state so it can be connected to by an iPhone and authentication details provided for the local network. The ESP8266 will then register itself on the network using MDSN so that it can be accessed on http://vybes.local. (see https://github.com/tzapu/WiFiManager)
 
 ## Data Structure for presets
 * Preset name
