@@ -117,12 +117,12 @@ graph TD
     %% ESP8266 Peripheral Connections
     ESP_D1_SCL --> LCD
     ESP_D2_SDA --> LCD
-    ESP_3V3 --> LCD_VCC[VCC]:::hidden_link
-    ESP_GND --> LCD_GND[GND]:::hidden_link
+    ESP_3V3 --> LCD_VCC[VCC]
+    ESP_GND --> LCD_GND[GND]
     LCD --- LCD_VCC
     LCD --- LCD_GND
 
-    ESP_3V3 --> BTN_VCC_TERM[Button Terminal 1]:::hidden_link
+    ESP_3V3 --> BTN_VCC_TERM[Button Terminal 1]
     BTN_VCC_TERM --- BTN
     BTN --> ESP_D6_BTN
     ESP_D6_BTN --- BTN_R_PULLDOWN
@@ -133,15 +133,15 @@ graph TD
     %% I2C DACs
     TEENSY_P18_SDA --> DAC1
     TEENSY_P19_SCL --> DAC1
-    TEENSY_3V3 --> DAC1_VCC[VCC]:::hidden_link
-    TEENSY_GND --> DAC1_GND[GND]:::hidden_link
+    TEENSY_3V3 --> DAC1_VCC[VCC]
+    TEENSY_GND --> DAC1_GND[GND]
     DAC1 --- DAC1_VCC
     DAC1 --- DAC1_GND
 
     TEENSY_P18_SDA --> DAC2
     TEENSY_P19_SCL --> DAC2
-    TEENSY_3V3 --> DAC2_VCC[VCC]:::hidden_link
-    TEENSY_GND --> DAC2_GND[GND]:::hidden_link
+    TEENSY_3V3 --> DAC2_VCC[VCC]
+    TEENSY_GND --> DAC2_GND[GND]
     DAC2 --- DAC2_VCC
     DAC2 --- DAC2_GND
 
@@ -151,34 +151,34 @@ graph TD
     I2C_PULLUP_SCL --> TEENSY_3V3
 
     %% I2S Microphone
-    TEENSY_P8_I2S_DIN <-- MIC_DOUT[DOUT]:::hidden_link
+    TEENSY_P8_I2S_DIN <-- MIC_DOUT[DOUT]
     MIC --- MIC_DOUT
-    TEENSY_P20_I2S_LRCLK --> MIC_LRCLK[LRCLK]:::hidden_link
+    TEENSY_P20_I2S_LRCLK --> MIC_LRCLK[LRCLK]
     MIC --- MIC_LRCLK
-    TEENSY_P21_I2S_BCLK --> MIC_BCLK[BCLK]:::hidden_link
+    TEENSY_P21_I2S_BCLK --> MIC_BCLK[BCLK]
     MIC --- MIC_BCLK
     %% Optional MCLK for Microphone
-    TEENSY_P11_I2S_MCLK --> MIC_MCLK[MCLK]:::hidden_link
+    TEENSY_P11_I2S_MCLK --> MIC_MCLK[MCLK]
     MIC --- MIC_MCLK
-    TEENSY_3V3 --> MIC_VCC[VCC]:::hidden_link
-    TEENSY_GND --> MIC_GND[GND]:::hidden_link
+    TEENSY_3V3 --> MIC_VCC[VCC]
+    TEENSY_GND --> MIC_GND[GND]
     MIC --- MIC_VCC
     MIC --- MIC_GND
 
     %% SPDIF Input
     OPTICAL_IN --> SPDIF_CONVERTER
-    SPDIF_CONVERTER_VCC[VCC]:::hidden_link --- SPDIF_CONVERTER
-    SPDIF_CONVERTER_GND[GND]:::hidden_link --- SPDIF_CONVERTER
+    SPDIF_CONVERTER_VCC[VCC] --- SPDIF_CONVERTER
+    SPDIF_CONVERTER_GND[GND] --- SPDIF_CONVERTER
     %% Or 5V, check module for SPDIF Converter
     TEENSY_3V3 --> SPDIF_CONVERTER_VCC
     TEENSY_GND --> SPDIF_CONVERTER_GND
 
-    SPDIF_CONVERTER_DOUT[I2S OUT]:::hidden_link --- SPDIF_CONVERTER
+    SPDIF_CONVERTER_DOUT[I2S OUT] --- SPDIF_CONVERTER
     SPDIF_CONVERTER_DOUT --> TEENSY_P7_SPDIF_DIN
-    SPDIF_CONVERTER_BCLK[I2S BCLK]:::hidden_link --- SPDIF_CONVERTER
+    SPDIF_CONVERTER_BCLK[I2S BCLK] --- SPDIF_CONVERTER
     %% Assuming shared BCLK with Mic or separate I2S port handling for SPDIF
     SPDIF_CONVERTER_BCLK --> TEENSY_P21_I2S_BCLK
-    SPDIF_CONVERTER_LRCLK[I2S LRCLK]:::hidden_link --- SPDIF_CONVERTER
+    SPDIF_CONVERTER_LRCLK[I2S LRCLK] --- SPDIF_CONVERTER
     %% Assuming shared LRCLK with Mic or separate I2S port handling for SPDIF
     SPDIF_CONVERTER_LRCLK --> TEENSY_P20_I2S_LRCLK
 
