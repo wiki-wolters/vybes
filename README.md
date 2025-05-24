@@ -25,26 +25,62 @@ The system consists of three main components:
 - **Teensy Microcontroller**: Responsible for real-time audio processing. It receives EQ parameters from the ESP8266, applies them to the audio signal, and can send processed data or status back.
 - **Web User Interface (WebUI)**: A Vue 3 single-page application running in the user's browser. It provides controls for the parametric EQ, sending user adjustments to the ESP8266, which then relays them to the Teensy. The UI is designed to be lightweight to be served from the ESP8266.
 
+## Hardware Wiring Diagram
+This section describes the physical wiring between the ESP8266 and the Teensy microcontroller.
+
+**Power Connections:**
+- **ESP8266 VIN** to **Teensy VIN/VUSB**: Provides power to the Teensy from the ESP8266's regulated output if available, or share a common 5V source. Ensure voltage compatibility.
+- **ESP8266 GND** to **Teensy GND**: Essential common ground connection.
+
+**Serial Communication (Logic Level 3.3V):**
+- **ESP8266 TX (GPIO1 or D1 on Wemos D1 Mini)** to **Teensy RX (e.g., Pin 0 on Teensy 4.x - Serial1 RX1)**: Transmits data from ESP8266 to Teensy.
+- **ESP8266 RX (GPIO3 or D2 on Wemos D1 Mini)** to **Teensy TX (e.g., Pin 1 on Teensy 4.x - Serial1 TX1)**: Transmits data from Teensy to ESP8266.
+
+*Important Notes:*
+- *Logic Levels*: Both ESP8266 and most Teensy boards operate at 3.3V logic levels. Direct connection for serial communication is usually fine. Verify for your specific Teensy model.
+- *Serial Port*: The pins mentioned for ESP8266 (GPIO1, GPIO3) are typically used for `Serial`. For Teensy, `Serial1` (Pins 0 and 1) is a common choice for communication with other devices. Adjust pins if using different serial ports.
+- *Alternative Power*: If the ESP8266 cannot provide sufficient power, power the Teensy separately via its USB port or VIN pin, but ensure a common ground is always maintained.
+
 ```mermaid
 graph TD
-    UserInterface["Web UI (Vue 3 on User's Browser)"] -- HTTP/WebSocket --> ESP8266["ESP8266 (Wi-Fi Hub, Web Server)"]
-    ESP8266 -- Serial --> Teensy["Teensy (Audio Processing, Parametric EQ)"]
-    UserInterface -.-> ESP8266_Flash["ESP8266 Flash (Stores Web UI)"]
-
-    subgraph "User Device"
-        UserInterface
+    subgraph "Power Source (e.g., USB or 5V Regulator)"
+        P5V["+5V"]
+        PGND["GND"]
     end
 
-    subgraph "Hardware"
-        ESP8266
-        Teensy
-        ESP8266_Flash
+    subgraph "ESP8266 (e.g., Wemos D1 Mini / NodeMCU)"
+        ESP_VIN["VIN (5V In)"]
+        ESP_GND["GND"]
+        ESP_TX["TX (GPIO1 / D1)"]
+        ESP_RX["RX (GPIO3 / D2)"]
+        ESP_3V3["3.3V Out"]
     end
 
-    style UserInterface fill:#D6EAF8,stroke:#333,stroke-width:2px
-    style ESP8266 fill:#D5F5E3,stroke:#333,stroke-width:2px
-    style Teensy fill:#FCF3CF,stroke:#333,stroke-width:2px
-    style ESP8266_Flash fill:#FADBD8,stroke:#333,stroke-width:2px
+    subgraph "Teensy (e.g., Teensy 4.x)"
+        TEENSY_VIN["VIN / VUSB (5V In)"]
+        TEENSY_GND["GND"]
+        TEENSY_RX1["RX1 (Pin 0)"]
+        TEENSY_TX1["TX1 (Pin 1)"]
+        TEENSY_3V3["3.3V"]
+    end
+
+    P5V --> ESP_VIN
+    PGND --> ESP_GND
+
+    P5V --> TEENSY_VIN
+    PGND --> TEENSY_GND
+    %% Alternatively, if ESP provides power:
+    %% ESP_3V3 --> TEENSY_VIN (If Teensy runs on 3.3V and ESP can supply enough current)
+    %% Note: Most Teensy boards take 5V on VIN/VUSB and have an onboard regulator for 3.3V
+
+    ESP_GND --- TEENSY_GND
+    ESP_TX --> TEENSY_RX1
+    TEENSY_TX1 --> ESP_RX
+
+    classDef mcu fill:#f9f,stroke:#333,stroke-width:2px;
+    class ESP8266,Teensy mcu;
+    classDef power fill:#lightgrey,stroke:#333;
+    class P5V,PGND power;
 ```
 
 ## Data Structure for presets
