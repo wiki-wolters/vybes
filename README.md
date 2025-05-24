@@ -176,9 +176,11 @@ graph TD
     SPDIF_CONVERTER_DOUT[I2S OUT]:::hidden_link --- SPDIF_CONVERTER
     SPDIF_CONVERTER_DOUT --> TEENSY_P7_SPDIF_DIN
     SPDIF_CONVERTER_BCLK[I2S BCLK]:::hidden_link --- SPDIF_CONVERTER
-    SPDIF_CONVERTER_BCLK --> TEENSY_P21_I2S_BCLK %% Assuming shared BCLK with Mic or separate I2S port handling
+    %% Assuming shared BCLK with Mic or separate I2S port handling for SPDIF
+    SPDIF_CONVERTER_BCLK --> TEENSY_P21_I2S_BCLK
     SPDIF_CONVERTER_LRCLK[I2S LRCLK]:::hidden_link --- SPDIF_CONVERTER
-    SPDIF_CONVERTER_LRCLK --> TEENSY_P20_I2S_LRCLK %% Assuming shared LRCLK with Mic or separate I2S port handling
+    %% Assuming shared LRCLK with Mic or separate I2S port handling for SPDIF
+    SPDIF_CONVERTER_LRCLK --> TEENSY_P20_I2S_LRCLK
 
     %% Styling
     classDef mcu fill:#f9f,stroke:#333,stroke-width:2px;
