@@ -192,9 +192,7 @@ graph TD
     classDef power fill:#orange,stroke:#333;
     class P5V,PGND power;
 
-    linkStyle default stroke-width:1px;
-    %% Hidden links for layout
-    linkStyle hidden_link stroke-width:0px, interpolate:linear;
+    linkStyle default stroke-width:1px
 ```
 
 ### Teensy Peripheral Connections (Example: Teensy 4.0/4.1)
