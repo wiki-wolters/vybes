@@ -19,6 +19,34 @@ A 1602A backlit LCD screen will show the current preset name. The backlight turn
 
 A button on the front will allow changing between presets and if held for more than 5 seconds, will put the device into config portal state so it can be connected to by an iPhone and authentication details provided for the local network. The ESP8266 will then register itself on the network using MDSN so that it can be accessed on http://vybes.local. (see https://github.com/tzapu/WiFiManager)
 
+## System Architecture
+The system consists of three main components:
+- **ESP8266 Microcontroller**: Acts as the central hub. It hosts the web interface, communicates with the Teensy to send control parameters and receive data, and serves the Web UI to the user's browser.
+- **Teensy Microcontroller**: Responsible for real-time audio processing. It receives EQ parameters from the ESP8266, applies them to the audio signal, and can send processed data or status back.
+- **Web User Interface (WebUI)**: A Vue 3 single-page application running in the user's browser. It provides controls for the parametric EQ, sending user adjustments to the ESP8266, which then relays them to the Teensy. The UI is designed to be lightweight to be served from the ESP8266.
+
+```mermaid
+graph TD
+    UserInterface["Web UI (Vue 3 on User's Browser)"] -- HTTP/WebSocket --> ESP8266["ESP8266 (Wi-Fi Hub, Web Server)"]
+    ESP8266 -- Serial --> Teensy["Teensy (Audio Processing, Parametric EQ)"]
+    UserInterface -.-> ESP8266_Flash["ESP8266 Flash (Stores Web UI)"]
+
+    subgraph "User Device"
+        UserInterface
+    end
+
+    subgraph "Hardware"
+        ESP8266
+        Teensy
+        ESP8266_Flash
+    end
+
+    style UserInterface fill:#D6EAF8,stroke:#333,stroke-width:2px
+    style ESP8266 fill:#D5F5E3,stroke:#333,stroke-width:2px
+    style Teensy fill:#FCF3CF,stroke:#333,stroke-width:2px
+    style ESP8266_Flash fill:#FADBD8,stroke:#333,stroke-width:2px
+```
+
 ## Data Structure for presets
 * Preset name
 * Speaker delays
@@ -138,4 +166,3 @@ This page is for editing the properties of an individual preset.
 * SOCKET /live-updates
   * Messages to be received are JSON format with the following properties:
     * event: "rta", "preset", "eq"
-   
