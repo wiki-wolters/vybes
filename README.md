@@ -157,7 +157,8 @@ graph TD
     MIC --- MIC_LRCLK
     TEENSY_P21_I2S_BCLK --> MIC_BCLK[BCLK]:::hidden_link
     MIC --- MIC_BCLK
-    TEENSY_P11_I2S_MCLK --> MIC_MCLK[MCLK]:::hidden_link %% Optional MCLK
+    %% Optional MCLK for Microphone
+    TEENSY_P11_I2S_MCLK --> MIC_MCLK[MCLK]:::hidden_link
     MIC --- MIC_MCLK
     TEENSY_3V3 --> MIC_VCC[VCC]:::hidden_link
     TEENSY_GND --> MIC_GND[GND]:::hidden_link
