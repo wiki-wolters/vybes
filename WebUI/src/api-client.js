@@ -34,7 +34,7 @@ class VybesAPI {
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-
+        
         // Handle empty responses
         const text = await response.text();
         return text ? JSON.parse(text) : {};
@@ -43,9 +43,9 @@ class VybesAPI {
         throw error;
       }
     }
-
+  
     // ===== CALIBRATION =====
-
+    
     /**
      * Set calibration SPL value
      * @param {number} spl - SPL value (40-120)
@@ -56,9 +56,9 @@ class VybesAPI {
       }
       return this.request('PUT', `/calibrate/${spl}`);
     }
-
+  
     // ===== SYSTEM CONTROLS =====
-
+  
     /**
      * Turn subwoofer on/off
      * @param {boolean} state - true for on, false for off
@@ -96,7 +96,7 @@ class VybesAPI {
       }
       return this.request('PUT', `/mute/percent/${percent}`);
     }
-
+  
     // ===== TONE GENERATION =====
 
     /**
@@ -131,9 +131,9 @@ class VybesAPI {
     async playPulse() {
       return this.request('PUT', '/pulse');
     }
-
+  
     // ===== PRESET MANAGEMENT =====
-
+  
     /**
      * Get all presets
      * @returns {Promise<Array>} Array of preset objects with name and isCurrent
@@ -228,7 +228,7 @@ class VybesAPI {
           throw new Error(`PEQ point ${index} must have frequency, gain, and q properties`);
         }
       });
-
+  
       return this.request('POST', `/preset/${encodeURIComponent(presetName)}/eq/${type}/${spl}`, peqSet);
     }
 
@@ -245,9 +245,9 @@ class VybesAPI {
       }
       return this.request('DELETE', `/preset/${encodeURIComponent(presetName)}/eq/${type}/${spl}`);
     }
-
+  
     // ===== CROSSOVER =====
-
+  
     /**
      * Set crossover configuration
      * @param {string} presetName - Preset name
@@ -264,9 +264,9 @@ class VybesAPI {
       }
       return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/crossover/${frequency}/${slope}`);
     }
-
+  
     // ===== EQUAL LOUDNESS =====
-
+  
     /**
      * Set equal loudness compensation
      * @param {string} presetName - Preset name
@@ -276,9 +276,9 @@ class VybesAPI {
       const stateStr = state ? 'on' : 'off';
       return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/equal-loudness/${stateStr}`);
     }
-
+  
     // ===== WEBSOCKET LIVE UPDATES =====
-
+  
     /**
      * Connect to live updates WebSocket
      * @param {Function} onMessage - Callback for incoming messages
@@ -289,7 +289,7 @@ class VybesAPI {
       if (this.socket) {
         this.socket.close();
       }
-
+  
       const wsUrl = this.baseUrl.replace('http://', 'ws://').replace('https://', 'wss://');
       this.socket = new WebSocket(`${wsUrl}/live-updates`);
 
@@ -316,7 +316,6 @@ class VybesAPI {
       this.socket.onopen = () => {
         console.log('WebSocket connection established');
       };
-    }
 
     /**
      * Disconnect from live updates WebSocket
@@ -327,9 +326,9 @@ class VybesAPI {
         this.socket = null;
       }
     }
-
+  
     // ===== UTILITY METHODS =====
-
+  
     /**
      * Check if the API is reachable
      * @returns {Promise<boolean>} True if API is reachable
@@ -363,3 +362,30 @@ class VybesAPI {
   } else if (typeof window !== 'undefined') {
     window.VybesAPI = VybesAPI;
   }
+  
+  // Usage example:
+  /*
+  const vybes = new VybesAPI('http://vybes.local');
+  
+  // Basic usage
+  await vybes.calibrate(85);
+  await vybes.setSubwoofer(true);
+  await vybes.generateTone(1000, 50);
+  
+  // Preset management
+  const presets = await vybes.getPresets();
+  await vybes.createPreset('My New Preset');
+  await vybes.setSpeakerDelay('left', 2.5);
+  
+  // EQ configuration
+  const peqPoints = [
+    { frequency: 100, gain: 2.5, q: 1.2 },
+    { frequency: 1000, gain: -1.0, q: 0.8 }
+  ];
+  await vybes.setEQ('My Preset', 'room', 85, peqPoints);
+  
+  // Live updates
+  vybes.connectLiveUpdates((data) => {
+    console.log('Live update:', data.event, data);
+  });
+  */

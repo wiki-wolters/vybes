@@ -242,12 +242,10 @@ const gainGridLines = computed(() => {
 const curvePath = computed(() => {
   const points = []
   const steps = 200
-
   for (let i = 0; i <= steps; i++) {
     const x = (i / steps) * width
     const freq = xToFrequency(x)
     let totalGain = 0
-
     // Calculate combined response from all EQ points
     eqPoints.forEach(point => {
       const gain = calculateBellFilter(freq, point.frequency, point.gain, point.q)
@@ -681,4 +679,5 @@ onUnmounted(() => {
   outline: none;
   border-color: #0088ff;
 }
+
 </style>
