@@ -5,7 +5,19 @@ export default {
     "./src/**/*.{vue,js,ts,jsx,tsx}",
   ],
   theme: {
-    extend: {},
+    extend: {
+      colors: {
+        'vybes-blue': '#0088ff',
+        'vybes-dark-bg': '#1a1a1a',
+        'vybes-dark-card': '#0f0f0f',
+        'vybes-dark-element': '#222222',
+        'vybes-text-primary': '#ffffff',
+        'vybes-text-secondary': '#cccccc',
+      },
+      fontFamily: {
+        sans: ['Segoe UI', 'system-ui', 'sans-serif'],
+      }
+    },
   },
   plugins: [],
 }

@@ -2,36 +2,24 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
+body {
+  @apply bg-vybes-dark-bg text-vybes-text-primary;
+  font-family: 'Segoe UI', system-ui, sans-serif; /* Matches tailwind.config.js */
+  min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Removed display: flex, place-items: center, min-width: 320px from original body */
+  /* The original #app styling for centering might need to be re-applied on the #app element directly if desired */
 }
 
+/* Keeping these for now, but they might be refactored later with Tailwind utility classes */
 a {
   font-weight: 500;
-  color: #646cff;
+  @apply text-vybes-blue; /* Example of using a custom color */
   text-decoration: inherit;
 }
 a:hover {
-  color: #535bf2;
-}
-
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+  @apply text-blue-400; /* Example: a slightly lighter blue on hover */
 }
 
 h1 {
@@ -46,38 +34,26 @@ button {
   font-size: 1em;
   font-weight: 500;
   font-family: inherit;
-  background-color: #1a1a1a;
+  @apply bg-vybes-dark-element text-vybes-text-primary; /* Using custom colors */
   cursor: pointer;
   transition: border-color 0.25s;
 }
 button:hover {
-  border-color: #646cff;
+  @apply border-vybes-blue; /* Using custom color for border */
 }
 button:focus,
 button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+  outline: 4px auto -webkit-focus-ring-color; /* Standard focus outline */
 }
 
-.card {
-  padding: 2em;
-}
-
+/* Styles for #app might be needed if it's the main container for layout */
 #app {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+  /* max-width: 1280px; */ /* This was in the original, might be useful */
+  /* margin: 0 auto; */ /* This was in the original for centering */
+  /* padding: 2rem; */ /* This was in the original */
+  /* text-align: center; */ /* This was in the original */
+  /* These properties might be better on App.vue's root element */
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
-}
+/* Removed :root and @media (prefers-color-scheme: light) as we are setting a default dark theme. */
+/* Removed .card as it was a generic class, specific card styling should be component-based or using utilities. */

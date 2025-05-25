@@ -7,7 +7,7 @@ class VybesAPI {
       this.baseUrl = baseUrl;
       this.socket = null;
     }
-  
+
     /**
      * Make HTTP request with error handling
      * @param {string} method - HTTP method
@@ -23,18 +23,18 @@ class VybesAPI {
           'Content-Type': 'application/json',
         },
       };
-  
+
       if (body && (method === 'POST' || method === 'PUT')) {
         config.body = JSON.stringify(body);
       }
-  
+
       try {
         const response = await fetch(url, config);
-        
+
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-  
+        
         // Handle empty responses
         const text = await response.text();
         return text ? JSON.parse(text) : {};
@@ -67,7 +67,7 @@ class VybesAPI {
       const stateStr = state ? 'on' : 'off';
       return this.request('PUT', `/sub/${stateStr}`);
     }
-  
+
     /**
      * Bypass DSP on/off
      * @param {boolean} state - true for on, false for off
@@ -76,7 +76,7 @@ class VybesAPI {
       const stateStr = state ? 'on' : 'off';
       return this.request('PUT', `/bypass/${stateStr}`);
     }
-  
+
     /**
      * Mute on/off
      * @param {boolean} state - true for on, false for off
@@ -85,7 +85,7 @@ class VybesAPI {
       const stateStr = state ? 'on' : 'off';
       return this.request('PUT', `/mute/${stateStr}`);
     }
-  
+
     /**
      * Set mute percentage
      * @param {number} percent - Mute percentage (1-100)
@@ -98,7 +98,7 @@ class VybesAPI {
     }
   
     // ===== TONE GENERATION =====
-  
+
     /**
      * Generate tone
      * @param {number} frequency - Frequency (10-20000 Hz)
@@ -113,7 +113,7 @@ class VybesAPI {
       }
       return this.request('PUT', `/generate/tone/${frequency}/${volume}`);
     }
-  
+
     /**
      * Generate pink noise
      * @param {number} volume - Volume (0-100, 0 turns off)
@@ -124,7 +124,7 @@ class VybesAPI {
       }
       return this.request('PUT', `/generate/noise/${volume}`);
     }
-  
+
     /**
      * Play test pulse (100hz for 200ms on each output)
      */
@@ -141,7 +141,7 @@ class VybesAPI {
     async getPresets() {
       return this.request('GET', '/presets');
     }
-  
+
     /**
      * Get specific preset data
      * @param {string} name - Preset name
@@ -150,7 +150,7 @@ class VybesAPI {
     async getPreset(name) {
       return this.request('GET', `/preset/${encodeURIComponent(name)}`);
     }
-  
+
     /**
      * Create new preset
      * @param {string} name - Preset name (must be unique)
@@ -158,7 +158,7 @@ class VybesAPI {
     async createPreset(name) {
       return this.request('POST', `/preset/create/${encodeURIComponent(name)}`);
     }
-  
+
     /**
      * Copy existing preset
      * @param {string} sourceName - Source preset name
@@ -167,7 +167,7 @@ class VybesAPI {
     async copyPreset(sourceName, newName) {
       return this.request('POST', `/preset/copy/${encodeURIComponent(sourceName)}/${encodeURIComponent(newName)}`);
     }
-  
+
     /**
      * Rename preset
      * @param {string} oldName - Current preset name
@@ -176,7 +176,7 @@ class VybesAPI {
     async renamePreset(oldName, newName) {
       return this.request('PUT', `/preset/rename/${encodeURIComponent(oldName)}/${encodeURIComponent(newName)}`);
     }
-  
+
     /**
      * Delete preset
      * @param {string} name - Preset name
@@ -184,9 +184,9 @@ class VybesAPI {
     async deletePreset(name) {
       return this.request('DELETE', `/preset/${encodeURIComponent(name)}`);
     }
-  
+
     // ===== SPEAKER DELAYS =====
-  
+
     /**
      * Set speaker delay
      * @param {string} speaker - Speaker type: "left", "right", or "sub"
@@ -199,9 +199,9 @@ class VybesAPI {
       }
       return this.request('PUT', `/preset/delay/${speaker}/${delayMs}`);
     }
-  
+
     // ===== EQ MANAGEMENT =====
-  
+
     /**
      * Set EQ configuration for a preset
      * @param {string} presetName - Preset name
@@ -217,12 +217,12 @@ class VybesAPI {
       if (spl < 0 || spl > 120) {
         throw new Error('SPL must be between 0 and 120');
       }
-      
+
       // Validate PEQ set structure
       if (!Array.isArray(peqSet)) {
         throw new Error('PEQ set must be an array');
       }
-      
+
       peqSet.forEach((point, index) => {
         if (!point.frequency || !point.gain || !point.q) {
           throw new Error(`PEQ point ${index} must have frequency, gain, and q properties`);
@@ -231,7 +231,7 @@ class VybesAPI {
   
       return this.request('POST', `/preset/${encodeURIComponent(presetName)}/eq/${type}/${spl}`, peqSet);
     }
-  
+
     /**
      * Delete EQ configuration
      * @param {string} presetName - Preset name
@@ -292,7 +292,7 @@ class VybesAPI {
   
       const wsUrl = this.baseUrl.replace('http://', 'ws://').replace('https://', 'wss://');
       this.socket = new WebSocket(`${wsUrl}/live-updates`);
-  
+
       this.socket.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
@@ -302,22 +302,21 @@ class VybesAPI {
           if (onError) onError(error);
         }
       };
-  
+
       this.socket.onerror = (error) => {
         console.error('WebSocket error:', error);
         if (onError) onError(error);
       };
-  
+
       this.socket.onclose = (event) => {
         console.log('WebSocket connection closed:', event);
         if (onClose) onClose(event);
       };
-  
+
       this.socket.onopen = () => {
         console.log('WebSocket connection established');
       };
-    }
-  
+
     /**
      * Disconnect from live updates WebSocket
      */
@@ -342,7 +341,7 @@ class VybesAPI {
         return false;
       }
     }
-  
+
     /**
      * Get the current active preset
      * @returns {Promise<Object|null>} Current preset or null if none active
@@ -356,7 +355,7 @@ class VybesAPI {
       return null;
     }
   }
-  
+
   // Export for use in Node.js or browser
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = VybesAPI;
