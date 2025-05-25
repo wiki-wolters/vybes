@@ -13,7 +13,7 @@
         :step="step"
         :value="modelValue"
         @input="$emit('update:modelValue', parseFloat($event.target.value))"
-        class="flex-1 h-2 bg-vybes-dark-element rounded-lg appearance-none cursor-pointer
+        class="flex-1 h-2 bg-vybes-dark-input rounded-lg appearance-none cursor-pointer
                focus:outline-none focus:ring-2 focus:ring-vybes-blue/50
                [&::-webkit-slider-thumb]:appearance-none
                [&::-webkit-slider-thumb]:w-4
@@ -35,7 +35,7 @@
         :step="step"
         :value="modelValue"
         @input="$emit('update:modelValue', parseFloat($event.target.value))"
-        class="w-20 p-1 text-sm bg-vybes-dark-element border border-vybes-dark-card rounded-md text-vybes-text-primary text-center focus:outline-none focus:ring-1 focus:ring-vybes-blue focus:border-vybes-blue flex-shrink-0"
+        class="w-20 p-1 text-sm bg-vybes-dark-input border border-vybes-dark-card rounded-md text-vybes-text-primary text-center focus:outline-none focus:ring-1 focus:ring-vybes-blue focus:border-vybes-blue flex-none"
       />
     </div>
   </div>
