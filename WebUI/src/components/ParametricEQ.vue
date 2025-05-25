@@ -78,7 +78,7 @@
 
       <!-- EQ Points -->
       <div
-        v-for="(point, index) in eqPoints"
+        v-for="(point, index) in localEqPoints"
         :key="point.id"
         class="eq-point"
         :class="{ active: selectedPoint === index }"
@@ -110,7 +110,7 @@
     <!-- Point Selection Row -->
     <div class="point-selection">
       <button
-        v-for="(point, index) in eqPoints"
+        v-for="(point, index) in localEqPoints"
         :key="`select-${point.id}`"
         class="point-btn"
         :class="{ active: selectedPoint === index }"
@@ -121,7 +121,7 @@
     </div>
 
     <!-- Controls -->
-    <div class="eq-controls" v-if="selectedPoint !== null">
+    <div class="eq-controls" v-if="selectedPoint !== null && localEqPoints[selectedPoint]">
       <h4>EQ Point {{ selectedPoint + 1 }}</h4>
       <div class="control-group">
         <range-slider
@@ -131,7 +131,8 @@
           :step="1"
           unit="Hz"
           :decimals="0"
-          v-model="eqPoints[selectedPoint].frequency"
+          v-model="localEqPoints[selectedPoint].frequency"
+          @update:modelValue="emitChange"
         />
       </div>
       <div class="control-group">
@@ -142,7 +143,8 @@
           :step="0.1"
           unit="dB"
           :decimals="1"
-          v-model="eqPoints[selectedPoint].gain"
+          v-model="localEqPoints[selectedPoint].gain"
+          @update:modelValue="emitChange"
         />
       </div>
       <div class="control-group">
@@ -153,7 +155,8 @@
           :step="0.1"
           unit=""
           :decimals="1"
-          v-model="eqPoints[selectedPoint].q"
+          v-model="localEqPoints[selectedPoint].q"
+          @update:modelValue="emitChange"
         />
       </div>
     </div>
@@ -161,24 +164,50 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, defineProps, watch } from 'vue'; // Added watch
-import RangeSlider from '../shared/RangeSlider.vue';
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
+import RangeSlider from './shared/RangeSlider.vue';
 
 const props = defineProps({
-  apiClient: {
-    type: Object,
-    required: true
+  peqPoints: {
+    type: Array,
+    default: () => [
+      { id: 1, frequency: 100, gain: 0, q: 1 },
+      { id: 2, frequency: 1000, gain: 0, q: 1 },
+      { id: 3, frequency: 10000, gain: 0, q: 1 }
+    ]
   }
 });
 
+const emit = defineEmits(['change']);
+
 // Component dimensions
-const width = 800
-const height = 400
+const width = 800;
+const height = 400;
 
-// EQ state - This will be populated by onMounted from API data
-const eqPoints = reactive([])
+// Local copy of EQ points
+const localEqPoints = reactive([]);
+let nextId = 1;
 
-const selectedPoint = ref(null) // Initialize to null, set after points are loaded
+// Initialize local points from props
+const initializePoints = () => {
+  localEqPoints.splice(0, localEqPoints.length);
+  props.peqPoints.forEach(point => {
+    localEqPoints.push({ ...point });
+    if (point.id >= nextId) {
+      nextId = point.id + 1;
+    }
+  });
+  
+  // Ensure we have at least one point
+  if (localEqPoints.length === 0) {
+    localEqPoints.push({ id: nextId++, frequency: 1000, gain: 0, q: 1 });
+  }
+};
+
+// Watch for prop changes
+watch(() => props.peqPoints, initializePoints, { immediate: true, deep: true });
+
+const selectedPoint = ref(0);
 const dragState = reactive({
   isDragging: false,
   pointIndex: null,
@@ -186,282 +215,191 @@ const dragState = reactive({
   startY: 0,
   startFreq: 0,
   startGain: 0
-})
+});
 
-let nextId = 4
+// Debounced emit function
+let emitTimeout = null;
+const emitChange = () => {
+  if (emitTimeout) {
+    clearTimeout(emitTimeout);
+  }
+  
+  emitTimeout = setTimeout(() => {
+    // Create a clean copy of the points for emission
+    const pointsToEmit = localEqPoints.map(point => ({
+      id: point.id,
+      frequency: point.frequency,
+      gain: point.gain,
+      q: point.q
+    }));
+    emit('change', pointsToEmit);
+  }, 100);
+};
 
 // Frequency conversion (logarithmic scale)
 const frequencyToX = (freq) => {
-  const minFreq = Math.log10(20)
-  const maxFreq = Math.log10(20000)
-  const logFreq = Math.log10(freq)
-  return ((logFreq - minFreq) / (maxFreq - minFreq)) * width
-}
+  const minFreq = Math.log10(20);
+  const maxFreq = Math.log10(20000);
+  const logFreq = Math.log10(freq);
+  return ((logFreq - minFreq) / (maxFreq - minFreq)) * width;
+};
 
 const xToFrequency = (x) => {
-  const minFreq = Math.log10(20)
-  const maxFreq = Math.log10(20000)
-  const ratio = x / width
-  return Math.pow(10, minFreq + ratio * (maxFreq - minFreq))
-}
+  const minFreq = Math.log10(20);
+  const maxFreq = Math.log10(20000);
+  const ratio = x / width;
+  return Math.pow(10, minFreq + ratio * (maxFreq - minFreq));
+};
 
 // Gain conversion (linear scale)
 const gainToY = (gain) => {
-  const maxGain = 15
-  const minGain = -15
-  return height - ((gain - minGain) / (maxGain - minGain)) * height
-}
+  const maxGain = 15;
+  const minGain = -15;
+  return height - ((gain - minGain) / (maxGain - minGain)) * height;
+};
 
 const yToGain = (y) => {
-  const maxGain = 15
-  const minGain = -15
-  const ratio = (height - y) / height
-  return minGain + ratio * (maxGain - minGain)
-}
+  const maxGain = 15;
+  const minGain = -15;
+  const ratio = (height - y) / height;
+  return minGain + ratio * (maxGain - minGain);
+};
 
 // Grid lines
 const frequencyGridLines = computed(() => {
-  const frequencies = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]
+  const frequencies = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
   return frequencies.map(freq => ({
     value: freq,
     x: frequencyToX(freq),
     label: freq >= 1000 ? `${freq/1000}k` : `${freq}`
-  }))
-})
+  }));
+});
 
 const gainGridLines = computed(() => {
-  const gains = [-15, -10, -5, 0, 5, 10, 15]
+  const gains = [-15, -10, -5, 0, 5, 10, 15];
   return gains.map(gain => ({
     value: gain,
     y: gainToY(gain),
     label: gain > 0 ? `+${gain}` : `${gain}`
-  }))
-})
+  }));
+});
 
 // EQ curve calculation
 const curvePath = computed(() => {
-  const points = []
-  const steps = 200
+  const points = [];
+  const steps = 200;
   for (let i = 0; i <= steps; i++) {
-    const x = (i / steps) * width
-    const freq = xToFrequency(x)
-    let totalGain = 0
+    const x = (i / steps) * width;
+    const freq = xToFrequency(x);
+    let totalGain = 0;
     // Calculate combined response from all EQ points
-    eqPoints.forEach(point => {
-      const gain = calculateBellFilter(freq, point.frequency, point.gain, point.q)
-      totalGain += gain
-    })
+    localEqPoints.forEach(point => {
+      const gain = calculateBellFilter(freq, point.frequency, point.gain, point.q);
+      totalGain += gain;
+    });
 
-    const y = gainToY(totalGain)
-    points.push(`${x},${y}`)
+    const y = gainToY(totalGain);
+    points.push(`${x},${y}`);
   }
 
-  return `M ${points.join(' L ')}`
-})
+  return `M ${points.join(' L ')}`;
+});
 
 // Bell filter calculation (peaking EQ)
 const calculateBellFilter = (freq, centerFreq, gain, q) => {
-  const w = 2 * Math.PI * freq
-  const w0 = 2 * Math.PI * centerFreq
-  const A = Math.pow(10, gain / 40)
-  const alpha = Math.sin(w0) / (2 * q)
-
-  // Simplified bell filter response
-  const ratio = freq / centerFreq
-  const bandwidth = 1 / q
-  const response = gain / (1 + Math.pow((ratio - 1/ratio) / bandwidth, 2))
-
-  return response
-}
+  const ratio = freq / centerFreq;
+  const bandwidth = 1 / q;
+  const response = gain / (1 + Math.pow((ratio - 1/ratio) / bandwidth, 2));
+  return response;
+};
 
 // Point management
 const addPoint = () => {
-  if (eqPoints.length >= 10) return
+  if (localEqPoints.length >= 10) return;
 
   const newPoint = {
     id: nextId++,
     frequency: 1000,
     gain: 0,
     q: 1
-  }
+  };
 
-  eqPoints.push(newPoint)
-  selectedPoint.value = eqPoints.length - 1
-}
+  localEqPoints.push(newPoint);
+  selectedPoint.value = localEqPoints.length - 1;
+  emitChange();
+};
 
 const removePoint = (index) => {
-  if (eqPoints.length <= 1) return
+  if (localEqPoints.length <= 1) return;
 
-  eqPoints.splice(index, 1)
+  localEqPoints.splice(index, 1);
 
-  if (selectedPoint.value >= eqPoints.length) {
-    selectedPoint.value = eqPoints.length - 1
+  if (selectedPoint.value >= localEqPoints.length) {
+    selectedPoint.value = localEqPoints.length - 1;
   }
-}
+  emitChange();
+};
 
 // Drag functionality
 const startDrag = (index, event) => {
-  event.preventDefault()
-  selectedPoint.value = index
+  event.preventDefault();
+  selectedPoint.value = index;
 
-  const clientX = event.touches ? event.touches[0].clientX : event.clientX
-  const clientY = event.touches ? event.touches[0].clientY : event.clientY
+  const clientX = event.touches ? event.touches[0].clientX : event.clientX;
+  const clientY = event.touches ? event.touches[0].clientY : event.clientY;
 
-  dragState.isDragging = true
-  dragState.pointIndex = index
-  dragState.startX = clientX
-  dragState.startY = clientY
-  dragState.startFreq = eqPoints[index].frequency
-  dragState.startGain = eqPoints[index].gain
-}
+  dragState.isDragging = true;
+  dragState.pointIndex = index;
+  dragState.startX = clientX;
+  dragState.startY = clientY;
+  dragState.startFreq = localEqPoints[index].frequency;
+  dragState.startGain = localEqPoints[index].gain;
+};
 
 const onMouseMove = (event) => {
-  if (!dragState.isDragging) return
+  if (!dragState.isDragging) return;
 
-  const clientX = event.touches ? event.touches[0].clientX : event.clientX
-  const clientY = event.touches ? event.touches[0].clientY : event.clientY
+  const clientX = event.touches ? event.touches[0].clientX : event.clientX;
+  const clientY = event.touches ? event.touches[0].clientY : event.clientY;
 
-  const deltaX = clientX - dragState.startX
-  const deltaY = clientY - dragState.startY
+  const deltaX = clientX - dragState.startX;
+  const deltaY = clientY - dragState.startY;
 
-  const currentX = frequencyToX(dragState.startFreq) + deltaX
-  const currentY = gainToY(dragState.startGain) + deltaY
+  const currentX = frequencyToX(dragState.startFreq) + deltaX;
+  const currentY = gainToY(dragState.startGain) + deltaY;
 
-  const newFreq = Math.max(20, Math.min(20000, xToFrequency(currentX)))
-  const newGain = Math.max(-15, Math.min(15, yToGain(currentY)))
+  const newFreq = Math.max(20, Math.min(20000, xToFrequency(currentX)));
+  const newGain = Math.max(-15, Math.min(15, yToGain(currentY)));
 
-  eqPoints[dragState.pointIndex].frequency = newFreq
-  eqPoints[dragState.pointIndex].gain = newGain
-}
+  localEqPoints[dragState.pointIndex].frequency = newFreq;
+  localEqPoints[dragState.pointIndex].gain = newGain;
+  
+  emitChange();
+};
 
 const stopDrag = () => {
-  dragState.isDragging = false
-  dragState.pointIndex = null
-}
-
-// API related state
-const currentPresetName = ref(null);
-const currentPresetDetails = ref(null); // To store the full preset object
-const eqType = ref('room'); // Default to 'room', can be made dynamic later
-const currentSPL = ref(85);  // Default SPL, can be made dynamic later
-const availablePresets = ref([]);
+  dragState.isDragging = false;
+  dragState.pointIndex = null;
+};
 
 // Event listeners
-onMounted(async () => {
+onMounted(() => {
   document.addEventListener('mousemove', onMouseMove);
   document.addEventListener('mouseup', stopDrag);
   document.addEventListener('touchmove', onMouseMove);
   document.addEventListener('touchend', stopDrag);
-
-  try {
-    console.log("ParametricEQ mounted, apiClient:", props.apiClient);
-    if (props.apiClient && typeof props.apiClient.getPresets === 'function') {
-      availablePresets.value = await props.apiClient.getPresets();
-      const currentPreset = availablePresets.value.find(p => p.isCurrent);
-
-      if (currentPreset) {
-        currentPresetName.value = currentPreset.name;
-        currentPresetDetails.value = await props.apiClient.getPreset(currentPreset.name);
-        console.log("Current preset loaded:", currentPresetDetails.value);
-
-        if (currentPresetDetails.value && currentPresetDetails.value.eq &&
-            currentPresetDetails.value.eq[eqType.value]) {
-
-          const eqSettingsForSPL = currentPresetDetails.value.eq[eqType.value].find(
-            eq => eq.spl === currentSPL.value
-          );
-
-          if (eqSettingsForSPL && eqSettingsForSPL.peqSet) {
-            eqPoints.splice(0, eqPoints.length); // Clear existing default points
-            eqSettingsForSPL.peqSet.forEach((p, index) => {
-              eqPoints.push({
-                id: index + 1, 
-                frequency: p.frequency,
-                gain: p.gain,
-                q: p.q
-              });
-            });
-            nextId = eqPoints.length + 1;
-            if (eqPoints.length > 0) {
-               selectedPoint.value = 0;
-            } else {
-               selectedPoint.value = null;
-            }
-            console.log("EQ points updated from preset:", eqPoints);
-          } else {
-            console.log(`No PEQ set found for preset '${currentPresetName.value}', type '${eqType.value}', SPL ${currentSPL.value}. Using default points.`);
-            if(eqPoints.length === 0) {
-               addPoint(); 
-            }
-          }
-        } else {
-           console.log("No EQ data in current preset for current type/SPL. Using default points.");
-           if(eqPoints.length === 0) {
-               addPoint();
-            }
-        }
-      } else {
-        console.log("No current preset found. Using default EQ points.");
-        if(eqPoints.length === 0) { 
-           eqPoints.splice(0, eqPoints.length,
-               { id: 1, frequency: 100, gain: 0, q: 1 },
-               { id: 2, frequency: 1000, gain: 0, q: 1 },
-               { id: 3, frequency: 10000, gain: 0, q: 1 }
-           );
-           nextId = 4;
-           selectedPoint.value = 0;
-        }
-      }
-    } else {
-      console.error("API client is not available or getPresets is not a function.");
-       // Fallback to default points if API is not available for some reason
-        if(eqPoints.length === 0) { 
-            eqPoints.splice(0, eqPoints.length,
-                { id: 1, frequency: 100, gain: 0, q: 1 },
-                { id: 2, frequency: 1000, gain: 0, q: 1 },
-                { id: 3, frequency: 10000, gain: 0, q: 1 }
-            );
-            nextId = 4;
-            selectedPoint.value = 0;
-        }
-    }
-  } catch (error) {
-    console.error("Error loading presets or EQ data:", error);
-     if(eqPoints.length === 0) { 
-       eqPoints.splice(0, eqPoints.length,
-           { id: 1, frequency: 100, gain: 0, q: 1 },
-           { id: 2, frequency: 1000, gain: 0, q: 1 },
-           { id: 3, frequency: 10000, gain: 0, q: 1 }
-       );
-       nextId = 4;
-       selectedPoint.value = 0;
-     }
-  }
 });
 
-watch(eqPoints, async (newEqPoints) => {
-  if (currentPresetName.value && props.apiClient && typeof props.apiClient.setEQ === 'function') {
-    const peqSetForAPI = newEqPoints.map(p => ({
-      frequency: p.frequency,
-      gain: p.gain,
-      q: p.q
-    }));
-    try {
-      console.log(`Setting EQ for preset: ${currentPresetName.value}, type: ${eqType.value}, SPL: ${currentSPL.value}`);
-      await props.apiClient.setEQ(currentPresetName.value, eqType.value, currentSPL.value, peqSetForAPI);
-      console.log("EQ successfully updated via API.");
-    } catch (error) {
-      console.error("Error updating EQ via API:", error);
-    }
-  }
-}, { deep: true });
-
 onUnmounted(() => {
-  document.removeEventListener('mousemove', onMouseMove)
-  document.removeEventListener('mouseup', stopDrag)
-  document.removeEventListener('touchmove', onMouseMove)
-  document.removeEventListener('touchend', stopDrag)
-})
+  document.removeEventListener('mousemove', onMouseMove);
+  document.removeEventListener('mouseup', stopDrag);
+  document.removeEventListener('touchmove', onMouseMove);
+  document.removeEventListener('touchend', stopDrag);
+  
+  if (emitTimeout) {
+    clearTimeout(emitTimeout);
+  }
+});
 </script>
 
 <style scoped>
@@ -623,61 +561,4 @@ onUnmounted(() => {
 .control-group {
   margin-bottom: 15px;
 }
-
-.control-group label {
-  display: block;
-  margin-bottom: 5px;
-  font-size: 14px;
-  color: #ccc;
-}
-
-.control-row {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-
-.control-group input[type="range"] {
-  flex: 1;
-  height: 4px;
-  background: #444;
-  border-radius: 2px;
-  outline: none;
-  -webkit-appearance: none;
-}
-
-.control-group input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 16px;
-  height: 16px;
-  background: #0088ff;
-  border-radius: 50%;
-  cursor: pointer;
-}
-
-.control-group input[type="range"]::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
-  background: #0088ff;
-  border-radius: 50%;
-  cursor: pointer;
-  border: none;
-}
-
-.number-input {
-  width: 80px;
-  padding: 4px 8px;
-  background: #333;
-  border: 1px solid #555;
-  border-radius: 4px;
-  color: #fff;
-  font-size: 12px;
-  text-align: center;
-}
-
-.number-input:focus {
-  outline: none;
-  border-color: #0088ff;
-}
-
 </style>

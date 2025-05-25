@@ -1,7 +1,7 @@
 <template>
   <div class="eq-control-view p-2 md:p-4">
     <!-- <h3 class="text-lg font-semibold text-vybes-blue mb-4 text-center sm:text-left">Equalizer Controls</h3> -->
-    <ParametricEQ :api-client="apiClient" />
+    <ParametricEQ />
     <!-- Other related controls or information for this view can be added later -->
   </div>
 </template>
