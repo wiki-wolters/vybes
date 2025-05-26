@@ -2,9 +2,32 @@
   <div class="flex flex-col min-h-screen bg-vybes-dark-bg text-vybes-text-primary">
     <AppHeader />
 
+    <nav class="bg-vybes-dark-element p-4">
+      <ul class="flex space-x-4 justify-center">
+        <li v-for="view in views" :key="view">
+          <button
+            @click="currentView = view"
+            :class="[
+              'px-4 py-2 rounded-md text-sm font-medium',
+              currentView === view
+                ? 'bg-vybes-primary text-white'
+                : 'text-vybes-text-secondary hover:bg-vybes-dark-hover hover:text-vybes-text-primary'
+            ]"
+          >
+            {{ view }}
+          </button>
+        </li>
+      </ul>
+    </nav>
+
     <!-- Main content area -->
-    <main class="flex-grow w-full">
-      <EQControlView />
+    <main class="flex-grow w-full p-4">
+      <HomeView v-if="currentView === 'Home'" />
+      <CalibrationView v-if="currentView === 'Calibration'" />
+      <ToolsView v-if="currentView === 'Tools'" />
+      <EQControlView v-if="currentView === 'EQ Control'" />
+      <PresetEditorView v-if="currentView === 'Preset Editor'" />
+      <DataStructuresView v-if="currentView === 'Data Structures'" />
     </main>
 
     <!-- Placeholder for a possible Footer or Bottom Navigation -->
@@ -15,14 +38,31 @@
 </template>
 
 <script setup>
-import { provide, onMounted, onUnmounted } from 'vue'; // Add onMounted, onUnmounted
+import { ref, provide, onMounted, onUnmounted } from 'vue'; // Add ref
 import AppHeader from './components/layout/AppHeader.vue';
 import EQControlView from './views/EQControlView.vue';
+import HomeView from './views/HomeView.vue';
+import CalibrationView from './views/CalibrationView.vue';
+import ToolsView from './views/ToolsView.vue';
+import PresetEditorView from './views/PresetEditorView.vue';
+import DataStructuresView from './views/DataStructuresView.vue';
 import { useVybesAPI } from './composables/useVybesAPI.js';
+
+const currentView = ref('Home');
+const views = [
+  'Home',
+  'Calibration',
+  'Tools',
+  'EQ Control',
+  'Preset Editor',
+  'Data Structures'
+];
 
 const { apiClient, connectWebSocket, disconnectWebSocket, liveUpdateData, isWebSocketConnected } = useVybesAPI();
 
-provide('vybesAPI', apiClient); // Already providing apiClient
+provide('vybesAPI', apiClient);
+provide('liveUpdateData', liveUpdateData); // Add this
+provide('isWebSocketConnected', isWebSocketConnected); // Add this
 
 onMounted(() => {
   connectWebSocket();
@@ -39,23 +79,12 @@ onUnmounted(() => {
 </script>
 
 <style>
-/* Ensure global styles from style.css are applied.
-   No additional App.vue specific styles needed for this basic layout if already handled in style.css.
-   If you need to override or add, you can do so here.
-   For example, ensuring the container takes up available space if not using mx-auto for main content.
-*/
-
-/* Minimal global styles are in style.css - body background and text color are set there.
-   #app is the mount point in index.html, App.vue's template replaces its content.
-   The root div here now controls the overall app appearance.
+/* Global styles are primarily in style.css.
+   App.vue specific styles can be added here if necessary.
 */
 body {
-  /* Overrides for body from style.css can be placed here if absolutely necessary,
-     but it's better to manage global body styles in style.css.
-     The font-family and min-height are already set in style.css.
-     The bg-vybes-dark-bg and text-vybes-text-primary are applied on the root div,
-     which is fine as it's more specific than body.
-  */
-  margin: 0; /* This is a common reset, ensure it's in style.css or here if needed. */
+  margin: 0; /* Common reset */
 }
+
+/* Additional styling for nav can be added here or in a scoped style block if preferred */
 </style>
