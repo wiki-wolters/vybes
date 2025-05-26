@@ -1,6 +1,10 @@
 @import "tailwindcss";
 @config "../tailwind.config.js";
 
+@theme {
+  --spacing: 1px; 
+}
+
 body {
   @apply bg-vybes-dark-bg text-vybes-text-primary;
   font-family: 'Segoe UI', system-ui, sans-serif; /* Matches tailwind.config.js */

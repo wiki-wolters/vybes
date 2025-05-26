@@ -214,8 +214,10 @@ async function playTestPulse() {
 </script>
 
 <style scoped>
+@reference "../style.css";
+
 .tool-card {
-  @apply p-6 rounded-lg shadow-lg transition-all duration-300 ease-in-out hover:shadow-2xl;
+  @apply p-8 rounded-lg shadow-lg transition-all duration-300 ease-in-out hover:shadow-2xl;
   /* Consider adding hover effects or subtle gradients if desired */
 }
 

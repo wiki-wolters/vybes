@@ -107,6 +107,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
+@reference "../style.css";
 .btn-primary {
   @apply bg-vybes-primary hover:bg-vybes-primary-hover text-white font-semibold py-2 px-4 rounded-md shadow disabled:opacity-50 disabled:cursor-not-allowed;
 }

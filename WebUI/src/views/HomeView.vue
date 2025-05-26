@@ -154,6 +154,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
+@reference "../style.css";
 .status-card {
   @apply bg-vybes-dark-card p-5 rounded-lg shadow-md text-center;
 }

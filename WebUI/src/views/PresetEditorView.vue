@@ -470,9 +470,11 @@ async function deletePreset(name) {
 </script>
 
 <style scoped>
+@reference "../style.css";
+
 /* Basic Modal Styling */
 .modal-backdrop {
-  @apply fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 transition-opacity duration-300 ease-in-out;
+  @apply fixed inset-0 bg-black opacity-60 flex items-center justify-center p-4 transition-opacity duration-300 ease-in-out;
 }
 .modal-content {
   @apply bg-vybes-dark-card p-6 rounded-lg shadow-xl w-full max-w-md transform transition-all duration-300 ease-in-out scale-95 opacity-0;
@@ -514,14 +516,14 @@ async function deletePreset(name) {
   width: 8px;
 }
 .preset-list-container::-webkit-scrollbar-track {
-  background: theme('colors.vybes-dark.input');
+  @apply bg-vybes-dark-input;
   border-radius: 4px;
 }
 .preset-list-container::-webkit-scrollbar-thumb {
-  background: theme('colors.vybes.primary');
+  @apply bg-vybes-primary;
   border-radius: 4px;
 }
 .preset-list-container::-webkit-scrollbar-thumb:hover {
-  background: theme('colors.vybes.primary-hover');
+  @apply bg-vybes-primary-hover;
 }
 </style>
