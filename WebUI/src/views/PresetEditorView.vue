@@ -72,9 +72,6 @@
                 :decimals="0"
               />
             </div>
-            <template #actions>
-              <button @click="setCrossover" class="btn-primary w-full">Save Crossover Settings</button>
-            </template>
           </CardSection>
             
           <!-- Equal Loudness Toggle Section -->
@@ -89,9 +86,6 @@
                 <div class="w-11 h-6 bg-vybes-dark-input peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-vybes-primary rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-vybes-primary"></div>
               </label>
             </div>
-            <template #actions>
-              <button @click="toggleEqualLoudness" class="btn-primary w-full">Save Equal Loudness Setting</button>
-            </template>
           </CardSection>
           <!-- Speaker Delays Section -->
           <CardSection title="Speaker Delays">
@@ -109,9 +103,8 @@
                     :step="0.1"
                   />
                 </div>
-                <div class="flex justify-between">
+                <div class="flex justify-end">
                   <button @click="sendTestPulse('left')" class="btn-secondary text-sm">Test Pulse</button>
-                  <button @click="setSpeakerDelay('left', speakerDelays.left)" class="btn-primary text-sm">Save</button>
                 </div>
               </div>
               
@@ -128,9 +121,8 @@
                     :step="0.1"
                   />
                 </div>
-                <div class="flex justify-between">
+                <div class="flex justify-end">
                   <button @click="sendTestPulse('right')" class="btn-secondary text-sm">Test Pulse</button>
-                  <button @click="setSpeakerDelay('right', speakerDelays.right)" class="btn-primary text-sm">Save</button>
                 </div>
               </div>
               
@@ -147,9 +139,8 @@
                     :step="0.1"
                   />
                 </div>
-                <div class="flex justify-between">
+                <div class="flex justify-end">
                   <button @click="sendTestPulse('sub')" class="btn-secondary text-sm">Test Pulse</button>
-                  <button @click="setSpeakerDelay('sub', speakerDelays.sub)" class="btn-primary text-sm">Save</button>
                 </div>
               </div>
             </div>
@@ -197,7 +188,6 @@
             </div>
             <template #actions>
               <button @click="deleteRoomEQSet" class="btn-danger" v-if="roomEQSets.some(set => set.spl === currentRoomSPL)">Delete This EQ Set</button>
-              <button @click="saveRoomEQChanges" class="btn-primary">Save EQ Changes</button>
             </template>
           </CardSection>
           <!-- Preference Curve EQ Section -->
@@ -243,7 +233,6 @@
             </div>
             <template #actions>
               <button @click="deletePrefEQSet" class="btn-danger" v-if="prefEQSets.some(set => set.spl === currentPrefSPL)">Delete This EQ Set</button>
-              <button @click="savePrefEQChanges" class="btn-primary">Save EQ Changes</button>
             </template>
           </CardSection>
         </div>
@@ -296,6 +285,17 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, watch, inject, defineProps } from 'vue';
+
+// Debounce utility function to limit API calls
+function debounce(func, wait = 200) {
+  let timeout;
+  return function(...args) {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => {
+      func.apply(this, args);
+    }, wait);
+  };
+}
 import ParametricEQ from '../components/ParametricEQ.vue';
 import RangeSlider from '../components/shared/RangeSlider.vue';
 import InputGroup from '../components/shared/InputGroup.vue';
@@ -347,6 +347,128 @@ const crossoverSlope = ref('12'); // Default 12dB/oct
 
 // Equal loudness toggle
 const equalLoudness = ref(false);
+
+// Create debounced save functions (limit to 5 calls per second = 200ms)
+const debouncedSetCrossover = debounce(async () => {
+  if (!selectedPresetName.value) return;
+  try {
+    await apiClient.setCrossover(selectedPresetName.value, crossoverFreq.value, crossoverSlope.value);
+    editorMessage.value = `Subwoofer crossover frequency set to ${crossoverFreq.value}Hz`;
+    messageType.value = 'success';
+    setTimeout(() => {
+      if (editorMessage.value === `Subwoofer crossover frequency set to ${crossoverFreq.value}Hz`) {
+        editorMessage.value = '';
+      }
+    }, 2000);
+  } catch (error) {
+    console.error('Failed to set crossover:', error);
+    editorMessage.value = `Failed to set crossover: ${error.message}`;
+    messageType.value = 'error';
+    
+    // Reset to previous value
+    if (selectedPresetData.value?.crossover) {
+      crossoverFreq.value = selectedPresetData.value.crossover.frequency || 80;
+    }
+  }
+}, 200);
+
+const debouncedSetEqualLoudness = debounce(async () => {
+  if (!selectedPresetName.value) return;
+  try {
+    await apiClient.setEqualLoudness(selectedPresetName.value, equalLoudness.value);
+    editorMessage.value = `Equal loudness ${equalLoudness.value ? 'enabled' : 'disabled'}`;
+    messageType.value = 'success';
+    setTimeout(() => {
+      if (editorMessage.value === `Equal loudness ${equalLoudness.value ? 'enabled' : 'disabled'}`) {
+        editorMessage.value = '';
+      }
+    }, 2000);
+  } catch (error) {
+    console.error('Failed to toggle equal loudness:', error);
+    editorMessage.value = `Failed to toggle equal loudness: ${error.message}`;
+    messageType.value = 'error';
+    
+    // Reset to previous value
+    equalLoudness.value = selectedPresetData.value?.equalLoudness === true;
+  }
+}, 200);
+
+const debouncedSetSpeakerDelay = debounce(async (speaker, delayMs) => {
+  if (!selectedPresetName.value) return;
+  try {
+    await apiClient.setSpeakerDelay(selectedPresetName.value, speaker, delayMs);
+    editorMessage.value = `${speaker.charAt(0).toUpperCase() + speaker.slice(1)} speaker delay set to ${delayMs}ms`;
+    messageType.value = 'success';
+    setTimeout(() => {
+      if (editorMessage.value === `${speaker.charAt(0).toUpperCase() + speaker.slice(1)} speaker delay set to ${delayMs}ms`) {
+        editorMessage.value = '';
+      }
+    }, 2000);
+  } catch (error) {
+    console.error(`Failed to set ${speaker} delay:`, error);
+    editorMessage.value = `Failed to set ${speaker} delay: ${error.message}`;
+    messageType.value = 'error';
+    
+    // Reset to previous value
+    if (selectedPresetData.value?.speakerDelays) {
+      speakerDelays[speaker] = selectedPresetData.value.speakerDelays[speaker] || 0;
+    }
+  }
+}, 200);
+
+const debouncedSaveRoomEQ = debounce(async () => {
+  if (!selectedPresetName.value) return;
+  try {
+    // Find the current EQ set
+    const currentSet = roomEQSets.value.find(set => set.spl === currentRoomSPL.value);
+    if (currentSet) {
+      await apiClient.setEQ(
+        selectedPresetName.value,
+        'room',
+        currentRoomSPL.value,
+        currentSet.peqSet
+      );
+      editorMessage.value = `Room EQ changes saved`;
+      messageType.value = 'success';
+      setTimeout(() => {
+        if (editorMessage.value === `Room EQ changes saved`) {
+          editorMessage.value = '';
+        }
+      }, 2000);
+    }
+  } catch (error) {
+    console.error('Failed to save room EQ changes:', error);
+    editorMessage.value = `Failed to save room EQ: ${error.message}`;
+    messageType.value = 'error';
+  }
+}, 200);
+
+const debouncedSavePrefEQ = debounce(async () => {
+  if (!selectedPresetName.value) return;
+  try {
+    // Find the current EQ set
+    const currentSet = prefEQSets.value.find(set => set.spl === currentPrefSPL.value);
+    if (currentSet) {
+      await apiClient.setEQ(
+        selectedPresetName.value,
+        'pref',
+        currentPrefSPL.value,
+        currentSet.peqSet
+      );
+      editorMessage.value = `Preference EQ changes saved`;
+      messageType.value = 'success';
+      setTimeout(() => {
+        if (editorMessage.value === `Preference EQ changes saved`) {
+          editorMessage.value = '';
+        }
+      }, 2000);
+    }
+  } catch (error) {
+    console.error('Failed to save preference EQ changes:', error);
+    editorMessage.value = `Failed to save preference EQ: ${error.message}`;
+    messageType.value = 'error';
+  }
+}, 200);
 
 // Room correction EQ
 const roomEQSets = ref([]);
@@ -507,34 +629,51 @@ function selectPreset(presetName) {
 }
 
 // Handle room correction EQ changes
-async function handleRoomEQChange(eqPoints) {
-  // Find the current room EQ set
+function handleRoomEQChange(eqPoints) {
+  if (!selectedPresetData.value?.eq?.room) return;
+  
+  // Find the current EQ set
   const currentSet = roomEQSets.value.find(set => set.spl === currentRoomSPL.value);
   
   if (currentSet) {
-    // Update the existing set
+    // Update the EQ points in the current set
     currentSet.peqSet = eqPoints;
+    
+    // Update the full preset data structure
+    if (!selectedPresetData.value.eq.room[currentRoomSPL.value]) {
+      selectedPresetData.value.eq.room[currentRoomSPL.value] = [];
+    }
+    selectedPresetData.value.eq.room[currentRoomSPL.value] = eqPoints;
   } else {
-    // Create a new set if it doesn't exist
-    roomEQSets.value.push({
-      spl: currentRoomSPL.value,
-      peqSet: eqPoints
-    });
-    // Sort the sets by SPL
+    // Create a new EQ set for this SPL
+    const newSet = { spl: currentRoomSPL.value, peqSet: eqPoints };
+    roomEQSets.value.push(newSet);
     roomEQSets.value.sort((a, b) => a.spl - b.spl);
+    
+    // Update the full preset data structure
+    selectedPresetData.value.eq.room[currentRoomSPL.value] = eqPoints;
   }
   
-  // Note: We're not saving to the API immediately. User needs to click Save button.
+  // Auto-save with debouncing
+  debouncedSaveRoomEQ();
 }
 
 // Handle preference curve EQ changes
-async function handlePrefEQChange(eqPoints) {
+function handlePrefEQChange(eqPoints) {
+  if (!selectedPresetData.value?.eq?.pref) return;
+  
   // Find the current preference EQ set
   const currentSet = prefEQSets.value.find(set => set.spl === currentPrefSPL.value);
   
   if (currentSet) {
     // Update the existing set
     currentSet.peqSet = eqPoints;
+    
+    // Update the full preset data structure
+    if (!selectedPresetData.value.eq.pref[currentPrefSPL.value]) {
+      selectedPresetData.value.eq.pref[currentPrefSPL.value] = [];
+    }
+    selectedPresetData.value.eq.pref[currentPrefSPL.value] = eqPoints;
   } else {
     // Create a new set if it doesn't exist
     prefEQSets.value.push({
@@ -543,13 +682,24 @@ async function handlePrefEQChange(eqPoints) {
     });
     // Sort the sets by SPL
     prefEQSets.value.sort((a, b) => a.spl - b.spl);
+    
+    // Update the full preset data structure
+    selectedPresetData.value.eq.pref[currentPrefSPL.value] = eqPoints;
   }
   
-  // Note: We're not saving to the API immediately. User needs to click Save button.
+  // Auto-save with debouncing
+  debouncedSavePrefEQ();
 }
 
 // Handle room SPL change
 function handleRoomSPLChange() {
+  // Validate the SPL value
+  if (currentRoomSPL.value < 0) currentRoomSPL.value = 0;
+  if (currentRoomSPL.value > 120) currentRoomSPL.value = 120;
+  
+  // Round to nearest integer
+  currentRoomSPL.value = Math.round(currentRoomSPL.value);
+  
   // If the SPL value doesn't exist in the sets, create a new empty set
   if (!roomEQSets.value.some(set => set.spl === currentRoomSPL.value)) {
     roomEQSets.value.push({
@@ -558,10 +708,23 @@ function handleRoomSPLChange() {
     });
     roomEQSets.value.sort((a, b) => a.spl - b.spl);
   }
+  
+  // If there's already data for this SPL, trigger auto-save
+  const currentSet = roomEQSets.value.find(set => set.spl === currentRoomSPL.value);
+  if (currentSet) {
+    debouncedSaveRoomEQ();
+  }
 }
 
 // Handle preference SPL change
 function handlePrefSPLChange() {
+  // Validate the SPL value
+  if (currentPrefSPL.value < 0) currentPrefSPL.value = 0;
+  if (currentPrefSPL.value > 120) currentPrefSPL.value = 120;
+  
+  // Round to nearest integer
+  currentPrefSPL.value = Math.round(currentPrefSPL.value);
+  
   // If the SPL value doesn't exist in the sets, create a new empty set
   if (!prefEQSets.value.some(set => set.spl === currentPrefSPL.value)) {
     prefEQSets.value.push({
@@ -569,6 +732,12 @@ function handlePrefSPLChange() {
       peqSet: []
     });
     prefEQSets.value.sort((a, b) => a.spl - b.spl);
+  }
+  
+  // If there's already data for this SPL, trigger auto-save
+  const currentSet = prefEQSets.value.find(set => set.spl === currentPrefSPL.value);
+  if (currentSet) {
+    debouncedSavePrefEQ();
   }
 }
 
@@ -665,27 +834,14 @@ async function deletePrefEQSet() {
 }
 
 // Speaker delay handlers
-async function setSpeakerDelay(speaker, delayMs) {
+function setSpeakerDelay(speaker, delayMs) {
   if (!selectedPresetName.value) return;
   
-  try {
-    await apiClient.setSpeakerDelay(selectedPresetName.value, speaker, delayMs);
-    
-    // Update local state
-    speakerDelays[speaker] = delayMs;
-    
-    editorMessage.value = `${speaker.charAt(0).toUpperCase() + speaker.slice(1)} speaker delay set to ${delayMs}ms`;
-    messageType.value = 'success';
-  } catch (error) {
-    console.error(`Failed to set ${speaker} speaker delay:`, error);
-    editorMessage.value = `Failed to set speaker delay: ${error.message}`;
-    messageType.value = 'error';
-    
-    // Reset to previous value
-    if (selectedPresetData.value?.speakerDelays) {
-      speakerDelays[speaker] = selectedPresetData.value.speakerDelays[speaker] || 0;
-    }
-  }
+  // Update local state
+  speakerDelays[speaker] = delayMs;
+  
+  // Auto-save with debouncing
+  debouncedSetSpeakerDelay(speaker, delayMs);
 }
 
 // Send test pulse to speaker
@@ -704,44 +860,19 @@ async function sendTestPulse(speaker) {
 }
 
 // Crossover settings handlers
-async function setCrossover() {
+function setCrossover() {
   if (!selectedPresetName.value) return;
   
-  // Use a fixed slope value since we removed the slope selector
-  const defaultSlope = '12';
-  
-  try {
-    await apiClient.setCrossover(selectedPresetName.value, crossoverFreq.value, defaultSlope);
-    editorMessage.value = `Subwoofer crossover frequency set to ${crossoverFreq.value}Hz`;
-    messageType.value = 'success';
-  } catch (error) {
-    console.error('Failed to set crossover:', error);
-    editorMessage.value = `Failed to set crossover: ${error.message}`;
-    messageType.value = 'error';
-    
-    // Reset to previous value
-    if (selectedPresetData.value?.crossover) {
-      crossoverFreq.value = selectedPresetData.value.crossover.frequency || 80;
-    }
-  }
+  // Auto-save with debouncing
+  debouncedSetCrossover();
 }
 
 // Equal loudness handler
-async function toggleEqualLoudness() {
+function toggleEqualLoudness() {
   if (!selectedPresetName.value) return;
   
-  try {
-    await apiClient.setEqualLoudness(selectedPresetName.value, equalLoudness.value);
-    editorMessage.value = `Equal loudness ${equalLoudness.value ? 'enabled' : 'disabled'}`;
-    messageType.value = 'success';
-  } catch (error) {
-    console.error('Failed to toggle equal loudness:', error);
-    editorMessage.value = `Failed to toggle equal loudness: ${error.message}`;
-    messageType.value = 'error';
-    
-    // Reset to previous value
-    equalLoudness.value = selectedPresetData.value?.equalLoudness === true;
-  }
+  // Auto-save with debouncing
+  debouncedSetEqualLoudness();
 }
 
 // Activate preset
@@ -808,15 +939,46 @@ onMounted(async () => {
     console.log('Selecting preset from route params:', props.name);
     selectPreset(props.name);
   } else if (!newName) {
-    selectedPresetData.value = null; // Clear data if no preset is selected
+    selectedPresetData.value = null; // Initialize data when preset is selected
   }
 });
 
-watch(selectedPresetName, (newName, oldName) => {
-  if (newName && newName !== oldName) {
-    fetchPresetData(newName);
-  } else if (!newName) {
-    selectedPresetData.value = null; // Clear data if no preset is selected
+watch(selectedPresetName, async (newValue) => {
+  if (newValue) {
+    await fetchPresetData(newValue);
+    initializeFromPresetData(selectedPresetData.value);
+  }
+});
+
+// Add watchers for auto-save functionality
+watch(crossoverFreq, () => {
+  if (selectedPresetName.value) {
+    debouncedSetCrossover();
+  }
+});
+
+watch(equalLoudness, () => {
+  if (selectedPresetName.value) {
+    debouncedSetEqualLoudness();
+  }
+});
+
+// Watch speaker delays for changes
+watch(() => speakerDelays.left, (newValue) => {
+  if (selectedPresetName.value) {
+    debouncedSetSpeakerDelay('left', newValue);
+  }
+});
+
+watch(() => speakerDelays.right, (newValue) => {
+  if (selectedPresetName.value) {
+    debouncedSetSpeakerDelay('right', newValue);
+  }
+});
+
+watch(() => speakerDelays.sub, (newValue) => {
+  if (selectedPresetName.value) {
+    debouncedSetSpeakerDelay('sub', newValue);
   }
 });
 
