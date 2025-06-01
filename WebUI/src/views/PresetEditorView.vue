@@ -26,37 +26,9 @@
       <p class="text-vybes-text-secondary text-sm">Loading presets...</p>
     </div>
 
-    <div class="flex flex-col md:flex-row gap-6">
-      <!-- Preset List Column (Left) - Hidden on mobile -->
-      <div class="hidden md:block md:w-1/3 bg-vybes-dark-card p-5 rounded-lg shadow-md">
-        <h2 class="text-xl font-semibold mb-4 text-vybes-accent">Presets</h2>
-        <button @click="promptCreatePreset" class="btn-primary w-full mb-4">
-          Create New Preset
-        </button>
-        
-        <ul v-if="presets.length > 0" class="space-y-2 preset-list-container max-h-[500px] overflow-y-auto pr-1">
-          <li v-for="preset in presets" :key="preset.name" 
-              class="p-3 rounded-md transition-colors duration-150 ease-in-out cursor-pointer"
-              :class="[
-                selectedPresetName === preset.name ? 'bg-vybes-primary text-white shadow-lg' : 'bg-vybes-dark-input hover:bg-vybes-dark-hover',
-                {'ring-2 ring-vybes-accent ring-offset-2 ring-offset-vybes-dark-card': preset.isCurrent && selectedPresetName !== preset.name}
-              ]"
-              @click="selectPreset(preset.name)">
-            <div class="flex justify-between items-center">
-              <span class="font-medium">{{ preset.name }} <span v-if="preset.isCurrent" class="text-xs text-vybes-accent">(Active)</span></span>
-              <div class="space-x-1">
-                <button @click.stop="promptRenamePreset(preset.name)" title="Rename" class="btn-icon btn-secondary-icon text-xs p-1">✏️</button>
-                <button @click.stop="promptCopyPreset(preset.name)" title="Copy" class="btn-icon btn-secondary-icon text-xs p-1">📋</button>
-                <button @click.stop="deletePreset(preset.name)" title="Delete" class="btn-icon btn-danger-icon text-xs p-1">🗑️</button>
-              </div>
-            </div>
-          </li>
-        </ul>
-        <p v-else-if="!isLoadingPresets" class="text-vybes-text-secondary text-sm text-center py-4">No presets found.</p>
-      </div>
-
-      <!-- Editing Area -->
-      <div class="w-full md:w-2/3">
+    <div class="flex flex-col gap-6">
+      <!-- Editing Area - Now Full Width -->
+      <div class="w-full">
         <div v-if="isLoadingData" class="text-center py-10">
            <svg class="animate-spin h-8 w-8 text-vybes-primary mx-auto mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
