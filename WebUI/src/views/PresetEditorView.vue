@@ -338,13 +338,6 @@ const debouncedSetCrossover = throttleAndDebounce(async () => {
   if (!selectedPresetName.value) return;
   try {
     await apiClient.setCrossover(selectedPresetName.value, crossoverFreq.value, crossoverSlope.value);
-    editorMessage.value = `Subwoofer crossover frequency set to ${crossoverFreq.value}Hz`;
-    messageType.value = 'success';
-    setTimeout(() => {
-      if (editorMessage.value === `Subwoofer crossover frequency set to ${crossoverFreq.value}Hz`) {
-        editorMessage.value = '';
-      }
-    }, 2000);
   } catch (error) {
     console.error('Failed to set crossover:', error);
     editorMessage.value = `Failed to set crossover: ${error.message}`;
@@ -361,13 +354,6 @@ const debouncedSetEqualLoudness = throttleAndDebounce(async () => {
   if (!selectedPresetName.value) return;
   try {
     await apiClient.setEqualLoudness(selectedPresetName.value, equalLoudness.value);
-    editorMessage.value = `Equal loudness ${equalLoudness.value ? 'enabled' : 'disabled'}`;
-    messageType.value = 'success';
-    setTimeout(() => {
-      if (editorMessage.value === `Equal loudness ${equalLoudness.value ? 'enabled' : 'disabled'}`) {
-        editorMessage.value = '';
-      }
-    }, 2000);
   } catch (error) {
     console.error('Failed to toggle equal loudness:', error);
     editorMessage.value = `Failed to toggle equal loudness: ${error.message}`;
@@ -382,13 +368,6 @@ const debouncedSetSpeakerDelay = throttleAndDebounce(async (speaker, delayMs) =>
   if (!selectedPresetName.value) return;
   try {
     await apiClient.setSpeakerDelay(selectedPresetName.value, speaker, delayMs);
-    editorMessage.value = `${speaker.charAt(0).toUpperCase() + speaker.slice(1)} speaker delay set to ${delayMs}ms`;
-    messageType.value = 'success';
-    setTimeout(() => {
-      if (editorMessage.value === `${speaker.charAt(0).toUpperCase() + speaker.slice(1)} speaker delay set to ${delayMs}ms`) {
-        editorMessage.value = '';
-      }
-    }, 2000);
   } catch (error) {
     console.error(`Failed to set ${speaker} delay:`, error);
     editorMessage.value = `Failed to set ${speaker} delay: ${error.message}`;
@@ -413,13 +392,6 @@ const debouncedSaveRoomEQ = throttleAndDebounce(async () => {
         currentRoomSPL.value,
         currentSet.peqSet
       );
-      editorMessage.value = `Room EQ changes saved`;
-      messageType.value = 'success';
-      setTimeout(() => {
-        if (editorMessage.value === `Room EQ changes saved`) {
-          editorMessage.value = '';
-        }
-      }, 2000);
     }
   } catch (error) {
     console.error('Failed to save room EQ changes:', error);
@@ -440,13 +412,6 @@ const debouncedSavePrefEQ = throttleAndDebounce(async () => {
         currentPrefSPL.value,
         currentSet.peqSet
       );
-      editorMessage.value = `Preference EQ changes saved`;
-      messageType.value = 'success';
-      setTimeout(() => {
-        if (editorMessage.value === `Preference EQ changes saved`) {
-          editorMessage.value = '';
-        }
-      }, 2000);
     }
   } catch (error) {
     console.error('Failed to save preference EQ changes:', error);
@@ -737,8 +702,6 @@ async function saveRoomEQChanges() {
     }
     
     await apiClient.setEQ(selectedPresetName.value, 'room', currentRoomSPL.value, currentSet.peqSet);
-    editorMessage.value = 'Room correction EQ saved successfully';
-    messageType.value = 'success';
   } catch (error) {
     console.error('Failed to save room correction EQ:', error);
     editorMessage.value = `Failed to save room correction EQ: ${error.message}`;
@@ -757,8 +720,6 @@ async function savePrefEQChanges() {
     }
     
     await apiClient.setEQ(selectedPresetName.value, 'pref', currentPrefSPL.value, currentSet.peqSet);
-    editorMessage.value = 'Preference curve EQ saved successfully';
-    messageType.value = 'success';
   } catch (error) {
     console.error('Failed to save preference curve EQ:', error);
     editorMessage.value = `Failed to save preference curve EQ: ${error.message}`;
@@ -783,8 +744,7 @@ async function deleteRoomEQSet() {
       currentRoomSPL.value = 85; // Default
     }
     
-    editorMessage.value = 'Room correction EQ set deleted successfully';
-    messageType.value = 'success';
+    // No success message shown for deletion
   } catch (error) {
     console.error('Failed to delete room correction EQ set:', error);
     editorMessage.value = `Failed to delete room correction EQ set: ${error.message}`;
@@ -809,8 +769,7 @@ async function deletePrefEQSet() {
       currentPrefSPL.value = 85; // Default
     }
     
-    editorMessage.value = 'Preference curve EQ set deleted successfully';
-    messageType.value = 'success';
+    // No success message shown for deletion
   } catch (error) {
     console.error('Failed to delete preference curve EQ set:', error);
     editorMessage.value = `Failed to delete preference curve EQ set: ${error.message}`;
@@ -858,8 +817,7 @@ async function activatePreset() {
       preset.isCurrent = preset.name === selectedPresetName.value;
     });
     
-    editorMessage.value = `Preset '${selectedPresetName.value}' activated`;
-    messageType.value = 'success';
+    // No success message shown for activation
   } catch (error) {
     console.error('Failed to activate preset:', error);
     editorMessage.value = `Failed to activate preset: ${error.message}`;
@@ -885,8 +843,7 @@ async function saveEQChanges() {
       selectedPresetData.value.eq.room.spl,
       selectedPresetData.value.eq.room.peqSet
     );
-    editorMessage.value = 'EQ changes saved successfully!';
-    messageType.value = 'success';
+    // No success message shown for saving EQ changes
     // Optionally re-fetch data to confirm, or trust the update
     // await fetchPresetData(selectedPresetName.value); 
   } catch (error) {
