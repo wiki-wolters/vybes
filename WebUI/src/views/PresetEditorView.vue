@@ -286,16 +286,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, watch, inject, defineProps } from 'vue';
 
-// Debounce utility function to limit API calls
-function debounce(func, wait = 200) {
-  let timeout;
-  return function(...args) {
-    clearTimeout(timeout);
-    timeout = setTimeout(() => {
-      func.apply(this, args);
-    }, wait);
-  };
-}
+import { throttleAndDebounce } from '../utilities.js';
 import ParametricEQ from '../components/ParametricEQ.vue';
 import RangeSlider from '../components/shared/RangeSlider.vue';
 import InputGroup from '../components/shared/InputGroup.vue';
@@ -348,8 +339,8 @@ const crossoverSlope = ref('12'); // Default 12dB/oct
 // Equal loudness toggle
 const equalLoudness = ref(false);
 
-// Create debounced save functions (limit to 5 calls per second = 200ms)
-const debouncedSetCrossover = debounce(async () => {
+// Create throttled and debounced save functions (limit to 5 calls per second = 200ms)
+const debouncedSetCrossover = throttleAndDebounce(async () => {
   if (!selectedPresetName.value) return;
   try {
     await apiClient.setCrossover(selectedPresetName.value, crossoverFreq.value, crossoverSlope.value);
@@ -370,9 +361,9 @@ const debouncedSetCrossover = debounce(async () => {
       crossoverFreq.value = selectedPresetData.value.crossover.frequency || 80;
     }
   }
-}, 200);
+}, 500, 200);
 
-const debouncedSetEqualLoudness = debounce(async () => {
+const debouncedSetEqualLoudness = throttleAndDebounce(async () => {
   if (!selectedPresetName.value) return;
   try {
     await apiClient.setEqualLoudness(selectedPresetName.value, equalLoudness.value);
@@ -391,9 +382,9 @@ const debouncedSetEqualLoudness = debounce(async () => {
     // Reset to previous value
     equalLoudness.value = selectedPresetData.value?.equalLoudness === true;
   }
-}, 200);
+}, 500, 200);
 
-const debouncedSetSpeakerDelay = debounce(async (speaker, delayMs) => {
+const debouncedSetSpeakerDelay = throttleAndDebounce(async (speaker, delayMs) => {
   if (!selectedPresetName.value) return;
   try {
     await apiClient.setSpeakerDelay(selectedPresetName.value, speaker, delayMs);
@@ -414,9 +405,9 @@ const debouncedSetSpeakerDelay = debounce(async (speaker, delayMs) => {
       speakerDelays[speaker] = selectedPresetData.value.speakerDelays[speaker] || 0;
     }
   }
-}, 200);
+}, 500, 200);
 
-const debouncedSaveRoomEQ = debounce(async () => {
+const debouncedSaveRoomEQ = throttleAndDebounce(async () => {
   if (!selectedPresetName.value) return;
   try {
     // Find the current EQ set
@@ -441,9 +432,9 @@ const debouncedSaveRoomEQ = debounce(async () => {
     editorMessage.value = `Failed to save room EQ: ${error.message}`;
     messageType.value = 'error';
   }
-}, 200);
+}, 500, 200);
 
-const debouncedSavePrefEQ = debounce(async () => {
+const debouncedSavePrefEQ = throttleAndDebounce(async () => {
   if (!selectedPresetName.value) return;
   try {
     // Find the current EQ set
@@ -468,7 +459,7 @@ const debouncedSavePrefEQ = debounce(async () => {
     editorMessage.value = `Failed to save preference EQ: ${error.message}`;
     messageType.value = 'error';
   }
-}, 200);
+}, 500, 200);
 
 // Room correction EQ
 const roomEQSets = ref([]);
