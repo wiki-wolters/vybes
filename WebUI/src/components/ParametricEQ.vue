@@ -164,7 +164,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import RangeSlider from './shared/RangeSlider.vue';
 
 const props = defineProps({
@@ -181,8 +181,21 @@ const props = defineProps({
 const emit = defineEmits(['change']);
 
 // Component dimensions
-const width = 800;
+const eqContainer = ref(null);
+const width = ref(800); // Default width
 const height = 400;
+
+// Resize observer to update width
+let resizeObserver = null;
+
+const updateDimensions = () => {
+  if (eqContainer.value) {
+    const containerWidth = eqContainer.value.clientWidth;
+    if (containerWidth > 0) {
+      width.value = containerWidth;
+    }
+  }
+};
 
 // Local copy of EQ points
 const localEqPoints = reactive([]);
@@ -241,13 +254,13 @@ const frequencyToX = (freq) => {
   const minFreq = Math.log10(20);
   const maxFreq = Math.log10(20000);
   const logFreq = Math.log10(freq);
-  return ((logFreq - minFreq) / (maxFreq - minFreq)) * width;
+  return ((logFreq - minFreq) / (maxFreq - minFreq)) * width.value;
 };
 
 const xToFrequency = (x) => {
   const minFreq = Math.log10(20);
   const maxFreq = Math.log10(20000);
-  const ratio = x / width;
+  const ratio = x / width.value;
   return Math.pow(10, minFreq + ratio * (maxFreq - minFreq));
 };
 
@@ -289,7 +302,7 @@ const curvePath = computed(() => {
   const points = [];
   const steps = 200;
   for (let i = 0; i <= steps; i++) {
-    const x = (i / steps) * width;
+    const x = (i / steps) * width.value;
     const freq = xToFrequency(x);
     let totalGain = 0;
     // Calculate combined response from all EQ points
@@ -383,11 +396,24 @@ const stopDrag = () => {
 };
 
 // Event listeners
-onMounted(() => {
+onMounted(async () => {
   document.addEventListener('mousemove', onMouseMove);
   document.addEventListener('mouseup', stopDrag);
   document.addEventListener('touchmove', onMouseMove);
   document.addEventListener('touchend', stopDrag);
+  
+  // Initial dimension update
+  await nextTick();
+  updateDimensions();
+  
+  // Set up resize observer
+  if (window.ResizeObserver && eqContainer.value) {
+    resizeObserver = new ResizeObserver(updateDimensions);
+    resizeObserver.observe(eqContainer.value);
+  }
+  
+  // Fallback resize listener
+  window.addEventListener('resize', updateDimensions);
 });
 
 onUnmounted(() => {
@@ -395,6 +421,11 @@ onUnmounted(() => {
   document.removeEventListener('mouseup', stopDrag);
   document.removeEventListener('touchmove', onMouseMove);
   document.removeEventListener('touchend', stopDrag);
+  window.removeEventListener('resize', updateDimensions);
+  
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+  }
   
   if (emitTimeout) {
     clearTimeout(emitTimeout);
@@ -409,16 +440,18 @@ onUnmounted(() => {
   color: #fff;
   padding: 20px;
   border-radius: 8px;
+  width: 100%;
 }
 
 .eq-container {
   position: relative;
-  width: 800px;
+  width: 100%;
   height: 400px;
   background: #0f0f0f;
   border-radius: 4px;
   overflow: hidden;
   margin-bottom: 20px;
+  min-width: 300px; /* Minimum width for usability */
 }
 
 .eq-grid, .eq-curve {

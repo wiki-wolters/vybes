@@ -1,177 +1,463 @@
 <template>
-  <div class="container mx-auto p-6 bg-vybes-dark-element rounded-lg shadow-xl">
-    <h1 class="text-3xl font-bold mb-6 text-vybes-light-blue text-center">System Status Overview</h1>
-
-    <div v-if="isLoading && !liveUpdateData" class="text-center py-10">
+  <div class="container mx-auto p-6 space-y-6">
+    <!-- Loading State -->
+    <div v-if="isLoading" class="text-center py-10">
       <svg class="animate-spin h-8 w-8 text-vybes-primary mx-auto mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
       </svg>
-      <p class="text-vybes-text-secondary">Loading initial system status...</p>
+      <p class="text-vybes-text-secondary">Loading system...</p>
     </div>
 
-    <div v-if="errorMessage" class="bg-red-700 text-red-100 p-4 rounded-md mb-6 text-center">
+    <!-- Error Message -->
+    <div v-if="errorMessage" class="bg-red-700 text-red-100 p-4 rounded-lg mb-6">
       <p><strong>Error:</strong> {{ errorMessage }}</p>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-      <div class="bg-vybes-dark-card p-5 rounded-lg shadow-md">
-        <h2 class="text-xl font-semibold mb-3 text-vybes-accent">Connectivity</h2>
-        <p class="text-vybes-text-primary">
-          WebSocket:
-          <span :class="isWebSocketConnected ? 'text-green-400' : 'text-red-400'">
-            {{ isWebSocketConnected ? 'Connected' : 'Disconnected' }}
-          </span>
-        </p>
-      </div>
-
-      <div class="bg-vybes-dark-card p-5 rounded-lg shadow-md">
-        <h2 class="text-xl font-semibold mb-3 text-vybes-accent">Master Volume</h2>
-        <div class="w-full bg-vybes-dark-input rounded-full h-6 overflow-hidden">
-          <div class="bg-vybes-primary h-6 text-xs font-medium text-blue-100 text-center p-1 leading-none rounded-full" :style="{ width: volumeLevel + '%' }">
-            {{ volumeLevel }}%
-          </div>
+    <!-- Main Content -->
+    <div v-if="!isLoading" class="space-y-6">
+      <!-- Presets Section -->
+      <div class="control-section">
+        <h2 class="section-title">Presets</h2>
+        <div class="flex flex-wrap gap-3">
+          <button
+            v-for="preset in presets"
+            :key="preset.name"
+            @click="setActivePreset(preset.name)"
+            :class="[
+              'preset-button',
+              preset.isCurrent ? 'preset-active' : 'preset-inactive'
+            ]"
+          >
+            {{ preset.name }}
+            
+            <!-- Active preset controls -->
+            <div v-if="preset.isCurrent" class="preset-controls" @click.stop>
+              <button
+                @click="editPreset(preset.name)"
+                class="preset-control-btn"
+                title="Edit preset"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                </svg>
+              </button>
+              <button
+                @click="copyPreset(preset.name)"
+                class="preset-control-btn"
+                title="Copy preset"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                </svg>
+              </button>
+            </div>
+          </button>
+          
+          <!-- Add New Preset Button -->
+          <button
+            @click="showNewPresetDialog = true"
+            class="preset-button preset-add"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+            </svg>
+          </button>
         </div>
-         <p class="text-xs text-vybes-text-secondary mt-1 text-center">Current Level: {{ volumeLevel }}%</p>
       </div>
+
+      <!-- Subwoofer Control -->
+      <div class="control-section">
+        <h2 class="section-title">Subwoofer</h2>
+        <label class="switch-container">
+          <input
+            type="checkbox"
+            v-model="subwooferEnabled"
+            @change="toggleSubwoofer"
+            class="switch-input"
+          >
+          <span class="switch-slider"></span>
+          <span class="switch-label">{{ subwooferEnabled ? 'On' : 'Off' }}</span>
+        </label>
+      </div>
+
+      <!-- DSP Bypass Control -->
+      <div class="control-section">
+        <h2 class="section-title">DSP Processing</h2>
+        <label class="switch-container">
+          <input
+            type="checkbox"
+            v-model="dspBypass"
+            @change="toggleDspBypass"
+            class="switch-input"
+          >
+          <span class="switch-slider"></span>
+          <span class="switch-label">{{ dspBypass ? 'Bypassed' : 'Active' }}</span>
+        </label>
+      </div>
+
+      <!-- Mute Controls -->
+      <div class="control-section">
+        <h2 class="section-title">Mute</h2>
+        <div class="space-y-4">
+          <!-- Mute Percentage Slider -->
+          <div>
+            <label class="block text-sm font-medium text-vybes-text-primary mb-2">
+              Volume: {{ mutePercentage }}%
+            </label>
+            <input
+              type="range"
+              min="1"
+              max="100"
+              v-model="mutePercentage"
+              @input="updateMutePercentage"
+              class="slider w-full"
+            >
+          </div>
+          
+          <!-- Mute On/Off Switch -->
+          <label class="switch-container">
+            <input
+              type="checkbox"
+              v-model="muteEnabled"
+              @change="toggleMute"
+              class="switch-input"
+            >
+            <span class="switch-slider"></span>
+            <span class="switch-label">{{ muteEnabled ? 'Muted' : 'Unmuted' }}</span>
+          </label>
+        </div>
+      </div>
+
+
+
+
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-      <div class="status-card">
-        <h3 class="status-title">Current Preset</h3>
-        <p class="status-value">{{ currentPresetName }}</p>
-      </div>
-      <div class="status-card">
-        <h3 class="status-title">Subwoofer</h3>
-        <p class="status-value" :class="subwooferStatus === 'On' ? 'text-green-400' : 'text-red-400'">{{ subwooferStatus }}</p>
-      </div>
-      <div class="status-card">
-        <h3 class="status-title">DSP Processing</h3>
-        <p class="status-value" :class="bypassStatus === 'Active' ? 'text-green-400' : 'text-red-400'">{{ bypassStatus }}</p>
-      </div>
-      <div class="status-card">
-        <h3 class="status-title">Mute Status</h3>
-        <p class="status-value" :class="muteStatus === 'Unmuted' ? 'text-green-400' : 'text-red-400'">{{ muteStatus }}</p>
+    <!-- New Preset Dialog -->
+    <div v-if="showNewPresetDialog" class="modal-overlay" @click="showNewPresetDialog = false">
+      <div class="modal-content" @click.stop>
+        <h3 class="text-xl font-semibold text-vybes-text-primary mb-4">Create New Preset</h3>
+        <input
+          v-model="newPresetName"
+          type="text"
+          placeholder="Enter preset name"
+          class="w-full p-3 bg-vybes-dark-input text-vybes-text-primary rounded-lg border border-vybes-border focus:border-vybes-primary focus:outline-none mb-4"
+          @keyup.enter="createNewPreset"
+        >
+        <div class="flex justify-end space-x-3">
+          <button
+            @click="showNewPresetDialog = false"
+            class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            @click="createNewPreset"
+            :disabled="!newPresetName.trim()"
+            class="px-4 py-2 bg-vybes-primary text-white rounded-lg hover:bg-vybes-primary-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Create
+          </button>
+        </div>
       </div>
     </div>
-
-    <!-- Placeholder for future control buttons -->
-    <!-- 
-    <div class="mt-8 text-center">
-      <h2 class="text-xl font-semibold mb-4 text-vybes-light-blue">Quick Controls</h2>
-      <div class="flex justify-center space-x-4">
-        <button @click="toggleMute" class="btn-control">Toggle Mute</button>
-        <button @click="toggleBypass" class="btn-control">Toggle Bypass</button>
-        <button @click="toggleSubwoofer" class="btn-control">Toggle Subwoofer</button>
-      </div>
-    </div>
-    -->
-
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, inject, watch } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
+import { useRouter } from 'vue-router';
+import apiClient from '../api-client.js';
 
-const apiClient = inject('vybesAPI');
-const liveUpdateData = inject('liveUpdateData');
-const isWebSocketConnected = inject('isWebSocketConnected');
+const router = useRouter();
 
-const currentPresetName = ref('Loading...');
-const subwooferStatus = ref('Loading...');
-const bypassStatus = ref('Loading...');
-const muteStatus = ref('Loading...');
-const volumeLevel = ref(0);
+// State
 const isLoading = ref(true);
 const errorMessage = ref('');
+const presets = ref([]);
+const subwooferEnabled = ref(false);
+const dspBypass = ref(false);
+const muteEnabled = ref(false);
+const mutePercentage = ref(100);
+let muteUpdateTimeout = null;
+const calibrationValue = ref(null);
+const showNewPresetDialog = ref(false);
+const newPresetName = ref('');
 
-async function fetchStatusData() {
-  isLoading.value = true;
-  errorMessage.value = '';
+// Load initial data
+async function loadSystemData() {
   try {
-    if (!apiClient) {
-        errorMessage.value = 'API Client not available.';
-        isLoading.value = false;
-        return;
+    isLoading.value = true;
+    errorMessage.value = '';
+
+    // Load presets
+    const presetsData = await apiClient.getPresets();
+    presets.value = presetsData || [];
+
+    // Load system status (you'll need to add this endpoint)
+    try {
+      const status = await apiClient.getStatus();
+      subwooferEnabled.value = status.subwoofer === 'on';
+      dspBypass.value = status.bypass === 'on';
+      muteEnabled.value = status.mute === 'on';
+      mutePercentage.value = status.mutePercent || 100;
+    } catch (statusError) {
+      console.warn('Could not load system status:', statusError);
     }
-    // Attempt to get the list of presets to find the active one.
-    // This is a fallback or initial load strategy. WebSocket is primary.
-    const presets = await apiClient.getPresets();
-    if (presets && presets.length > 0) {
-      const activePreset = presets.find(p => p.is_active); // Assuming an 'is_active' flag or similar
-      if (activePreset) {
-        currentPresetName.value = activePreset.name;
-      } else if (presets.length === 1) { // Or if there's a default/first preset concept
-        currentPresetName.value = presets[0].name; // Fallback: use first preset if no active one marked
-      } else {
-        currentPresetName.value = 'No active preset found';
-      }
-    } else {
-      currentPresetName.value = 'No presets available';
+
+    // Load calibration data
+    try {
+      const calibration = await apiClient.getCalibration();
+      calibrationValue.value = calibration.spl;
+    } catch (calibrationError) {
+      console.warn('Could not load calibration data:', calibrationError);
     }
+
   } catch (error) {
-    console.error('Failed to fetch initial status data:', error);
-    errorMessage.value = `Failed to load initial data: ${error.message}`;
-    currentPresetName.value = 'Error loading preset';
+    console.error('Failed to load system data:', error);
+    errorMessage.value = `Failed to load system data: ${error.message}`;
   } finally {
-    // isLoading.value = false; // WebSocket will manage loading state primarily
+    isLoading.value = false;
   }
 }
 
-onMounted(() => {
-  fetchStatusData(); // Fetch initial data, primarily preset name
+// Preset management
+async function setActivePreset(presetName) {
+  try {
+    await apiClient.setActivePreset(presetName);
+    // Update local state
+    presets.value = presets.value.map(p => ({
+      ...p,
+      isCurrent: p.name === presetName
+    }));
+  } catch (error) {
+    console.error('Failed to set active preset:', error);
+    errorMessage.value = `Failed to activate preset: ${error.message}`;
+  }
+}
 
-  // Watch for WebSocket updates to populate most status fields
-  watch(liveUpdateData, (newData) => {
-    if (newData) {
-      isLoading.value = false; // Data has arrived
-      currentPresetName.value = newData.currentPresetName || newData.currentPreset || 'N/A';
-      subwooferStatus.value = newData.subwooferOn ? 'On' : 'Off';
-      bypassStatus.value = newData.dspBypassed ? 'Bypassed' : 'Active'; // Active means DSP is running
-      muteStatus.value = newData.isMuted ? 'Muted' : 'Unmuted';
-      volumeLevel.value = newData.masterVolume !== undefined ? newData.masterVolume : 0;
+function editPreset(presetName) {
+  router.push(`/preset/${encodeURIComponent(presetName)}`);
+}
 
-      // If specific fields are missing, reflect that
-      if (newData.currentPresetName === undefined && newData.currentPreset === undefined) currentPresetName.value = 'Preset data missing';
-      if (newData.subwooferOn === undefined) subwooferStatus.value = 'Subwoofer data missing';
-      if (newData.dspBypassed === undefined) bypassStatus.value = 'DSP status missing';
-      if (newData.isMuted === undefined) muteStatus.value = 'Mute status missing';
-      if (newData.masterVolume === undefined) volumeLevel.value = 'Volume data missing';
+async function copyPreset(presetName) {
+  try {
+    const copyName = `${presetName} Copy`;
+    await apiClient.copyPreset(presetName, copyName);
+    
+    // Reload presets to get the new copy
+    const updatedPresets = await apiClient.getPresets();
+    presets.value = updatedPresets || [];
+    
+  } catch (error) {
+    console.error('Failed to copy preset:', error);
+    errorMessage.value = `Failed to copy preset: ${error.message}`;
+  }
+}
 
-    } else if (!isWebSocketConnected.value) {
-        // If liveUpdateData is null AND websocket is not connected, it might mean a connection issue
-        // isLoading.value = false; // No longer loading, but data might be stale or unavailable
-        errorMessage.value = "WebSocket is disconnected. Displayed data might be stale or incomplete.";
+async function createNewPreset() {
+  if (!newPresetName.value.trim()) return;
+  
+  try {
+    await apiClient.createPreset(newPresetName.value.trim());
+    
+    // Reload presets
+    const updatedPresets = await apiClient.getPresets();
+    presets.value = updatedPresets || [];
+    
+    // Close dialog and reset name
+    showNewPresetDialog.value = false;
+    newPresetName.value = '';
+    
+  } catch (error) {
+    console.error('Failed to create preset:', error);
+    errorMessage.value = `Failed to create preset: ${error.message}`;
+  }
+}
+
+// System controls
+async function toggleSubwoofer() {
+  try {
+    await apiClient.setSubwoofer(subwooferEnabled.value);
+  } catch (error) {
+    console.error('Failed to toggle subwoofer:', error);
+    errorMessage.value = `Failed to toggle subwoofer: ${error.message}`;
+    // Revert state on error
+    subwooferEnabled.value = !subwooferEnabled.value;
+  }
+}
+
+async function toggleDspBypass() {
+  try {
+    await apiClient.setBypass(dspBypass.value);
+  } catch (error) {
+    console.error('Failed to toggle DSP bypass:', error);
+    errorMessage.value = `Failed to toggle DSP bypass: ${error.message}`;
+    // Revert state on error
+    dspBypass.value = !dspBypass.value;
+  }
+}
+
+async function toggleMute() {
+  try {
+    // Send the new state to the API
+    await apiClient.setMute(muteEnabled.value);
+  } catch (error) {
+    console.error('Failed to toggle mute:', error);
+    errorMessage.value = `Failed to toggle mute: ${error.message}`;
+    // Revert state on error
+    muteEnabled.value = !newState;
+  }
+}
+
+function updateMutePercentage() {
+  if (muteUpdateTimeout) {
+    clearTimeout(muteUpdateTimeout);
+  }
+  
+  muteUpdateTimeout = setTimeout(async () => {
+    try {
+      await apiClient.setMutePercent(mutePercentage.value);
+    } catch (error) {
+      console.error('Failed to update mute percentage:', error);
+      errorMessage.value = `Failed to update volume: ${error.message}`;
     }
-  }, { immediate: true, deep: true }); // immediate: true to run on mount with current liveUpdateData
+  }, 100);
+}
+
+// WebSocket live updates
+function setupLiveUpdates() {
+  apiClient.connectLiveUpdates(
+    (data) => {
+      // Handle live updates
+      if (data.event === 'preset' && data.name) {
+        // Update active preset
+        presets.value = presets.value.map(p => ({
+          ...p,
+          isCurrent: p.name === data.name
+        }));
+      }
+      // Add more event handlers as needed
+    },
+    (error) => {
+      console.error('WebSocket error:', error);
+    },
+    () => {
+      console.log('WebSocket disconnected');
+    }
+  );
+}
+
+// Lifecycle
+onMounted(() => {
+  loadSystemData();
+  setupLiveUpdates();
 });
 
-// Placeholder for control functions if buttons were added
-// async function toggleMute() { try { await apiClient.toggleMute(); } catch(e) { console.error(e); errorMessage.value = e.message; }}
-// async function toggleBypass() { try { await apiClient.toggleBypass(); } catch(e) { console.error(e); errorMessage.value = e.message; }}
-// async function toggleSubwoofer() { try { await apiClient.toggleSubwoofer(); } catch(e) { console.error(e); errorMessage.value = e.message; }}
-
+onUnmounted(() => {
+  apiClient.disconnectLiveUpdates();
+});
 </script>
 
 <style scoped>
-@reference "../style.css";
-.status-card {
-  @apply bg-vybes-dark-card p-5 rounded-lg shadow-md text-center;
-}
-.status-title {
-  @apply text-lg font-semibold text-vybes-accent mb-2;
-}
-.status-value {
-  @apply text-2xl font-light text-vybes-text-primary;
+@reference '../style.css';
+.control-section {
+  @apply bg-vybes-dark-element p-6 rounded-lg shadow-lg;
 }
 
-/* Placeholder for button styles if controls are added */
-/*
-.btn-control {
-  @apply bg-vybes-primary hover:bg-vybes-primary-hover text-white font-semibold py-2 px-4 rounded-lg shadow transition-colors duration-150 ease-in-out;
+.section-title {
+  @apply text-xl font-semibold text-vybes-accent mb-4;
 }
-.btn-control:disabled {
-  @apply bg-vybes-light-blue opacity-50 cursor-not-allowed;
+
+.preset-button {
+  @apply relative px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center space-x-2;
 }
-*/
+
+.preset-active {
+  @apply bg-vybes-primary text-white shadow-lg pr-20;
+}
+
+.preset-inactive {
+  @apply bg-vybes-dark-card text-vybes-text-primary hover:bg-vybes-dark-input border border-vybes-border;
+}
+
+.preset-add {
+  @apply bg-vybes-accent text-vybes-dark hover:bg-vybes-accent-light border-2 border-dashed border-vybes-accent;
+}
+
+.preset-controls {
+  @apply absolute right-2 top-1/2 transform -translate-y-1/2 flex space-x-1;
+}
+
+.preset-control-btn {
+  @apply p-1 hover:bg-white/20 rounded transition-colors;
+}
+
+.switch-container {
+  @apply flex items-center space-x-3 cursor-pointer;
+}
+
+.switch-input {
+  @apply sr-only;
+}
+
+.switch-slider {
+  @apply relative inline-block w-12 h-6 bg-gray-600 rounded-full transition-colors duration-200;
+}
+
+.switch-input:checked + .switch-slider {
+  @apply bg-vybes-primary;
+}
+
+.switch-slider::before {
+  @apply content-[''] absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform duration-200;
+}
+
+.switch-input:checked + .switch-slider::before {
+  @apply transform translate-x-6;
+}
+
+.switch-label {
+  @apply text-vybes-text-primary font-medium;
+}
+
+.slider {
+  @apply h-2 bg-vybes-dark-input rounded-lg appearance-none cursor-pointer;
+}
+
+.slider::-webkit-slider-thumb {
+  @apply appearance-none w-5 h-5 bg-vybes-primary rounded-full cursor-pointer;
+}
+
+.slider::-moz-range-thumb {
+  @apply w-5 h-5 bg-vybes-primary rounded-full cursor-pointer border-none;
+}
+
+.tools-button {
+  @apply flex items-center px-6 py-3 bg-vybes-accent text-vybes-dark font-semibold rounded-lg hover:bg-vybes-accent-light transition-colors;
+}
+
+.modal-overlay {
+  @apply fixed inset-0 bg-black/50 flex items-center justify-center z-50;
+}
+
+.modal-content {
+  @apply bg-vybes-dark-element p-6 rounded-lg shadow-xl max-w-md w-full mx-4;
+}
+
+/* CSS custom properties for theming - add these to your main CSS file */
+:root {
+  --vybes-primary: #3b82f6;
+  --vybes-primary-dark: #2563eb;
+  --vybes-accent: #f59e0b;
+  --vybes-accent-light: #fbbf24;
+  --vybes-dark: #111827;
+  --vybes-dark-element: #1f2937;
+  --vybes-dark-card: #374151;
+  --vybes-dark-input: #4b5563;
+  --vybes-border: #6b7280;
+  --vybes-text-primary: #f9fafb;
+  --vybes-text-secondary: #d1d5db;
+}
 </style>

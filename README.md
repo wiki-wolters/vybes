@@ -83,58 +83,88 @@ This page is for editing the properties of an individual preset.
 * Equal loudness: switch
  
 ## API Endpoints
-* PUT /calibrate/{spl}
+
+### Calibration
+* **GET /calibration**
+  * Returns calibration status and SPL value
+* **PUT /calibrate/{spl}**
   * spl: 40-120 The SPL measured at the listening position. When saved, it is saved with the corresponding SPL measured from the internal mic.
-* PUT /sub/{state}
+
+### System Controls
+* **GET /status**
+  * Returns current system status including all settings
+* **PUT /sub/{state}**
   * state: "on" or "off"
-* PUT /bypass/{state}
+* **PUT /bypass/{state}**
   * state: "on" or "off"
-* PUT /mute/{state}
+* **PUT /mute/{state}**
   * state: "on" or "off"
-* PUT /mute/percent/{percent}
+* **PUT /mute/percent/{percent}**
   * percent: 1-100
-* PUT /generate/tone/{freq}/{volume}
+* **PUT /preset/active/{name}**
+  * name: preset name to activate
+
+### Tone Generation
+* **PUT /generate/tone/{freq}/{volume}**
   * freq: 10-20k
   * volume: 1-100
-* PUT /generate/noise/{volume}
+* **PUT /generate/tone/stop**
+  * Stops tone generation
+* **PUT /generate/noise/{volume}**
   * volume: 0-100 A zero value turns off the noise
-* PUT /pulse
+* **PUT /pulse**
   * Plays a 100hz pulse for 200ms on each output, with a 300ms silence inbetween
-* PUT /preset/rename/{name}/{new}
-  * name: string matching existing preset
-  * new: new preset name
-* POST /preset/create/{name}
+
+### Preset Management
+* **GET /presets**
+  * Returns a JSON array of presets, where each preset object contains name and isCurrent boolean
+* **GET /preset/{name}**
+  * Returns JSON of all preset data
+* **POST /preset/create/{name}**
   * name: string not matching existing preset
-* POST /preset/copy/{name}/{new}
+* **POST /preset/copy/{name}/{new}**
   * name: string matching existing preset
   * new: new preset name
-* DEL /preset/{name}
+* **PUT /preset/rename/{name}/{new}**
   * name: string matching existing preset
-* PUT /preset/delay/{speaker}/{ms}
+  * new: new preset name
+* **DELETE /preset/{name}**
+  * name: string matching existing preset
+
+### Speaker Configuration
+* **PUT /preset/delay/{speaker}/{ms}**
   * speaker: "left", "right", "sub"
   * ms: float, millisecond value
-* POST /preset/{name}/eq/{type}/{spl}
+
+### EQ Management
+* **POST /preset/{name}/eq/{type}/{spl}**
   * type: "room" or "pref"
   * name: string matching existing preset
   * spl: 0-120
   * body: JSON representation of PEQ set
-* DEL /preset/{name}/eq/{type}/{spl}
+* **DELETE /preset/{name}/eq/{type}/{spl}**
   * type: "room" or "pref"
   * name: string matching existing preset
   * spl: 0-120 matching existing spl for this preset
-* PUT /preset/{name}/crossover/{freq}/slope
+
+### Crossover Configuration
+* **PUT /preset/{name}/crossover/{freq}/{slope}**
   * name: string matching existing preset
   * freq: 40-150
   * slope: "12" or "24"
-* PUT /preset/{name}/equal-loudness/{state}
+
+### Equal Loudness
+* **PUT /preset/{name}/equal-loudness/{state}**
   * name: string matching existing preset
   * state: "on" or "off"
-* GET /presets
-  * Returns a JSON array of presets, where each preset object contains
-    * name
-    * isCurrent: bool
-* GET /preset/{name}
-  * Returns JSON of all preset data
-* SOCKET /live-updates
+
+### Live Updates
+* **SOCKET /live-updates**
   * Messages to be received are JSON format with the following properties:
-    * event: "rta", "preset", "eq"
+    * event: "rta", "preset", "eq", "calibration", "subwoofer", "bypass", "mute", "mute_percent", "tone", "noise", "pulse", "speaker_delay", "crossover", "equal_loudness", "eq_deleted"
+
+## Directories
+* /ESP: ESP8266 API server
+* /Teensy: Teensy DSP code
+* /mock-server: Mock server for API development
+* /WebUI: Web UI code

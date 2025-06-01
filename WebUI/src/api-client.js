@@ -1,11 +1,15 @@
 /*
- * Vybes DSP API Client
+ * Vybes DSP API Client - Enhanced Version
  * A comprehensive JavaScript client for interacting with the Vybes DSP system
  */
 class VybesAPI {
   constructor(baseUrl = 'http://vybes.local') {
     this.baseUrl = baseUrl;
     this.socket = null;
+  }
+
+  get isWebSocketConnected() {
+    return this.socket && this.socket.readyState === WebSocket.OPEN;
   }
 
   /**
@@ -57,6 +61,14 @@ class VybesAPI {
     return this.request('PUT', `/calibrate/${spl}`);
   }
 
+  /**
+   * Get calibration status
+   * @returns {Promise<Object>} Calibration data including SPL value and status
+   */
+  async getCalibration() {
+    return this.request('GET', '/calibration');
+  }
+
   // ===== SYSTEM CONTROLS =====
 
   /**
@@ -97,6 +109,22 @@ class VybesAPI {
     return this.request('PUT', `/mute/percent/${percent}`);
   }
 
+  /**
+   * Set active preset
+   * @param {string} name - Preset name to activate
+   */
+  async setActivePreset(name) {
+    return this.request('PUT', `/preset/active/${encodeURIComponent(name)}`);
+  }
+
+  /**
+   * Get system status
+   * @returns {Promise<Object>} Current system status including all settings
+   */
+  async getStatus() {
+    return this.request('GET', '/status');
+  }
+
   // ===== TONE GENERATION =====
 
   /**
@@ -112,6 +140,13 @@ class VybesAPI {
       throw new Error('Volume must be between 1 and 100');
     }
     return this.request('PUT', `/generate/tone/${frequency}/${volume}`);
+  }
+
+  /**
+   * Stop tone generation
+   */
+  async stopTone() {
+    return this.request('PUT', '/generate/tone/stop');
   }
 
   /**
@@ -359,46 +394,11 @@ class VybesAPI {
 
 // Export for different module systems
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = VybesAPI;
+  module.exports = new VybesAPI();
   module.exports.default = VybesAPI;
 } else if (typeof window !== 'undefined') {
-  window.VybesAPI = VybesAPI;
+  window.VybesAPI = new VybesAPI();
 }
 
 // ES6 default export
-export default VybesAPI;
-
-// Usage examples:
-/*
-// ES6 import
-import VybesAPI from './api-client.js';
-
-// CommonJS require
-const VybesAPI = require('./api-client.js');
-
-// Browser global
-const vybes = new window.VybesAPI('http://vybes.local');
-
-// Basic usage
-const vybes = new VybesAPI('http://vybes.local');
-await vybes.calibrate(85);
-await vybes.setSubwoofer(true);
-await vybes.generateTone(1000, 50);
-
-// Preset management
-const presets = await vybes.getPresets();
-await vybes.createPreset('My New Preset');
-await vybes.setSpeakerDelay('left', 2.5);
-
-// EQ configuration
-const peqPoints = [
-  { frequency: 100, gain: 2.5, q: 1.2 },
-  { frequency: 1000, gain: -1.0, q: 0.8 }
-];
-await vybes.setEQ('My Preset', 'room', 85, peqPoints);
-
-// Live updates
-vybes.connectLiveUpdates((data) => {
-  console.log('Live update:', data.event, data);
-});
-*/
+export default new VybesAPI();

@@ -1,6 +1,30 @@
 <template>
   <div class="container mx-auto p-6 bg-vybes-dark-element rounded-lg shadow-xl min-h-[calc(100vh-200px)]">
-    <h1 class="text-3xl font-bold mb-6 text-vybes-light-blue text-center">Preset Editor</h1>
+    <!-- Mobile Header (visible only on mobile) -->
+    <div class="md:hidden flex flex-col space-y-4 mb-6">
+      <h1 class="text-3xl font-bold text-vybes-light-blue text-center">Preset Editor</h1>
+      <div class="flex flex-col space-y-3">
+        <button @click="promptCreatePreset" class="btn-primary w-full">
+          Create New Preset
+        </button>
+        <select 
+          v-model="selectedPresetName" 
+          @change="selectPreset(selectedPresetName)"
+          class="w-full px-3 py-2 bg-vybes-dark-input border border-vybes-dark-border rounded-md text-vybes-text-primary"
+          :disabled="isLoadingPresets"
+        >
+          <option value="" disabled>Select a preset</option>
+          <option v-for="preset in presets" :key="preset.name" :value="preset.name">
+            {{ preset.name }} {{ preset.isCurrent ? '(Active)' : '' }}
+          </option>
+        </select>
+      </div>
+    </div>
+    
+    <!-- Desktop Header (visible only on desktop) -->
+    <div class="hidden md:block mb-6">
+      <h1 class="text-3xl font-bold mb-4 text-vybes-light-blue text-center">Preset Editor</h1>
+    </div>
 
     <!-- General Feedback Message Area -->
     <div v-if="editorMessage" class="mb-6 p-4 rounded-md text-sm text-center transition-all duration-300"
@@ -13,23 +37,24 @@
       {{ editorMessage }}
     </div>
 
+    <!-- Loading indicator for presets -->
+    <div v-if="isLoadingPresets" class="text-center py-4 mb-6">
+      <svg class="animate-spin h-6 w-6 text-vybes-primary mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+      </svg>
+      <p class="text-vybes-text-secondary text-sm">Loading presets...</p>
+    </div>
+
     <div class="flex flex-col md:flex-row gap-6">
-      <!-- Preset List Column (Left) -->
-      <div class="md:w-1/3 bg-vybes-dark-card p-5 rounded-lg shadow-md">
+      <!-- Preset List Column (Left) - Hidden on mobile -->
+      <div class="hidden md:block md:w-1/3 bg-vybes-dark-card p-5 rounded-lg shadow-md">
         <h2 class="text-xl font-semibold mb-4 text-vybes-accent">Presets</h2>
         <button @click="promptCreatePreset" class="btn-primary w-full mb-4">
           Create New Preset
         </button>
-
-        <div v-if="isLoadingPresets" class="text-center py-4">
-          <svg class="animate-spin h-6 w-6 text-vybes-primary mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-          </svg>
-          <p class="text-vybes-text-secondary text-sm">Loading presets...</p>
-        </div>
         
-        <ul v-else-if="presets.length > 0" class="space-y-2">
+        <ul v-if="presets.length > 0" class="space-y-2 preset-list-container max-h-[500px] overflow-y-auto pr-1">
           <li v-for="preset in presets" :key="preset.name" 
               class="p-3 rounded-md transition-colors duration-150 ease-in-out cursor-pointer"
               :class="[
@@ -47,11 +72,11 @@
             </div>
           </li>
         </ul>
-        <p v-else class="text-vybes-text-secondary text-sm text-center py-4">No presets found.</p>
+        <p v-else-if="!isLoadingPresets" class="text-vybes-text-secondary text-sm text-center py-4">No presets found.</p>
       </div>
 
-      <!-- Editing Area (Right) -->
-      <div class="md:w-2/3 bg-vybes-dark-card p-5 rounded-lg shadow-md">
+      <!-- Editing Area -->
+      <div class="w-full md:w-2/3">
         <div v-if="isLoadingData" class="text-center py-10">
            <svg class="animate-spin h-8 w-8 text-vybes-primary mx-auto mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -64,39 +89,242 @@
           <p class="text-vybes-text-secondary text-sm mt-2">Or, create a new preset to get started.</p>
         </div>
         <div v-else>
-          <h2 class="text-2xl font-semibold mb-4 text-vybes-accent">
-            Editing: {{ selectedPresetName }}
-            <span v-if="selectedPresetData.isCurrent" class="text-base text-vybes-accent">(Active)</span>
-          </h2>
-          
-          <!-- Tabs (Placeholder for future) -->
-          <div class="mb-4 border-b border-vybes-dark-border">
-            <nav class="flex space-x-4">
-              <button @click="currentPANE = 'eq'" 
-                      :class="['py-2 px-4 font-medium text-sm', currentPANE === 'eq' ? 'border-b-2 border-vybes-primary text-vybes-primary' : 'text-vybes-text-secondary hover:text-vybes-text-primary']">
-                Parametric EQ
-              </button>
-              <!-- <button @click="currentPANE = 'crossover'" :class="[...]">Crossover</button> -->
-              <!-- <button @click="currentPANE = 'delay'" :class="[...]">Delays</button> -->
-            </nav>
-          </div>
-
-          <div v-if="currentPANE === 'eq'">
-            <ParametricEQ 
-              :peqPoints="eqPointsForEditor"
-              @change="handleEQChange"
-              :spl="selectedPresetData.eq?.room?.spl || 85"
-              @splChange="handleSPLChange"
-            />
-            <div class="mt-4 text-right">
-              <button @click="saveEQChanges" class="btn-primary">Save EQ Changes</button>
+          <!-- Preset Name Editing -->
+          <div class="flex flex-col md:flex-row md:justify-between md:items-center space-y-3 md:space-y-0 mb-4">
+            <div class="flex items-center">
+              <h2 class="text-2xl font-semibold text-vybes-accent mr-2">
+                {{ selectedPresetName }}
+              </h2>
+              <span v-if="selectedPresetData.isCurrent" class="text-sm bg-vybes-accent text-white px-2 py-1 rounded-md">Active</span>
+              <div class="ml-2 space-x-1">
+                <button @click="promptRenamePreset(selectedPresetName)" class="btn-icon btn-secondary-icon p-1" title="Rename Preset">✏️</button>
+                <button @click="promptCopyPreset(selectedPresetName)" class="btn-icon btn-secondary-icon p-1" title="Copy Preset">📋</button>
+                <button @click="deletePreset(selectedPresetName)" class="btn-icon btn-danger-icon p-1" title="Delete Preset">🗑️</button>
+              </div>
             </div>
+            <button @click="activatePreset" class="btn-primary w-full md:w-auto" :disabled="selectedPresetData && selectedPresetData.isCurrent">
+              {{ selectedPresetData && selectedPresetData.isCurrent ? 'Currently Active' : 'Activate Preset' }}
+            </button>
           </div>
-          <!-- Add other panes (crossover, delay) here later -->
+          
+          <!-- Sections are now stacked for scrolling -->
+
+          <!-- Crossover Configuration Section -->
+          <section class="mb-6 p-4 bg-vybes-dark-card rounded-lg">
+            <h4 class="text-md font-medium mb-3 text-vybes-text-primary">Subwoofer Crossover</h4>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm text-vybes-text-secondary mb-1">Frequency (Hz)</label>
+                <input 
+                  type="number" 
+                  v-model.number="crossoverFreq" 
+                  min="20" 
+                  max="200" 
+                  step="1" 
+                  class="w-full px-3 py-2 bg-vybes-dark-input border border-vybes-dark-border rounded-md text-vybes-text-primary"
+                >
+              </div>
+              <div>
+                <label class="block text-sm text-vybes-text-secondary mb-1">Slope (dB/oct)</label>
+                <select 
+                  v-model="crossoverSlope" 
+                  class="w-full px-3 py-2 bg-vybes-dark-input border border-vybes-dark-border rounded-md text-vybes-text-primary"
+                >
+                  <option value="6">6 dB/oct</option>
+                  <option value="12">12 dB/oct</option>
+                  <option value="18">18 dB/oct</option>
+                  <option value="24">24 dB/oct</option>
+                </select>
+              </div>
+            </div>
+            <div class="mt-4">
+              <button @click="setCrossover" class="btn-primary w-full">Save Crossover Settings</button>
+            </div>
+          </section>
+            
+          <!-- Equal Loudness Toggle Section -->
+          <section class="mb-6 p-4 bg-vybes-dark-card rounded-lg">
+            <h4 class="text-md font-medium mb-3 text-vybes-text-primary">Equal Loudness Compensation</h4>
+            <div class="flex items-center justify-between">
+              <div>
+                <span class="text-sm text-vybes-text-secondary">Enable equal loudness compensation</span>
+                <p class="text-sm text-vybes-text-secondary mt-1">Automatically adjusts EQ based on volume level</p>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" v-model="equalLoudness" class="sr-only peer">
+                <div class="w-11 h-6 bg-vybes-dark-input peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-vybes-primary rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-vybes-primary"></div>
+              </label>
+            </div>
+            <div class="mt-4">
+              <button @click="toggleEqualLoudness" class="btn-primary w-full">Save Equal Loudness Setting</button>
+            </div>
+          </section>
+          <!-- Speaker Delays Section -->
+          <section class="mb-6 p-4 bg-vybes-dark-card rounded-lg">
+            <div class="flex justify-between items-center mb-4">
+              <h3 class="text-lg font-semibold text-vybes-accent">Speaker Delays</h3>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <!-- Left Speaker -->
+              <div class="p-4 bg-vybes-dark-element rounded-lg shadow-sm">
+                <h4 class="text-md font-medium mb-3 text-vybes-light-blue">Left Speaker</h4>
+                <div class="mb-3">
+                  <label class="block text-sm font-medium text-vybes-text-secondary mb-1">Delay (ms)</label>
+                  <input 
+                    type="number" 
+                    v-model.number="speakerDelays.left" 
+                    min="0" 
+                    max="100" 
+                    step="0.1" 
+                    class="w-full px-3 py-2 bg-vybes-dark-input border border-vybes-dark-border rounded-md text-vybes-text-primary"
+                  >
+                </div>
+                <div class="flex justify-between">
+                  <button @click="sendTestPulse('left')" class="btn-secondary text-sm">Test Pulse</button>
+                  <button @click="setSpeakerDelay('left', speakerDelays.left)" class="btn-primary text-sm">Save</button>
+                </div>
+              </div>
+              
+              <!-- Right Speaker -->
+              <div class="p-4 bg-vybes-dark-element rounded-lg shadow-sm">
+                <h4 class="text-md font-medium mb-3 text-vybes-light-blue">Right Speaker</h4>
+                <div class="mb-3">
+                  <label class="block text-sm font-medium text-vybes-text-secondary mb-1">Delay (ms)</label>
+                  <input 
+                    type="number" 
+                    v-model.number="speakerDelays.right" 
+                    min="0" 
+                    max="100" 
+                    step="0.1" 
+                    class="w-full px-3 py-2 bg-vybes-dark-input border border-vybes-dark-border rounded-md text-vybes-text-primary"
+                  >
+                </div>
+                <div class="flex justify-between">
+                  <button @click="sendTestPulse('right')" class="btn-secondary text-sm">Test Pulse</button>
+                  <button @click="setSpeakerDelay('right', speakerDelays.right)" class="btn-primary text-sm">Save</button>
+                </div>
+              </div>
+              
+              <!-- Subwoofer -->
+              <div class="p-4 bg-vybes-dark-element rounded-lg shadow-sm">
+                <h4 class="text-md font-medium mb-3 text-vybes-light-blue">Subwoofer</h4>
+                <div class="mb-3">
+                  <label class="block text-sm font-medium text-vybes-text-secondary mb-1">Delay (ms)</label>
+                  <input 
+                    type="number" 
+                    v-model.number="speakerDelays.sub" 
+                    min="0" 
+                    max="100" 
+                    step="0.1" 
+                    class="w-full px-3 py-2 bg-vybes-dark-input border border-vybes-dark-border rounded-md text-vybes-text-primary"
+                  >
+                </div>
+                <div class="flex justify-between">
+                  <button @click="sendTestPulse('sub')" class="btn-secondary text-sm">Test Pulse</button>
+                  <button @click="setSpeakerDelay('sub', speakerDelays.sub)" class="btn-primary text-sm">Save</button>
+                </div>
+              </div>
+            </div>
+          </section>
+          <!-- Room Correction EQ Section -->
+          <section class="mb-6 p-4 bg-vybes-dark-card rounded-lg">
+            <div class="flex justify-between items-center mb-4">
+              <h3 class="text-lg font-semibold text-vybes-accent">Room Correction</h3>
+              <div class="flex items-center space-x-2">
+                <label class="text-sm text-vybes-text-secondary">SPL:</label>
+                <input 
+                  type="number" 
+                  v-model.number="currentRoomSPL" 
+                  min="0" 
+                  max="120" 
+                  step="1" 
+                  class="w-20 px-2 py-1 bg-vybes-dark-input border border-vybes-dark-border rounded-md text-vybes-text-primary text-sm"
+                  @change="handleRoomSPLChange"
+                >
+              </div>
+            </div>
+            
+            <!-- Room Correction EQ Sets List -->
+            <div v-if="roomEQSets.length > 0" class="mb-4">
+              <div class="text-sm text-vybes-text-secondary mb-2">Available EQ Sets:</div>
+              <div class="flex flex-wrap gap-2">
+                <button 
+                  v-for="set in roomEQSets" 
+                  :key="set.spl" 
+                  @click="selectRoomEQSet(set.spl)" 
+                  :class="['px-3 py-1 rounded-md text-sm', 
+                  currentRoomSPL === set.spl ? 'bg-vybes-primary text-white' : 'bg-vybes-dark-input text-vybes-text-secondary hover:bg-vybes-dark-hover']"
+                >
+                  {{ set.spl }} SPL
+                </button>
+              </div>
+            </div>
+            
+            <!-- Room Correction EQ Editor -->
+            <div class="bg-vybes-dark-card p-4 rounded-lg mb-4">
+              <ParametricEQ 
+                :eq-points="roomEQPointsForEditor"
+                @update:eq-points="handleRoomEQChange"
+                class="min-h-[400px] h-auto"
+              />
+            </div>
+            <div class="mt-4 text-right space-x-2">
+              <button @click="deleteRoomEQSet" class="btn-danger" v-if="roomEQSets.some(set => set.spl === currentRoomSPL)">Delete This EQ Set</button>
+              <button @click="saveRoomEQChanges" class="btn-primary">Save EQ Changes</button>
+            </div>
+          </section>
+          <!-- Preference Curve EQ Section -->
+          <section class="mb-6 p-4 bg-vybes-dark-card rounded-lg">
+            <div class="flex justify-between items-center mb-4">
+              <h3 class="text-lg font-semibold text-vybes-accent">Preference Curve</h3>
+              <div class="flex items-center space-x-2">
+                <label class="text-sm text-vybes-text-secondary">SPL:</label>
+                <input 
+                  type="number" 
+                  v-model.number="currentPrefSPL" 
+                  min="0" 
+                  max="120" 
+                  step="1" 
+                  class="w-20 px-2 py-1 bg-vybes-dark-input border border-vybes-dark-border rounded-md text-vybes-text-primary text-sm"
+                  @change="handlePrefSPLChange"
+                >
+              </div>
+            </div>
+            
+            <!-- Preference EQ Sets List -->
+            <div v-if="prefEQSets.length > 0" class="mb-4">
+              <div class="text-sm text-vybes-text-secondary mb-2">Available EQ Sets:</div>
+              <div class="flex flex-wrap gap-2">
+                <button 
+                  v-for="set in prefEQSets" 
+                  :key="set.spl" 
+                  @click="selectPrefEQSet(set.spl)" 
+                  :class="['px-3 py-1 rounded-md text-sm', 
+                  currentPrefSPL === set.spl ? 'bg-vybes-primary text-white' : 'bg-vybes-dark-input text-vybes-text-secondary hover:bg-vybes-dark-hover']"
+                >
+                  {{ set.spl }} SPL
+                </button>
+              </div>
+            </div>
+            
+            <!-- Preference Curve EQ Editor -->
+            <div class="bg-vybes-dark-card p-4 rounded-lg mb-4">
+              <ParametricEQ 
+                :eq-points="prefEQPointsForEditor"
+                @update:eq-points="handlePrefEQChange"
+                class="min-h-[400px] h-auto"
+              />
+            </div>
+            <div class="mt-4 text-right space-x-2">
+              <button @click="deletePrefEQSet" class="btn-danger" v-if="prefEQSets.some(set => set.spl === currentPrefSPL)">Delete This EQ Set</button>
+              <button @click="savePrefEQChanges" class="btn-primary">Save EQ Changes</button>
+            </div>
+          </section>
         </div>
       </div>
     </div>
-
+    
     <!-- Create Preset Modal -->
     <div v-if="showCreateModal" class="modal-backdrop">
       <div class="modal-content">
@@ -132,16 +360,23 @@
         </div>
       </div>
     </div>
-
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch, inject } from 'vue';
-import ParametricEQ from '../components/ParametricEQ.vue'; // Adjust path as needed
+import { ref, reactive, computed, onMounted, watch, inject, defineProps } from 'vue';
+import ParametricEQ from '../components/ParametricEQ.vue';
+
+// Define props for the component
+const props = defineProps({
+  name: {
+    type: String,
+    required: false
+  }
+});
 
 const apiClient = inject('vybesAPI');
-const liveUpdateData = inject('liveUpdateData'); // To be used later
+const liveUpdateData = inject('liveUpdateData');
 
 const presets = ref([]);
 const selectedPresetName = ref(null);
@@ -151,6 +386,7 @@ const isLoadingData = ref(false);
 const editorMessage = ref('');
 const messageType = ref('info'); // 'success', 'error', 'info'
 
+// Modal states
 const showCreateModal = ref(false);
 const newPresetName = ref('');
 const showRenameModal = ref(false);
@@ -159,12 +395,46 @@ const showCopyModal = ref(false);
 const copyPresetSourceName = ref('');
 const copyPresetNewName = ref('');
 
-const currentPANE = ref('eq'); // For now, only 'eq'
+// Current active tab/pane
+const currentPANE = ref('general');
 
-// Computed property for EQ points to pass to the ParametricEQ component
-const eqPointsForEditor = computed(() => {
-  // Ensure this path matches your actual data structure
-  return selectedPresetData.value?.eq?.room?.peqSet || [];
+// Speaker delays
+const speakerDelays = reactive({
+  left: 0,
+  right: 0,
+  sub: 0
+});
+
+// Crossover settings
+const crossoverFreq = ref(80); // Default 80Hz
+const crossoverSlope = ref('12'); // Default 12dB/oct
+
+// Equal loudness toggle
+const equalLoudness = ref(false);
+
+// Room correction EQ
+const roomEQSets = ref([]);
+const currentRoomSPL = ref(85); // Default SPL value
+
+// Preference curve EQ
+const prefEQSets = ref([]);
+const currentPrefSPL = ref(85); // Default SPL value
+
+// Computed properties for EQ points
+const roomEQPointsForEditor = computed(() => {
+  if (!selectedPresetData.value?.eq?.room) return [];
+  
+  // Find the EQ set matching the current SPL
+  const currentSet = roomEQSets.value.find(set => set.spl === currentRoomSPL.value);
+  return currentSet ? currentSet.peqSet : [];
+});
+
+const prefEQPointsForEditor = computed(() => {
+  if (!selectedPresetData.value?.eq?.pref) return [];
+  
+  // Find the EQ set matching the current SPL
+  const currentSet = prefEQSets.value.find(set => set.spl === currentPrefSPL.value);
+  return currentSet ? currentSet.peqSet : [];
 });
 
 function clearMessage() {
@@ -172,6 +442,7 @@ function clearMessage() {
   messageType.value = 'info';
 }
 
+// Fetch all presets from the API
 async function fetchPresets() {
   isLoadingPresets.value = true;
   clearMessage();
@@ -229,32 +500,331 @@ async function fetchPresetData(presetName) {
   }
 }
 
+// Initialize UI elements from loaded preset data
+function initializeFromPresetData(data) {
+  if (!data) return;
+  
+  // Initialize speaker delays
+  if (data.speakerDelays) {
+    speakerDelays.left = data.speakerDelays.left || 0;
+    speakerDelays.right = data.speakerDelays.right || 0;
+    speakerDelays.sub = data.speakerDelays.sub || 0;
+  } else {
+    speakerDelays.left = 0;
+    speakerDelays.right = 0;
+    speakerDelays.sub = 0;
+  }
+  
+  // Initialize crossover settings
+  if (data.crossover) {
+    crossoverFreq.value = data.crossover.frequency || 80;
+    crossoverSlope.value = data.crossover.slope || '12';
+  } else {
+    crossoverFreq.value = 80;
+    crossoverSlope.value = '12';
+  }
+  
+  // Initialize equal loudness
+  equalLoudness.value = data.equalLoudness === true;
+  
+  // Initialize room correction EQ sets
+  if (data.eq && data.eq.room) {
+    // Convert the room EQ data structure to an array of sets
+    roomEQSets.value = Object.entries(data.eq.room)
+      .filter(([key, value]) => key !== 'active') // Filter out non-set properties
+      .map(([spl, peqSet]) => ({
+        spl: parseInt(spl, 10),
+        peqSet: Array.isArray(peqSet) ? peqSet : []
+      }))
+      .sort((a, b) => a.spl - b.spl); // Sort by SPL value
+    
+    // Set current SPL to the first available set or default
+    currentRoomSPL.value = roomEQSets.value.length > 0 ? roomEQSets.value[0].spl : 85;
+  } else {
+    roomEQSets.value = [];
+    currentRoomSPL.value = 85;
+  }
+  
+  // Initialize preference curve EQ sets
+  if (data.eq && data.eq.pref) {
+    // Convert the preference EQ data structure to an array of sets
+    prefEQSets.value = Object.entries(data.eq.pref)
+      .filter(([key, value]) => key !== 'active') // Filter out non-set properties
+      .map(([spl, peqSet]) => ({
+        spl: parseInt(spl, 10),
+        peqSet: Array.isArray(peqSet) ? peqSet : []
+      }))
+      .sort((a, b) => a.spl - b.spl); // Sort by SPL value
+    
+    // Set current SPL to the first available set or default
+    currentPrefSPL.value = prefEQSets.value.length > 0 ? prefEQSets.value[0].spl : 85;
+  } else {
+    prefEQSets.value = [];
+    currentPrefSPL.value = 85;
+  }
+}
+
 function selectPreset(presetName) {
   if (selectedPresetName.value === presetName && selectedPresetData.value) return; // Avoid refetch if already selected
   selectedPresetName.value = presetName;
   // fetchPresetData will be called by the watcher on selectedPresetName
 }
 
-// Called by ParametricEQ component
-// This function updates the local state. A separate save function will send to backend.
-function handleEQChange(newEqPoints) {
-  if (!selectedPresetData.value || !selectedPresetData.value.eq || !selectedPresetData.value.eq.room) {
-    // Initialize structure if it doesn't exist
-    if (!selectedPresetData.value) selectedPresetData.value = {};
-    if (!selectedPresetData.value.eq) selectedPresetData.value.eq = {};
-    if (!selectedPresetData.value.eq.room) selectedPresetData.value.eq.room = { spl: 85, peqSet: [] }; // Default SPL
+// Handle room correction EQ changes
+async function handleRoomEQChange(eqPoints) {
+  // Find the current room EQ set
+  const currentSet = roomEQSets.value.find(set => set.spl === currentRoomSPL.value);
+  
+  if (currentSet) {
+    // Update the existing set
+    currentSet.peqSet = eqPoints;
+  } else {
+    // Create a new set if it doesn't exist
+    roomEQSets.value.push({
+      spl: currentRoomSPL.value,
+      peqSet: eqPoints
+    });
+    // Sort the sets by SPL
+    roomEQSets.value.sort((a, b) => a.spl - b.spl);
   }
-  selectedPresetData.value.eq.room.peqSet = newEqPoints;
-  editorMessage.value = 'EQ changes are pending. Click "Save EQ Changes" to apply.';
-  messageType.value = 'info';
+  
+  // Note: We're not saving to the API immediately. User needs to click Save button.
 }
 
-function handleSPLChange(newSPL) {
-    if (selectedPresetData.value && selectedPresetData.value.eq && selectedPresetData.value.eq.room) {
-        selectedPresetData.value.eq.room.spl = newSPL;
-        editorMessage.value = 'SPL change is pending. Click "Save EQ Changes" to apply.';
-        messageType.value = 'info';
+// Handle preference curve EQ changes
+async function handlePrefEQChange(eqPoints) {
+  // Find the current preference EQ set
+  const currentSet = prefEQSets.value.find(set => set.spl === currentPrefSPL.value);
+  
+  if (currentSet) {
+    // Update the existing set
+    currentSet.peqSet = eqPoints;
+  } else {
+    // Create a new set if it doesn't exist
+    prefEQSets.value.push({
+      spl: currentPrefSPL.value,
+      peqSet: eqPoints
+    });
+    // Sort the sets by SPL
+    prefEQSets.value.sort((a, b) => a.spl - b.spl);
+  }
+  
+  // Note: We're not saving to the API immediately. User needs to click Save button.
+}
+
+// Handle room SPL change
+function handleRoomSPLChange() {
+  // If the SPL value doesn't exist in the sets, create a new empty set
+  if (!roomEQSets.value.some(set => set.spl === currentRoomSPL.value)) {
+    roomEQSets.value.push({
+      spl: currentRoomSPL.value,
+      peqSet: []
+    });
+    roomEQSets.value.sort((a, b) => a.spl - b.spl);
+  }
+}
+
+// Handle preference SPL change
+function handlePrefSPLChange() {
+  // If the SPL value doesn't exist in the sets, create a new empty set
+  if (!prefEQSets.value.some(set => set.spl === currentPrefSPL.value)) {
+    prefEQSets.value.push({
+      spl: currentPrefSPL.value,
+      peqSet: []
+    });
+    prefEQSets.value.sort((a, b) => a.spl - b.spl);
+  }
+}
+
+// Save room correction EQ changes
+async function saveRoomEQChanges() {
+  if (!selectedPresetName.value) return;
+  
+  try {
+    const currentSet = roomEQSets.value.find(set => set.spl === currentRoomSPL.value);
+    if (!currentSet) {
+      throw new Error('No EQ set found for the current SPL value');
     }
+    
+    await apiClient.setEQ(selectedPresetName.value, 'room', currentRoomSPL.value, currentSet.peqSet);
+    editorMessage.value = 'Room correction EQ saved successfully';
+    messageType.value = 'success';
+  } catch (error) {
+    console.error('Failed to save room correction EQ:', error);
+    editorMessage.value = `Failed to save room correction EQ: ${error.message}`;
+    messageType.value = 'error';
+  }
+}
+
+// Save preference curve EQ changes
+async function savePrefEQChanges() {
+  if (!selectedPresetName.value) return;
+  
+  try {
+    const currentSet = prefEQSets.value.find(set => set.spl === currentPrefSPL.value);
+    if (!currentSet) {
+      throw new Error('No EQ set found for the current SPL value');
+    }
+    
+    await apiClient.setEQ(selectedPresetName.value, 'pref', currentPrefSPL.value, currentSet.peqSet);
+    editorMessage.value = 'Preference curve EQ saved successfully';
+    messageType.value = 'success';
+  } catch (error) {
+    console.error('Failed to save preference curve EQ:', error);
+    editorMessage.value = `Failed to save preference curve EQ: ${error.message}`;
+    messageType.value = 'error';
+  }
+}
+
+// Delete room correction EQ set
+async function deleteRoomEQSet() {
+  if (!selectedPresetName.value) return;
+  
+  try {
+    await apiClient.deleteEQ(selectedPresetName.value, 'room', currentRoomSPL.value);
+    
+    // Remove from local state
+    roomEQSets.value = roomEQSets.value.filter(set => set.spl !== currentRoomSPL.value);
+    
+    // Select another SPL if available
+    if (roomEQSets.value.length > 0) {
+      currentRoomSPL.value = roomEQSets.value[0].spl;
+    } else {
+      currentRoomSPL.value = 85; // Default
+    }
+    
+    editorMessage.value = 'Room correction EQ set deleted successfully';
+    messageType.value = 'success';
+  } catch (error) {
+    console.error('Failed to delete room correction EQ set:', error);
+    editorMessage.value = `Failed to delete room correction EQ set: ${error.message}`;
+    messageType.value = 'error';
+  }
+}
+
+// Delete preference curve EQ set
+async function deletePrefEQSet() {
+  if (!selectedPresetName.value) return;
+  
+  try {
+    await apiClient.deleteEQ(selectedPresetName.value, 'pref', currentPrefSPL.value);
+    
+    // Remove from local state
+    prefEQSets.value = prefEQSets.value.filter(set => set.spl !== currentPrefSPL.value);
+    
+    // Select another SPL if available
+    if (prefEQSets.value.length > 0) {
+      currentPrefSPL.value = prefEQSets.value[0].spl;
+    } else {
+      currentPrefSPL.value = 85; // Default
+    }
+    
+    editorMessage.value = 'Preference curve EQ set deleted successfully';
+    messageType.value = 'success';
+  } catch (error) {
+    console.error('Failed to delete preference curve EQ set:', error);
+    editorMessage.value = `Failed to delete preference curve EQ set: ${error.message}`;
+    messageType.value = 'error';
+  }
+}
+
+// Speaker delay handlers
+async function setSpeakerDelay(speaker, delayMs) {
+  if (!selectedPresetName.value) return;
+  
+  try {
+    await apiClient.setSpeakerDelay(selectedPresetName.value, speaker, delayMs);
+    
+    // Update local state
+    speakerDelays[speaker] = delayMs;
+    
+    editorMessage.value = `${speaker.charAt(0).toUpperCase() + speaker.slice(1)} speaker delay set to ${delayMs}ms`;
+    messageType.value = 'success';
+  } catch (error) {
+    console.error(`Failed to set ${speaker} speaker delay:`, error);
+    editorMessage.value = `Failed to set speaker delay: ${error.message}`;
+    messageType.value = 'error';
+    
+    // Reset to previous value
+    if (selectedPresetData.value?.speakerDelays) {
+      speakerDelays[speaker] = selectedPresetData.value.speakerDelays[speaker] || 0;
+    }
+  }
+}
+
+// Send test pulse to speaker
+async function sendTestPulse(speaker) {
+  if (!selectedPresetName.value) return;
+  
+  try {
+    await apiClient.sendTestPulse(selectedPresetName.value, speaker);
+    editorMessage.value = `Test pulse sent to ${speaker} speaker`;
+    messageType.value = 'info';
+  } catch (error) {
+    console.error(`Failed to send test pulse to ${speaker} speaker:`, error);
+    editorMessage.value = `Failed to send test pulse: ${error.message}`;
+    messageType.value = 'error';
+  }
+}
+
+// Crossover settings handlers
+async function setCrossover() {
+  if (!selectedPresetName.value) return;
+  
+  try {
+    await apiClient.setCrossover(selectedPresetName.value, crossoverFreq.value, crossoverSlope.value);
+    editorMessage.value = `Crossover set to ${crossoverFreq.value}Hz with ${crossoverSlope.value}dB/oct slope`;
+    messageType.value = 'success';
+  } catch (error) {
+    console.error('Failed to set crossover:', error);
+    editorMessage.value = `Failed to set crossover: ${error.message}`;
+    messageType.value = 'error';
+    
+    // Reset to previous values
+    if (selectedPresetData.value?.crossover) {
+      crossoverFreq.value = selectedPresetData.value.crossover.frequency || 80;
+      crossoverSlope.value = selectedPresetData.value.crossover.slope || '12';
+    }
+  }
+}
+
+// Equal loudness handler
+async function toggleEqualLoudness() {
+  if (!selectedPresetName.value) return;
+  
+  try {
+    await apiClient.setEqualLoudness(selectedPresetName.value, equalLoudness.value);
+    editorMessage.value = `Equal loudness ${equalLoudness.value ? 'enabled' : 'disabled'}`;
+    messageType.value = 'success';
+  } catch (error) {
+    console.error('Failed to toggle equal loudness:', error);
+    editorMessage.value = `Failed to toggle equal loudness: ${error.message}`;
+    messageType.value = 'error';
+    
+    // Reset to previous value
+    equalLoudness.value = selectedPresetData.value?.equalLoudness === true;
+  }
+}
+
+// Activate preset
+async function activatePreset() {
+  if (!selectedPresetName.value) return;
+  
+  try {
+    await apiClient.activatePreset(selectedPresetName.value);
+    
+    // Update local state to mark this preset as active
+    presets.value.forEach(preset => {
+      preset.isCurrent = preset.name === selectedPresetName.value;
+    });
+    
+    editorMessage.value = `Preset '${selectedPresetName.value}' activated`;
+    messageType.value = 'success';
+  } catch (error) {
+    console.error('Failed to activate preset:', error);
+    editorMessage.value = `Failed to activate preset: ${error.message}`;
+    messageType.value = 'error';
+  }
 }
 
 async function saveEQChanges() {
@@ -289,8 +859,19 @@ async function saveEQChanges() {
 }
 
 
-onMounted(() => {
-  fetchPresets();
+onMounted(async () => {
+  console.log('PresetEditorView mounted', { props });
+  
+  // Fetch presets on component mount
+  await fetchPresets();
+  
+  // If a preset name is provided via route params, select it
+  if (props.name) {
+    console.log('Selecting preset from route params:', props.name);
+    selectPreset(props.name);
+  } else if (!newName) {
+    selectedPresetData.value = null; // Clear data if no preset is selected
+  }
 });
 
 watch(selectedPresetName, (newName, oldName) => {

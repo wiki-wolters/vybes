@@ -7,19 +7,24 @@ export default {
   theme: {
     extend: {
       colors: {
-        'vybes-primary': '#0088ff',
+        'vybes-primary': '#3b82f6',
+        'vybes-primary-dark': '#2563eb',
         'vybes-primary-hover': '#0066cc', // Added for hover state
         'vybes-blue': '#0088ff',
         'vybes-light-blue': '#33aaff', // Added - used in Vue component
-        'vybes-accent': '#ff6b35', // Added - used in Vue component  
-        'vybes-accent-hover': '#ff6b35',
+        'vybes-accent': '#f59e0b', // Added - used in Vue component  
+        'vybes-accent-light': '#fbbf24',
+        'vybes-accent-hover': '#fbbf24',
         'vybes-dark-bg': '#1a1a1a',
-        'vybes-dark-card': '#0f0f0f',
-        'vybes-dark-element': '#222222',
-        'vybes-dark-input': '#444444',
+        'vybes-dark-card': '#374151',
+        'vybes-dark': '#111827',
+        'vybes-dark-element': '#1f2937',
+        'vybes-dark-card': '#4b5563',
+        'vybes-dark-input': '#4b5563',
         'vybes-dark-border': '#111',
-        'vybes-text-primary': '#ffffff',
-        'vybes-text-secondary': '#cccccc',
+        'vybes-border': '#6b7280',
+        'vybes-text-primary': '#f9fafb',
+        'vybes-text-secondary': '#d1d5db',
       },
       fontFamily: {
         sans: ['Segoe UI', 'system-ui', 'sans-serif'],

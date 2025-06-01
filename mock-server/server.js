@@ -541,6 +541,142 @@ app.put('/preset/:name/equal-loudness/:state', (req, res) => {
   });
 });
 
+// Calibration - GET endpoint
+app.get('/calibration', async (req, res) => {
+  try {
+    const calibrationSpl = await getSetting('calibration_spl');
+    const isCalibrated = calibrationSpl !== null;
+    
+    res.json({
+      isCalibrated,
+      spl: calibrationSpl ? parseInt(calibrationSpl) : null
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// System status - GET endpoint
+app.get('/status', async (req, res) => {
+  try {
+    const [
+      calibrationSpl,
+      subwooferState,
+      bypassState,
+      muteState,
+      mutePercent,
+      toneFrequency,
+      toneVolume,
+      noiseVolume
+    ] = await Promise.all([
+      getSetting('calibration_spl'),
+      getSetting('subwoofer_state'),
+      getSetting('bypass_state'),
+      getSetting('mute_state'),
+      getSetting('mute_percent'),
+      getSetting('tone_frequency'),
+      getSetting('tone_volume'),
+      getSetting('noise_volume')
+    ]);
+
+    // Get current preset
+    const currentPreset = await new Promise((resolve, reject) => {
+      db.get("SELECT name FROM presets WHERE is_current = 1", (err, row) => {
+        if (err) reject(err);
+        else resolve(row ? row.name : null);
+      });
+    });
+
+    res.json({
+      calibration: {
+        isCalibrated: calibrationSpl !== null,
+        spl: calibrationSpl ? parseInt(calibrationSpl) : null
+      },
+      subwoofer: subwooferState || 'on',
+      bypass: bypassState || 'off',
+      mute: {
+        state: muteState || 'off',
+        percent: mutePercent ? parseInt(mutePercent) : 0
+      },
+      tone: {
+        frequency: toneFrequency ? parseInt(toneFrequency) : 1000,
+        volume: toneVolume ? parseInt(toneVolume) : 50
+      },
+      noise: {
+        volume: noiseVolume ? parseInt(noiseVolume) : 0
+      },
+      currentPreset
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Stop tone generation
+app.put('/generate/tone/stop', (req, res) => {
+  broadcast({ event: 'tone', frequency: 0, volume: 0, stopped: true });
+  res.json({ success: true, message: 'Tone generation stopped' });
+});
+
+// Set active preset
+app.put('/preset/active/:name', (req, res) => {
+  const name = decodeURIComponent(req.params.name);
+  
+  // First, unset all current presets
+  db.run("UPDATE presets SET is_current = 0", (err) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    
+    // Then set the new current preset
+    db.run("UPDATE presets SET is_current = 1 WHERE name = ?", [name], function(err) {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      
+      if (this.changes === 0) {
+        return res.status(404).json({ error: 'Preset not found' });
+      }
+      
+      broadcast({ event: 'preset', action: 'activated', name });
+      res.json({ success: true, activePreset: name });
+    });
+  });
+});
+
+// Update speaker delay for specific preset (the existing one works with current preset)
+// This version allows specifying the preset name
+app.put('/preset/:name/delay/:speaker/:ms', (req, res) => {
+  const presetName = decodeURIComponent(req.params.name);
+  const speaker = req.params.speaker;
+  const delayMs = parseFloat(req.params.ms);
+  
+  if (!['left', 'right', 'sub'].includes(speaker)) {
+    return res.status(400).json({ error: 'Speaker must be "left", "right", or "sub"' });
+  }
+  
+  db.get("SELECT speaker_delays FROM presets WHERE name = ?", [presetName], (err, preset) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    if (!preset) {
+      return res.status(404).json({ error: 'Preset not found' });
+    }
+    
+    const delays = JSON.parse(preset.speaker_delays);
+    delays[speaker] = delayMs;
+    
+    db.run("UPDATE presets SET speaker_delays = ? WHERE name = ?", [JSON.stringify(delays), presetName], (err) => {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      
+      broadcast({ event: 'speaker_delay', speaker, delayMs, preset: presetName });
+      res.json({ success: true, speaker, delayMs, preset: presetName });
+    });
+  });
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);
