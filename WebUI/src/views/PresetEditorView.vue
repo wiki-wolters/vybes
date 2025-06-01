@@ -89,24 +89,16 @@
 
           <!-- Crossover Configuration Section -->
           <CardSection title="Subwoofer Crossover">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <InputGroup
+            <div>
+              <RangeSlider
                 v-model="crossoverFreq"
-                label="Frequency (Hz)"
-                type="number"
-                :min="20"
-                :max="200"
+                label="Frequency"
+                :min="40"
+                :max="150"
                 :step="1"
+                unit="Hz"
+                :decimals="0"
               />
-              <SelectGroup
-                v-model="crossoverSlope"
-                label="Slope (dB/oct)"
-              >
-                <option value="6">6 dB/oct</option>
-                <option value="12">12 dB/oct</option>
-                <option value="18">18 dB/oct</option>
-                <option value="24">24 dB/oct</option>
-              </SelectGroup>
             </div>
             <template #actions>
               <button @click="setCrossover" class="btn-primary w-full">Save Crossover Settings</button>
@@ -333,6 +325,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, watch, inject, defineProps } from 'vue';
 import ParametricEQ from '../components/ParametricEQ.vue';
+import RangeSlider from '../components/shared/RangeSlider.vue';
 import InputGroup from '../components/shared/InputGroup.vue';
 import SelectGroup from '../components/shared/SelectGroup.vue';
 import CardSection from '../components/shared/CardSection.vue';
@@ -742,19 +735,21 @@ async function sendTestPulse(speaker) {
 async function setCrossover() {
   if (!selectedPresetName.value) return;
   
+  // Use a fixed slope value since we removed the slope selector
+  const defaultSlope = '12';
+  
   try {
-    await apiClient.setCrossover(selectedPresetName.value, crossoverFreq.value, crossoverSlope.value);
-    editorMessage.value = `Crossover set to ${crossoverFreq.value}Hz with ${crossoverSlope.value}dB/oct slope`;
+    await apiClient.setCrossover(selectedPresetName.value, crossoverFreq.value, defaultSlope);
+    editorMessage.value = `Subwoofer crossover frequency set to ${crossoverFreq.value}Hz`;
     messageType.value = 'success';
   } catch (error) {
     console.error('Failed to set crossover:', error);
     editorMessage.value = `Failed to set crossover: ${error.message}`;
     messageType.value = 'error';
     
-    // Reset to previous values
+    // Reset to previous value
     if (selectedPresetData.value?.crossover) {
       crossoverFreq.value = selectedPresetData.value.crossover.frequency || 80;
-      crossoverSlope.value = selectedPresetData.value.crossover.slope || '12';
     }
   }
 }
