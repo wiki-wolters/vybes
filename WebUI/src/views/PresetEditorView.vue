@@ -1,25 +1,5 @@
 <template>
   <div class="container mx-auto p-6 bg-vybes-dark-element rounded-lg shadow-xl min-h-[calc(100vh-200px)]">
-    <!-- Mobile Header (visible only on mobile) -->
-    <div class="md:hidden flex flex-col space-y-4 mb-6">
-      <h1 class="text-3xl font-bold text-vybes-light-blue text-center">Preset Editor</h1>
-      <div class="flex flex-col space-y-3">
-        <button @click="promptCreatePreset" class="btn-primary w-full">
-          Create New Preset
-        </button>
-        <select 
-          v-model="selectedPresetName" 
-          @change="selectPreset(selectedPresetName)"
-          class="w-full px-3 py-2 bg-vybes-dark-input border border-vybes-dark-border rounded-md text-vybes-text-primary"
-          :disabled="isLoadingPresets"
-        >
-          <option value="" disabled>Select a preset</option>
-          <option v-for="preset in presets" :key="preset.name" :value="preset.name">
-            {{ preset.name }} {{ preset.isCurrent ? '(Active)' : '' }}
-          </option>
-        </select>
-      </div>
-    </div>
     
     <!-- Desktop Header (visible only on desktop) -->
     <div class="hidden md:block mb-6">
