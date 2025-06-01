@@ -103,9 +103,7 @@
                     :step="0.1"
                   />
                 </div>
-                <div class="flex justify-end">
-                  <button @click="sendTestPulse('left')" class="btn-secondary text-sm">Test Pulse</button>
-                </div>
+
               </div>
               
               <!-- Right Speaker -->
@@ -121,9 +119,7 @@
                     :step="0.1"
                   />
                 </div>
-                <div class="flex justify-end">
-                  <button @click="sendTestPulse('right')" class="btn-secondary text-sm">Test Pulse</button>
-                </div>
+
               </div>
               
               <!-- Subwoofer -->
@@ -139,9 +135,7 @@
                     :step="0.1"
                   />
                 </div>
-                <div class="flex justify-end">
-                  <button @click="sendTestPulse('sub')" class="btn-secondary text-sm">Test Pulse</button>
-                </div>
+
               </div>
             </div>
           </CardSection>
@@ -835,20 +829,6 @@ function setSpeakerDelay(speaker, delayMs) {
   debouncedSetSpeakerDelay(speaker, delayMs);
 }
 
-// Send test pulse to speaker
-async function sendTestPulse(speaker) {
-  if (!selectedPresetName.value) return;
-  
-  try {
-    await apiClient.sendTestPulse(selectedPresetName.value, speaker);
-    editorMessage.value = `Test pulse sent to ${speaker} speaker`;
-    messageType.value = 'info';
-  } catch (error) {
-    console.error(`Failed to send test pulse to ${speaker} speaker:`, error);
-    editorMessage.value = `Failed to send test pulse: ${error.message}`;
-    messageType.value = 'error';
-  }
-}
 
 // Crossover settings handlers
 function setCrossover() {
