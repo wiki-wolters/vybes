@@ -106,45 +106,35 @@
               {{ selectedPresetData && selectedPresetData.isCurrent ? 'Currently Active' : 'Activate Preset' }}
             </button>
           </div>
-          
-          <!-- Sections are now stacked for scrolling -->
 
           <!-- Crossover Configuration Section -->
-          <section class="mb-6 p-4 bg-vybes-dark-card rounded-lg">
-            <h4 class="text-md font-medium mb-3 text-vybes-text-primary">Subwoofer Crossover</h4>
+          <CardSection title="Subwoofer Crossover">
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label class="block text-sm text-vybes-text-secondary mb-1">Frequency (Hz)</label>
-                <input 
-                  type="number" 
-                  v-model.number="crossoverFreq" 
-                  min="20" 
-                  max="200" 
-                  step="1" 
-                  class="w-full px-3 py-2 bg-vybes-dark-input border border-vybes-dark-border rounded-md text-vybes-text-primary"
-                >
-              </div>
-              <div>
-                <label class="block text-sm text-vybes-text-secondary mb-1">Slope (dB/oct)</label>
-                <select 
-                  v-model="crossoverSlope" 
-                  class="w-full px-3 py-2 bg-vybes-dark-input border border-vybes-dark-border rounded-md text-vybes-text-primary"
-                >
-                  <option value="6">6 dB/oct</option>
-                  <option value="12">12 dB/oct</option>
-                  <option value="18">18 dB/oct</option>
-                  <option value="24">24 dB/oct</option>
-                </select>
-              </div>
+              <InputGroup
+                v-model="crossoverFreq"
+                label="Frequency (Hz)"
+                type="number"
+                :min="20"
+                :max="200"
+                :step="1"
+              />
+              <SelectGroup
+                v-model="crossoverSlope"
+                label="Slope (dB/oct)"
+              >
+                <option value="6">6 dB/oct</option>
+                <option value="12">12 dB/oct</option>
+                <option value="18">18 dB/oct</option>
+                <option value="24">24 dB/oct</option>
+              </SelectGroup>
             </div>
-            <div class="mt-4">
+            <template #actions>
               <button @click="setCrossover" class="btn-primary w-full">Save Crossover Settings</button>
-            </div>
-          </section>
+            </template>
+          </CardSection>
             
           <!-- Equal Loudness Toggle Section -->
-          <section class="mb-6 p-4 bg-vybes-dark-card rounded-lg">
-            <h4 class="text-md font-medium mb-3 text-vybes-text-primary">Equal Loudness Compensation</h4>
+          <CardSection title="Equal Loudness Compensation">
             <div class="flex items-center justify-between">
               <div>
                 <span class="text-sm text-vybes-text-secondary">Enable equal loudness compensation</span>
@@ -155,30 +145,25 @@
                 <div class="w-11 h-6 bg-vybes-dark-input peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-vybes-primary rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-vybes-primary"></div>
               </label>
             </div>
-            <div class="mt-4">
+            <template #actions>
               <button @click="toggleEqualLoudness" class="btn-primary w-full">Save Equal Loudness Setting</button>
-            </div>
-          </section>
+            </template>
+          </CardSection>
           <!-- Speaker Delays Section -->
-          <section class="mb-6 p-4 bg-vybes-dark-card rounded-lg">
-            <div class="flex justify-between items-center mb-4">
-              <h3 class="text-lg font-semibold text-vybes-accent">Speaker Delays</h3>
-            </div>
-            
+          <CardSection title="Speaker Delays">
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
               <!-- Left Speaker -->
               <div class="p-4 bg-vybes-dark-element rounded-lg shadow-sm">
                 <h4 class="text-md font-medium mb-3 text-vybes-light-blue">Left Speaker</h4>
                 <div class="mb-3">
-                  <label class="block text-sm font-medium text-vybes-text-secondary mb-1">Delay (ms)</label>
-                  <input 
-                    type="number" 
-                    v-model.number="speakerDelays.left" 
-                    min="0" 
-                    max="100" 
-                    step="0.1" 
-                    class="w-full px-3 py-2 bg-vybes-dark-input border border-vybes-dark-border rounded-md text-vybes-text-primary"
-                  >
+                  <InputGroup
+                    v-model="speakerDelays.left"
+                    label="Delay (ms)"
+                    type="number"
+                    :min="0"
+                    :max="100"
+                    :step="0.1"
+                  />
                 </div>
                 <div class="flex justify-between">
                   <button @click="sendTestPulse('left')" class="btn-secondary text-sm">Test Pulse</button>
@@ -190,15 +175,14 @@
               <div class="p-4 bg-vybes-dark-element rounded-lg shadow-sm">
                 <h4 class="text-md font-medium mb-3 text-vybes-light-blue">Right Speaker</h4>
                 <div class="mb-3">
-                  <label class="block text-sm font-medium text-vybes-text-secondary mb-1">Delay (ms)</label>
-                  <input 
-                    type="number" 
-                    v-model.number="speakerDelays.right" 
-                    min="0" 
-                    max="100" 
-                    step="0.1" 
-                    class="w-full px-3 py-2 bg-vybes-dark-input border border-vybes-dark-border rounded-md text-vybes-text-primary"
-                  >
+                  <InputGroup
+                    v-model="speakerDelays.right"
+                    label="Delay (ms)"
+                    type="number"
+                    :min="0"
+                    :max="100"
+                    :step="0.1"
+                  />
                 </div>
                 <div class="flex justify-between">
                   <button @click="sendTestPulse('right')" class="btn-secondary text-sm">Test Pulse</button>
@@ -210,15 +194,14 @@
               <div class="p-4 bg-vybes-dark-element rounded-lg shadow-sm">
                 <h4 class="text-md font-medium mb-3 text-vybes-light-blue">Subwoofer</h4>
                 <div class="mb-3">
-                  <label class="block text-sm font-medium text-vybes-text-secondary mb-1">Delay (ms)</label>
-                  <input 
-                    type="number" 
-                    v-model.number="speakerDelays.sub" 
-                    min="0" 
-                    max="100" 
-                    step="0.1" 
-                    class="w-full px-3 py-2 bg-vybes-dark-input border border-vybes-dark-border rounded-md text-vybes-text-primary"
-                  >
+                  <InputGroup
+                    v-model="speakerDelays.sub"
+                    label="Delay (ms)"
+                    type="number"
+                    :min="0"
+                    :max="100"
+                    :step="0.1"
+                  />
                 </div>
                 <div class="flex justify-between">
                   <button @click="sendTestPulse('sub')" class="btn-secondary text-sm">Test Pulse</button>
@@ -226,11 +209,10 @@
                 </div>
               </div>
             </div>
-          </section>
+          </CardSection>
           <!-- Room Correction EQ Section -->
-          <section class="mb-6 p-4 bg-vybes-dark-card rounded-lg">
-            <div class="flex justify-between items-center mb-4">
-              <h3 class="text-lg font-semibold text-vybes-accent">Room Correction</h3>
+          <CardSection title="Room Correction">
+            <template #header-actions>
               <div class="flex items-center space-x-2">
                 <label class="text-sm text-vybes-text-secondary">SPL:</label>
                 <input 
@@ -243,7 +225,7 @@
                   @change="handleRoomSPLChange"
                 >
               </div>
-            </div>
+            </template>
             
             <!-- Room Correction EQ Sets List -->
             <div v-if="roomEQSets.length > 0" class="mb-4">
@@ -269,15 +251,14 @@
                 class="min-h-[400px] h-auto"
               />
             </div>
-            <div class="mt-4 text-right space-x-2">
+            <template #actions>
               <button @click="deleteRoomEQSet" class="btn-danger" v-if="roomEQSets.some(set => set.spl === currentRoomSPL)">Delete This EQ Set</button>
               <button @click="saveRoomEQChanges" class="btn-primary">Save EQ Changes</button>
-            </div>
-          </section>
+            </template>
+          </CardSection>
           <!-- Preference Curve EQ Section -->
-          <section class="mb-6 p-4 bg-vybes-dark-card rounded-lg">
-            <div class="flex justify-between items-center mb-4">
-              <h3 class="text-lg font-semibold text-vybes-accent">Preference Curve</h3>
+          <CardSection title="Preference Curve">
+            <template #header-actions>
               <div class="flex items-center space-x-2">
                 <label class="text-sm text-vybes-text-secondary">SPL:</label>
                 <input 
@@ -290,7 +271,7 @@
                   @change="handlePrefSPLChange"
                 >
               </div>
-            </div>
+            </template>
             
             <!-- Preference EQ Sets List -->
             <div v-if="prefEQSets.length > 0" class="mb-4">
@@ -316,56 +297,66 @@
                 class="min-h-[400px] h-auto"
               />
             </div>
-            <div class="mt-4 text-right space-x-2">
+            <template #actions>
               <button @click="deletePrefEQSet" class="btn-danger" v-if="prefEQSets.some(set => set.spl === currentPrefSPL)">Delete This EQ Set</button>
               <button @click="savePrefEQChanges" class="btn-primary">Save EQ Changes</button>
-            </div>
-          </section>
+            </template>
+          </CardSection>
         </div>
       </div>
     </div>
     
     <!-- Create Preset Modal -->
-    <div v-if="showCreateModal" class="modal-backdrop">
-      <div class="modal-content">
-        <h3 class="text-xl font-semibold mb-4">Create New Preset</h3>
-        <input type="text" v-model="newPresetName" placeholder="Preset Name" class="modal-input w-full mb-4">
-        <div class="flex justify-end space-x-3">
-          <button @click="showCreateModal = false" class="btn-secondary">Cancel</button>
-          <button @click="createPreset" class="btn-primary">Create</button>
-        </div>
-      </div>
-    </div>
+    <ModalDialog
+      v-model="showCreateModal"
+      title="Create New Preset"
+      confirm-text="Create"
+      @confirm="createPreset"
+    >
+      <InputGroup
+        v-model="newPresetName"
+        placeholder="Preset Name"
+        class="w-full mb-4"
+      />
+    </ModalDialog>
     
     <!-- Rename Preset Modal -->
-    <div v-if="showRenameModal" class="modal-backdrop">
-      <div class="modal-content">
-        <h3 class="text-xl font-semibold mb-4">Rename Preset '{{ selectedPresetName }}'</h3>
-        <input type="text" v-model="renamePresetName" placeholder="New Preset Name" class="modal-input w-full mb-4">
-        <div class="flex justify-end space-x-3">
-          <button @click="showRenameModal = false" class="btn-secondary">Cancel</button>
-          <button @click="renamePreset" class="btn-primary">Rename</button>
-        </div>
-      </div>
-    </div>
+    <ModalDialog
+      v-model="showRenameModal"
+      :title="`Rename Preset '${selectedPresetName}'`"
+      confirm-text="Rename"
+      @confirm="renamePreset"
+    >
+      <InputGroup
+        v-model="renamePresetName"
+        placeholder="New Preset Name"
+        class="w-full mb-4"
+      />
+    </ModalDialog>
 
     <!-- Copy Preset Modal -->
-    <div v-if="showCopyModal" class="modal-backdrop">
-      <div class="modal-content">
-        <h3 class="text-xl font-semibold mb-4">Copy Preset '{{ copyPresetSourceName }}'</h3>
-        <input type="text" v-model="copyPresetNewName" placeholder="New Preset Name" class="modal-input w-full mb-4">
-        <div class="flex justify-end space-x-3">
-          <button @click="showCopyModal = false" class="btn-secondary">Cancel</button>
-          <button @click="copyPreset" class="btn-primary">Copy</button>
-        </div>
-      </div>
-    </div>
+    <ModalDialog
+      v-model="showCopyModal"
+      :title="`Copy Preset '${copyPresetSourceName}'`"
+      confirm-text="Copy"
+      @confirm="copyPreset"
+    >
+      <InputGroup
+        v-model="copyPresetNewName"
+        placeholder="New Preset Name"
+        class="w-full mb-4"
+      />
+    </ModalDialog>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted, watch, inject, defineProps } from 'vue';
 import ParametricEQ from '../components/ParametricEQ.vue';
+import InputGroup from '../components/shared/InputGroup.vue';
+import SelectGroup from '../components/shared/SelectGroup.vue';
+import CardSection from '../components/shared/CardSection.vue';
+import ModalDialog from '../components/shared/ModalDialog.vue';
 
 // Define props for the component
 const props = defineProps({
