@@ -1,6 +1,5 @@
 <template>
-  <div class="parametric-eq">
-    <div class="eq-container" ref="eqContainer">
+  <div class="eq-container" ref="eqContainer">
       <!-- Background grid -->
       <svg class="eq-grid" :width="width" :height="height">
         <!-- Frequency grid lines -->
@@ -160,7 +159,6 @@
         />
       </div>
     </div>
-  </div>
 </template>
 
 <script setup>
