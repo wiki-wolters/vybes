@@ -17,8 +17,7 @@
     <!-- Main Content -->
     <div v-if="!isLoading" class="space-y-6">
       <!-- Presets Section -->
-      <div class="control-section">
-        <h2 class="section-title">Presets</h2>
+      <CardSection title="Presets">
         <div class="flex flex-wrap gap-3">
           <button
             v-for="preset in presets"
@@ -64,11 +63,10 @@
             </svg>
           </button>
         </div>
-      </div>
+      </CardSection>
 
       <!-- Subwoofer Control -->
-      <div class="control-section">
-        <h2 class="section-title">Subwoofer</h2>
+      <CardSection title="Subwoofer">
         <label class="switch-container">
           <input
             type="checkbox"
@@ -79,11 +77,10 @@
           <span class="switch-slider"></span>
           <span class="switch-label">{{ subwooferEnabled ? 'On' : 'Off' }}</span>
         </label>
-      </div>
+      </CardSection>
 
       <!-- DSP Bypass Control -->
-      <div class="control-section">
-        <h2 class="section-title">DSP Processing</h2>
+      <CardSection title="DSP Processing">
         <label class="switch-container">
           <input
             type="checkbox"
@@ -94,26 +91,20 @@
           <span class="switch-slider"></span>
           <span class="switch-label">{{ dspBypass ? 'Bypassed' : 'Active' }}</span>
         </label>
-      </div>
+      </CardSection>
 
       <!-- Mute Controls -->
-      <div class="control-section">
-        <h2 class="section-title">Mute</h2>
+      <CardSection title="Mute">
         <div class="space-y-4">
           <!-- Mute Percentage Slider -->
-          <div>
-            <label class="block text-sm font-medium text-vybes-text-primary mb-2">
-              Volume: {{ mutePercentage }}%
-            </label>
-            <input
-              type="range"
-              min="1"
-              max="100"
-              v-model="mutePercentage"
-              @input="updateMutePercentage"
-              class="slider w-full"
-            >
-          </div>
+          <RangeSlider
+            v-model="mutePercentage"
+            label="Volume"
+            :min="1"
+            :max="100"
+            unit="%"
+            @update:modelValue="updateMutePercentage"
+          />
           
           <!-- Mute On/Off Switch -->
           <label class="switch-container">
@@ -127,7 +118,7 @@
             <span class="switch-label">{{ muteEnabled ? 'Muted' : 'Unmuted' }}</span>
           </label>
         </div>
-      </div>
+      </CardSection>
 
 
 
@@ -135,33 +126,18 @@
     </div>
 
     <!-- New Preset Dialog -->
-    <div v-if="showNewPresetDialog" class="modal-overlay" @click="showNewPresetDialog = false">
-      <div class="modal-content" @click.stop>
-        <h3 class="text-xl font-semibold text-vybes-text-primary mb-4">Create New Preset</h3>
-        <input
-          v-model="newPresetName"
-          type="text"
-          placeholder="Enter preset name"
-          class="w-full p-3 bg-vybes-dark-input text-vybes-text-primary rounded-lg border border-vybes-border focus:border-vybes-primary focus:outline-none mb-4"
-          @keyup.enter="createNewPreset"
-        >
-        <div class="flex justify-end space-x-3">
-          <button
-            @click="showNewPresetDialog = false"
-            class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            @click="createNewPreset"
-            :disabled="!newPresetName.trim()"
-            class="px-4 py-2 bg-vybes-primary text-white rounded-lg hover:bg-vybes-primary-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Create
-          </button>
-        </div>
-      </div>
-    </div>
+    <ModalDialog
+      v-model="showNewPresetDialog"
+      title="Create New Preset"
+      confirmText="Create"
+      @confirm="createNewPreset"
+    >
+      <InputGroup
+        v-model="newPresetName"
+        placeholder="Enter preset name"
+        @keyup.enter="createNewPreset"
+      />
+    </ModalDialog>
   </div>
 </template>
 
@@ -169,6 +145,10 @@
 import { ref, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import apiClient from '../api-client.js';
+import CardSection from '../components/shared/CardSection.vue';
+import InputGroup from '../components/shared/InputGroup.vue';
+import RangeSlider from '../components/shared/RangeSlider.vue';
+import ModalDialog from '../components/shared/ModalDialog.vue';
 
 const router = useRouter();
 

@@ -14,17 +14,26 @@
 
     <div class="grid md:grid-cols-1 lg:grid-cols-3 gap-8">
       <!-- Tone Generator Section -->
-      <div class="tool-card bg-vybes-dark-card">
-        <h2 class="text-xl font-semibold mb-4 text-vybes-accent">Tone Generator</h2>
+      <CardSection title="Tone Generator">
         <div class="mb-4">
-          <label for="toneFrequency" class="block text-sm font-medium text-vybes-text-primary mb-1">Frequency (10 - 20000 Hz):</label>
-          <input type="number" id="toneFrequency" v-model.number="toneFrequency" min="10" max="20000"
-            class="tool-input" :disabled="isGeneratingTone">
+          <InputGroup
+            v-model.number="toneFrequency"
+            label="Frequency (10 - 20000 Hz):"
+            type="number"
+            :min="10"
+            :max="20000"
+            :disabled="isGeneratingTone"
+          />
         </div>
         <div class="mb-6">
-          <label for="toneVolume" class="block text-sm font-medium text-vybes-text-primary mb-1">Volume (1 - 100%): {{ toneVolume }}%</label>
-          <input type="range" id="toneVolume" v-model.number="toneVolume" min="1" max="100"
-            class="w-full h-2 bg-vybes-dark-input rounded-lg appearance-none cursor-pointer" :disabled="isGeneratingTone">
+          <RangeSlider
+            v-model="toneVolume"
+            label="Volume"
+            :min="1"
+            :max="100"
+            unit="%"
+            :disabled="isGeneratingTone"
+          />
         </div>
         <div class="flex space-x-3">
           <button @click="generateToneSignal" :disabled="isGeneratingTone" class="btn-primary flex-1">
@@ -36,27 +45,30 @@
           </button>
         </div>
         <p v-if="isGeneratingTone" class="mt-3 text-xs text-green-400 text-center">Tone is currently active.</p>
-      </div>
+      </CardSection>
 
       <!-- Pink Noise Generator Section -->
-      <div class="tool-card bg-vybes-dark-card">
-        <h2 class="text-xl font-semibold mb-4 text-vybes-accent">Pink Noise Generator</h2>
+      <CardSection title="Pink Noise Generator">
         <div class="mb-6">
-          <label for="noiseVolume" class="block text-sm font-medium text-vybes-text-primary mb-1">Volume (0 - 100%): {{ noiseVolume }}% (0 to turn off)</label>
-          <input type="range" id="noiseVolume" v-model.number="noiseVolume" min="0" max="100"
-            class="w-full h-2 bg-vybes-dark-input rounded-lg appearance-none cursor-pointer" :disabled="isGeneratingNoise && noiseVolume > 0">
+          <RangeSlider
+            v-model="noiseVolume"
+            label="Volume (0 to turn off)"
+            :min="0"
+            :max="100"
+            unit="%"
+            :disabled="isGeneratingNoise && noiseVolume > 0"
+          />
         </div>
         <button @click="togglePinkNoise" class="w-full"
           :class="isGeneratingNoise ? 'btn-danger' : 'btn-primary'">
           <span v-if="isGeneratingNoise">Stop Pink Noise</span>
           <span v-else>Start Pink Noise</span>
         </button>
-         <p v-if="isGeneratingNoise" class="mt-3 text-xs text-green-400 text-center">Pink noise is currently active.</p>
-      </div>
+        <p v-if="isGeneratingNoise" class="mt-3 text-xs text-green-400 text-center">Pink noise is currently active.</p>
+      </CardSection>
 
       <!-- Test Pulse Section -->
-      <div class="tool-card bg-vybes-dark-card">
-        <h2 class="text-xl font-semibold mb-4 text-vybes-accent">System Test Pulse</h2>
+      <CardSection title="System Test Pulse">
         <p class="text-sm text-vybes-text-secondary mb-4">
           Plays a short audio pulse through the system. Useful for testing connections and basic output.
         </p>
@@ -70,13 +82,16 @@
           </span>
           <span v-else>Play Test Pulse</span>
         </button>
-      </div>
+      </CardSection>
     </div>
   </div>
 </template>
 
 <script setup>
 import { ref, inject } from 'vue';
+import CardSection from '../components/shared/CardSection.vue';
+import InputGroup from '../components/shared/InputGroup.vue';
+import RangeSlider from '../components/shared/RangeSlider.vue';
 
 const apiClient = inject('vybesAPI');
 
