@@ -2,6 +2,7 @@
   <div class="input-group">
     <label v-if="label" :for="inputId" class="block text-sm text-vybes-text-secondary mb-1">{{ label }}</label>
     <input 
+      ref="inputRef"
       :id="inputId"
       :type="type"
       :value="modelValue"
@@ -17,7 +18,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 
 const props = defineProps({
   modelValue: {
@@ -55,6 +56,16 @@ const props = defineProps({
 });
 
 const emit = defineEmits(['update:modelValue']);
+
+const inputRef = ref(null);
+
+const focus = () => {
+  if (inputRef.value) {
+    inputRef.value.focus();
+  }
+};
+
+defineExpose({ focus });
 
 const inputId = computed(() => `input-${Math.random().toString(36).substring(2, 9)}`);
 

@@ -124,6 +124,7 @@
       @confirm="createNewPreset"
     >
       <InputGroup
+        ref="newPresetNameInput"
         v-model="newPresetName"
         placeholder="Enter preset name"
         @keyup.enter="createNewPreset"
@@ -133,7 +134,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import apiClient from '../api-client.js';
 import CardSection from '../components/shared/CardSection.vue';
@@ -155,6 +156,7 @@ let muteUpdateTimeout = null;
 const calibrationValue = ref(null);
 const showNewPresetDialog = ref(false);
 const newPresetName = ref('');
+const newPresetNameInput = ref(null);
 
 // Load initial data
 async function loadSystemData() {
@@ -217,6 +219,9 @@ async function createNewPreset() {
   
   try {
     await apiClient.createPreset(newPresetName.value.trim());
+
+    //Navigate to preset editor
+    router.push(`/preset/${encodeURIComponent(newPresetName.value.trim())}`);
     
     // Reload presets
     const updatedPresets = await apiClient.getPresets();
@@ -309,6 +314,15 @@ function setupLiveUpdates() {
 onMounted(() => {
   loadSystemData();
   setupLiveUpdates();
+
+  watch(showNewPresetDialog, async (newValue) => {
+    if (newValue) {
+      await nextTick(); // Wait for the dialog and input to be rendered
+      if (newPresetNameInput.value) {
+        newPresetNameInput.value.focus();
+      }
+    }
+  });
 });
 
 onUnmounted(() => {

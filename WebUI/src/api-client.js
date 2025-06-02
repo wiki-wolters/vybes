@@ -289,7 +289,7 @@ class VybesAPI {
    * @param {number} frequency - Crossover frequency (40-150 Hz)
    * @param {string} slope - Slope: "12" or "24" (dB)
    */
-  async setCrossover(presetName, frequency, slope) {
+  async setCrossover(presetName, frequency, slope = '12') {
     if (frequency < 40 || frequency > 150) {
       throw new Error('Crossover frequency must be between 40 and 150 Hz');
     }

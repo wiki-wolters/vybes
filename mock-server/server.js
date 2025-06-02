@@ -29,7 +29,7 @@ db.serialize(() => {
     name TEXT PRIMARY KEY,
     is_current INTEGER DEFAULT 0,
     speaker_delays TEXT DEFAULT '{"left": 0, "right": 0, "sub": 0}',
-    crossover TEXT DEFAULT '{"frequency": 80, "slope": "24"}',
+    crossover TEXT DEFAULT '{"frequency": 80, "slope": "12"}',
     equal_loudness INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
@@ -45,7 +45,7 @@ db.serialize(() => {
   )`);
 
   // Insert default settings if they don't exist
-  db.get("SELECT value FROM system_settings WHERE key = 'calibration_spl'", (err, row) => {
+  db.get("SELECT value FROM system_settings WHERE key = 'subwoofer_state'", (err, row) => {
     if (!row) {
       const defaultSettings = [
         ['calibration_spl', '85'],
@@ -262,7 +262,8 @@ app.get('/preset/:name', (req, res) => {
     }
     
     // Get EQ configurations
-    db.all("SELECT type, spl, peq_data FROM eq_configs WHERE preset_name = ?", [name], (err, eqRows) => {
+    db.all("SELECT type,spl,peq_data FROM eq_configs WHERE preset_name = ? ORDER BY spl DESC", [name], (err, eqRows) => {
+      console.log(name, eqRows);
       if (err) {
         return res.status(500).json({ error: err.message });
       }
@@ -298,17 +299,84 @@ app.get('/preset/:name', (req, res) => {
 
 app.post('/preset/create/:name', (req, res) => {
   const name = decodeURIComponent(req.params.name);
-  
-  db.run("INSERT INTO presets (name) VALUES (?)", [name], function(err) {
+
+  const defaultCrossover = JSON.stringify({ subwoofer: { frequency: 40, enabled: true } });
+  const defaultSpeakerDelays = JSON.stringify({ left: 0, right: 0, sub: 0 });
+  const defaultEqualLoudness = 0; // false
+  const defaultIsCurrent = 1; // false, new presets are not current by default
+
+  // Default PEQ points: 3 points with gain 0, Q 1.0, at 100Hz, 1kHz, 10kHz
+  // Assuming type PK (parametric) and enabled for each point.
+  const defaultPEQPoints = [
+    { type: 'PK', freq: 100, gain: 0, q: 1.0, enabled: true },
+    { type: 'PK', freq: 1000, gain: 0, q: 1.0, enabled: true },
+    { type: 'PK', freq: 10000, gain: 0, q: 1.0, enabled: true }
+  ];
+
+  db.run('BEGIN TRANSACTION', function(err) {
     if (err) {
-      if (err.code === 'SQLITE_CONSTRAINT') {
-        return res.status(400).json({ error: 'Preset already exists' });
-      }
-      return res.status(500).json({ error: err.message });
+      console.error('Failed to start transaction:', err.message);
+      return res.status(500).json({ error: `Failed to start transaction: ${err.message}` });
     }
-    
-    broadcast({ event: 'preset', action: 'created', name });
-    res.json({ success: true, name });
+
+    //Update any existing current preset to not be current
+    db.run("UPDATE presets SET is_current = 0 WHERE is_current = 1");
+
+    db.run("INSERT INTO presets (name, crossover, speaker_delays, equal_loudness, is_current) VALUES (?, ?, ?, ?, ?)",
+      [name, defaultCrossover, defaultSpeakerDelays, defaultEqualLoudness, defaultIsCurrent],
+      function(err) {
+        if (err) {
+          db.run('ROLLBACK');
+          if (err.code === 'SQLITE_CONSTRAINT') { // Preset name is unique
+            return res.status(400).json({ error: 'Preset already exists' });
+          }
+          console.error('Failed to create preset:', err.message);
+          return res.status(500).json({ error: `Failed to create preset: ${err.message}` });
+        }
+        const presetId = this.lastID;
+
+        db.run("INSERT INTO eq_configs (preset_name, type, spl, peq_data) VALUES (?, 'room', 0, ?)",
+          [name, JSON.stringify(defaultPEQPoints)],
+          function(err) {
+            if (err) {
+              db.run('ROLLBACK');
+              console.error('Failed to add room correction settings:', err.message);
+              return res.status(500).json({ error: `Failed to add room correction settings: ${err.message}` });
+            }
+
+            db.run("INSERT INTO eq_configs (preset_name, type, spl, peq_data) VALUES (?, 'pref', 0, ?)",
+              [name, JSON.stringify(defaultPEQPoints)],
+              function(err) {
+                if (err) {
+                  db.run('ROLLBACK');
+                  console.error('Failed to add preference curve settings:', err.message);
+                  return res.status(500).json({ error: `Failed to add preference curve settings: ${err.message}` });
+                }
+
+                db.run('COMMIT', function(err) {
+                  if (err) {
+                    // SQLite automatically rolls back the transaction if COMMIT fails.
+                    console.error('Failed to commit transaction:', err.message);
+                    return res.status(500).json({ error: `Failed to commit transaction: ${err.message}` });
+                  }
+                  broadcast({ event: 'preset', action: 'created', name, id: presetId });
+                  const newPresetForResponse = {
+                    name,
+                    isCurrent: Boolean(defaultIsCurrent),
+                    speakerDelays: defaultSpeakerDelays,
+                    crossover: defaultCrossover,
+                    roomCorrection: [{ spl: 0, peqs: defaultPEQPoints }],
+                    preferenceEQ: [{ spl: 0, peqs: defaultPEQPoints }],
+                    equalLoudness: Boolean(defaultEqualLoudness)
+                  }
+                  res.status(201).json(newPresetForResponse);
+                });
+              }
+            );
+          }
+        );
+      }
+    );
   });
 });
 
