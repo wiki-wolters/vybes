@@ -452,18 +452,27 @@ app.put('/preset/rename/:old/:new', (req, res) => {
 
 app.delete('/preset/:name', (req, res) => {
   const name = decodeURIComponent(req.params.name);
-  
-  db.run("DELETE FROM presets WHERE name = ?", [name], function(err) {
-    if (err) {
-      return res.status(500).json({ error: err.message });
+
+  // First, delete associated EQ configurations
+  db.run("DELETE FROM eq_configs WHERE preset_name = ?", [name], function(eqErr) {
+    if (eqErr) {
+      console.error("Error deleting eq_configs for preset:", name, eqErr.message);
+      return res.status(500).json({ error: `Failed to delete associated EQ configs: ${eqErr.message}` });
     }
-    
-    if (this.changes === 0) {
-      return res.status(404).json({ error: 'Preset not found' });
-    }
-    
-    broadcast({ event: 'preset', action: 'deleted', name });
-    res.json({ success: true, name });
+
+    // Then, delete the preset itself
+    db.run("DELETE FROM presets WHERE name = ?", [name], function(presetErr) {
+      if (presetErr) {
+        return res.status(500).json({ error: `Failed to delete preset: ${presetErr.message}` });
+      }
+
+      if (this.changes === 0) {
+        return res.status(404).json({ error: 'Preset not found' });
+      }
+
+      broadcast({ event: 'preset', action: 'deleted', name });
+      res.json({ success: true, name });
+    });
   });
 });
 

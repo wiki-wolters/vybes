@@ -3,7 +3,7 @@
  * A comprehensive JavaScript client for interacting with the Vybes DSP system
  */
 class VybesAPI {
-  constructor(baseUrl = 'http://vybes.local') {
+  constructor(baseUrl = 'http://vybes-mock.local') {
     this.baseUrl = baseUrl;
     this.socket = null;
   }
