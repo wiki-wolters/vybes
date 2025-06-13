@@ -19,6 +19,9 @@ void handleFileServing(AsyncWebServerRequest *request) {
     if (path.endsWith("/")) {
         path += "index.html";
     }
+
+    String fsPath = "/web" + path;
+
     String contentType = "text/html";
     if (path.endsWith(".css")) {
         contentType = "text/css";
@@ -32,8 +35,13 @@ void handleFileServing(AsyncWebServerRequest *request) {
         contentType = "image/x-icon";
     }
 
-    if (LittleFS.exists(path)) {
-        request->send(LittleFS, path, contentType);
+    String gzPath = fsPath + ".gz";
+    if (LittleFS.exists(gzPath)) {
+        AsyncWebServerResponse *response = request->beginResponse(LittleFS, gzPath, contentType);
+        response->addHeader("Content-Encoding", "gzip");
+        request->send(response);
+    } else if (LittleFS.exists(fsPath)) {
+        request->send(LittleFS, fsPath, contentType);
     } else {
         request->send(404, "text/plain", "Not Found");
     }
