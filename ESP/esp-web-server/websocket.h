@@ -3,6 +3,8 @@
 
 #include <Arduino.h>
 
+extern WebSocketsServer webSocket;
+
 void setupWebSocket();
 void broadcastWebSocket(String message);
 

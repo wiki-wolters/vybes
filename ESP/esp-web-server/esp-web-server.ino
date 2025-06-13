@@ -3,9 +3,9 @@
 #include "websocket.h"
 #include "file_system.h"
 #include "teensy_comm.h"
+#include "utilities.h"
 
 // Define global objects
-ESP8266WebServer server(80);
 WebSocketsServer webSocket(8080);
 WiFiManager wifiManager;
 SystemSettings systemSettings;
@@ -56,7 +56,6 @@ void setup() {
 }
 
 void loop() {
-    server.handleClient();
     webSocket.loop();
     MDNS.update();
     handleDebounceWrite();
