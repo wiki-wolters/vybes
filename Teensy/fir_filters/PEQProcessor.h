@@ -4,7 +4,7 @@
 #include <Audio.h>
 
 // Maximum number of EQ bands supported
-#define MAX_PEQ_BANDS 8
+#define MAX_PEQ_BANDS 15
 
 
 // Structure to hold PEQ parameters

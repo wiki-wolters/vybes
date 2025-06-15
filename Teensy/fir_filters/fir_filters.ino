@@ -161,9 +161,9 @@ AudioConnection* outputConnections[] = {
 };
 
 struct PEQPoint {
-  int8_t frequency;
-  int8_t gain;
-  int8_t q;
+  float frequency;
+  float gain;
+  float q;
 
   String toString() {
     return "PEQ{" +
@@ -172,7 +172,7 @@ struct PEQPoint {
            "q=" + String(q) + ", " +
            "}";
   }
-};
+};;
 
 //Define a structure for holding state
 struct State {
@@ -189,7 +189,7 @@ struct State {
   float gainSub = 1.0;
 
   // Crossover
-  int8_t crossoverFrequency = 50;
+  int crossoverFrequency = 50;
 
   // Bypass options
   bool eqEnabled = true;
@@ -201,12 +201,12 @@ struct State {
   String firFileLeft = "";
   String firFileRight = "";
   String firFileSub = "";
-  int8_t firTaps = 256;
+  int firTaps = 256;
 
   // Speaker delay config (default to 0)
-  int8_t delayLeftMicroSeconds = 0;
-  int8_t delayRightMicroSeconds = 0;
-  int8_t delaySubMicroSeconds = 0;
+  int delayLeftMicroSeconds = 0;
+  int delayRightMicroSeconds = 0;
+  int delaySubMicroSeconds = 0;
 
   // an array of biquad filters for the left, right, and subwoofer
   PEQPoint filters[15];
@@ -382,7 +382,7 @@ void setDelayEnabled(bool enabled) {
   }
 }
 
-void setInputGains(int8_t bluetoothGain, int8_t opticalGain, int8_t generatorGain) {
+void setInputGains(float bluetoothGain, float opticalGain, float generatorGain) {
   state.gainBluetooth = bluetoothGain;
   state.gainOptical = opticalGain;
   state.gainGenerator = generatorGain;
@@ -396,7 +396,7 @@ void setInputGains(int8_t bluetoothGain, int8_t opticalGain, int8_t generatorGai
   Right_mixer.gain(3, state.gainGenerator);
 }
 
-void setSpeakerGains(int8_t leftGain, int8_t rightGain, int8_t subGain) {
+void setSpeakerGains(float leftGain, float rightGain, float subGain) {
   state.gainLeft = leftGain;
   state.gainRight = rightGain;
   state.gainSub = subGain;
@@ -407,9 +407,7 @@ void setSpeakerGains(int8_t leftGain, int8_t rightGain, int8_t subGain) {
   Sub_Post_Delay_amp.gain(state.gainSub);
 }
 
-
-
-void setEQFilters(PEQPoint filters[]) {
+void setEQFilters(PEQPoint filters[], int animationDuration = 20) {
   state.filters = filters;
   state.isDirty = true;
   // Convert PEQPoint to PEQBand and update both channels
@@ -424,12 +422,12 @@ void setEQFilters(PEQPoint filters[]) {
       nBands++;
     }
   }
-  peqLeft.updateBands(bands, nBands);
-  peqRight.updateBands(bands, nBands);
+  peqLeft.animateToBands(bands, nBands, animationDuration);
+  peqRight.animateToBands(bands, nBands, animationDuration);
 }
 
 
-void setCrossoverFrequency(int8_t frequency) {
+void setCrossoverFrequency(int frequency) {
   state.crossoverFrequency = frequency;
   state.isDirty = true;
 
@@ -442,7 +440,7 @@ void setCrossoverFrequency(int8_t frequency) {
   Sub_lowpass.setFrequency(1, state.crossoverFrequency, 0.707);
 }
 
-void setFIR(String leftFile, String rightFile, String subFile, int8_t taps) {
+void setFIR(String leftFile, String rightFile, String subFile, int taps) {
   state.firFileLeft = leftFile;
   state.firFileRight = rightFile;
   state.firFileSub = subFile;
