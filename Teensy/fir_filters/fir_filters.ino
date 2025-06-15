@@ -21,8 +21,12 @@ AudioMixer4              Right_mixer;
 AudioMixer4              Generator_mixer;   
 
 // Parametric EQs
-AudioFilterBiquad        Left_EQ;       
-AudioFilterBiquad        Right_EQ;      
+AudioFilterBiquad Left_EQ[15];
+AudioFilterBiquad Right_EQ[15];
+// Patchcord arrays for EQ chains
+AudioConnection* patchCord_LeftEQ[16]; // 15 between biquads, 1 from mixer
+AudioConnection* patchCord_RightEQ[16]; // 15 between biquads, 1 from mixer
+
 
 // Post EQ checkpoint, including subwoofer (using amps with gain = 1.0)
 AudioAmplifier           Left_Post_EQ_amp;
@@ -87,17 +91,8 @@ AudioConnection* externalInputConnections[] = {
 };
 
 // Connect from input mixers to Post-EQ checkpoint via EQ
-AudioConnection* eqConnections[] = {
-  AudioConnection          patchCord_RightMixerToRightEQ(Right_mixer, Right_EQ),
-  AudioConnection          patchCord_LeftMixerToLeftEQ(Left_mixer, Left_EQ),
-  AudioConnection          patchCord_LeftEQToLeftPostEQAmp(Left_EQ, Left_Post_EQ_amp),
-  AudioConnection          patchCord_RightEQToRightPostEQAmp(Right_EQ, Right_Post_EQ_amp),
-  // Connect right & left EQ to mono mix
-  AudioConnection          patchCord_LeftEQToMonoMixer(Left_EQ, Mono_mixer, 0),
-  AudioConnection          patchCord_RightEQToMonoMixer(Right_EQ, Mono_mixer, 1),
-  // Connect mono mix to checkpoint
-  AudioConnection          patchCord_MonoMixerToMonoPostEQAmp(Mono_mixer, Mono_Post_EQ_amp),
-};
+// EQ chain connections will be dynamically (re)built as needed in setEQFilters
+AudioConnection* eqConnections[16*2+3]; // Enough for both channels and mono
 
 // Connect from input mixers to Post-EQ checkpoint directly, bypassing EQ
 AudioConnection* bypassEQConnections[] = {
@@ -430,8 +425,51 @@ void setEQFilters(PEQPoint filters[]) {
   state.filters = filters;
   state.isDirty = true;
 
-  // TODO: Replace Left_EQ and Right_EQ with an array of biquads, joined in a chain
+  // Disconnect and delete any existing patchcords for EQ chains
+  for (int i = 0; i < 16; ++i) {
+    if (patchCord_LeftEQ[i]) { patchCord_LeftEQ[i]->disconnect(); delete patchCord_LeftEQ[i]; patchCord_LeftEQ[i] = nullptr; }
+    if (patchCord_RightEQ[i]) { patchCord_RightEQ[i]->disconnect(); delete patchCord_RightEQ[i]; patchCord_RightEQ[i] = nullptr; }
+  }
+
+  // Count number of valid filters (assume filters[] is sized up to 15, unused have frequency <= 0)
+  int numFilters = 0;
+  for (int i = 0; i < 15; ++i) {
+    if (filters[i].frequency > 0) ++numFilters;
+    else break;
+  }
+  if (numFilters == 0) numFilters = 1; // Always at least 1 biquad (flat)
+
+  // Connect Left chain: Left_mixer -> Left_EQ[0] -> ... -> Left_EQ[numFilters-1] -> Left_Post_EQ_amp
+  patchCord_LeftEQ[0] = new AudioConnection(Left_mixer, Left_EQ[0]);
+  for (int i = 1; i < numFilters; ++i) {
+    patchCord_LeftEQ[i] = new AudioConnection(Left_EQ[i-1], Left_EQ[i]);
+  }
+  patchCord_LeftEQ[numFilters] = new AudioConnection(Left_EQ[numFilters-1], Left_Post_EQ_amp);
+
+  // Connect Right chain: Right_mixer -> Right_EQ[0] -> ... -> Right_EQ[numFilters-1] -> Right_Post_EQ_amp
+  patchCord_RightEQ[0] = new AudioConnection(Right_mixer, Right_EQ[0]);
+  for (int i = 1; i < numFilters; ++i) {
+    patchCord_RightEQ[i] = new AudioConnection(Right_EQ[i-1], Right_EQ[i]);
+  }
+  patchCord_RightEQ[numFilters] = new AudioConnection(Right_EQ[numFilters-1], Right_Post_EQ_amp);
+
+  // Set biquad coefficients for each filter, unused biquads set to flat
+  for (int i = 0; i < 15; ++i) {
+    if (i < numFilters) {
+      // Set biquad for both channels (example: peaking EQ)
+      float freq = filters[i].frequency;
+      float gain = filters[i].gain;
+      float q = filters[i].q;
+      Left_EQ[i].setPeaking(freq, q, gain);
+      Right_EQ[i].setPeaking(freq, q, gain);
+    } else {
+      // Set unused biquads to flat
+      Left_EQ[i].setPeaking(1000, 1.0, 0.0); // center freq, Q=1, gain=0dB
+      Right_EQ[i].setPeaking(1000, 1.0, 0.0);
+    }
+  }
 }
+
 
 void setCrossoverFrequency(int8_t frequency) {
   state.crossoverFrequency = frequency;
