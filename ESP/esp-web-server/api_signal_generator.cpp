@@ -1,4 +1,5 @@
 #include "globals.h"
+#include "config.h"
 #include "web_server.h"
 #include "websocket.h"
 #include "teensy_comm.h"
@@ -19,15 +20,15 @@ void handlePutTone(AsyncWebServerRequest *request) {
         return;
     }
 
-    systemSettings.toneFrequency = freq;
-    systemSettings.toneVolume = vol;
+    current_config.toneFrequency = freq;
+    current_config.toneVolume = vol;
     scheduleConfigWrite();
 
     sendToTeensy("tone", freqStr + "," + volStr);
 
     DynamicJsonDocument doc(256);
-    doc["toneFrequency"] = systemSettings.toneFrequency;
-    doc["toneVolume"] = systemSettings.toneVolume;
+    doc["toneFrequency"] = current_config.toneFrequency;
+    doc["toneVolume"] = current_config.toneVolume;
 
     String response;
     serializeJson(doc, response);
@@ -37,8 +38,8 @@ void handlePutTone(AsyncWebServerRequest *request) {
 }
 
 void handlePutToneStop(AsyncWebServerRequest *request) {
-    systemSettings.toneFrequency = 0;
-    systemSettings.toneVolume = 0;
+    current_config.toneFrequency = 0;
+    current_config.toneVolume = 0;
     scheduleConfigWrite();
 
     sendToTeensy("tone_stop", "");
@@ -63,13 +64,13 @@ void handlePutNoise(AsyncWebServerRequest *request) {
         return;
     }
 
-    systemSettings.noiseVolume = vol;
+    current_config.noiseVolume = vol;
     scheduleConfigWrite();
 
     sendToTeensy("noise", volStr);
 
     DynamicJsonDocument doc(256);
-    doc["noiseVolume"] = systemSettings.noiseVolume;
+    doc["noiseVolume"] = current_config.noiseVolume;
 
     String response;
     serializeJson(doc, response);

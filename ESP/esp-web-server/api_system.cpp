@@ -1,4 +1,5 @@
 #include "globals.h"
+#include "config.h"
 #include "web_server.h"
 #include "websocket.h"
 #include "teensy_comm.h"
@@ -6,14 +7,14 @@
 
 void handleGetStatus(AsyncWebServerRequest *request) {
     DynamicJsonDocument doc(1024);
-    doc["subwooferState"] = systemSettings.subwooferState;
-    doc["bypassState"] = systemSettings.bypassState;
-    doc["muteState"] = systemSettings.muteState;
-    doc["mutePercent"] = systemSettings.mutePercent;
-    doc["toneFrequency"] = systemSettings.toneFrequency;
-    doc["toneVolume"] = systemSettings.toneVolume;
-    doc["noiseVolume"] = systemSettings.noiseVolume;
-    doc["currentPreset"] = systemSettings.currentPreset;
+    doc["subwooferState"] = current_config.subwooferState;
+    doc["bypassState"] = current_config.bypassState;
+    doc["muteState"] = current_config.muteState;
+    doc["mutePercent"] = current_config.mutePercent;
+    doc["toneFrequency"] = current_config.toneFrequency;
+    doc["toneVolume"] = current_config.toneVolume;
+    doc["noiseVolume"] = current_config.noiseVolume;
+    doc["currentPreset"] = current_config.currentPresetName;
 
     String response;
     serializeJson(doc, response);
@@ -27,13 +28,14 @@ void handlePutSub(AsyncWebServerRequest *request) {
         return;
     }
 
-    systemSettings.subwooferState = state;
+    strncpy(current_config.subwooferState, state.c_str(), sizeof(current_config.subwooferState) - 1);
+    current_config.subwooferState[sizeof(current_config.subwooferState) - 1] = '\0'; // Ensure null termination
     scheduleConfigWrite();
 
     sendToTeensy("sub", state);
 
     DynamicJsonDocument doc(256);
-    doc["subwooferState"] = systemSettings.subwooferState;
+    doc["subwooferState"] = current_config.subwooferState;
 
     String response;
     serializeJson(doc, response);
@@ -49,13 +51,14 @@ void handlePutBypass(AsyncWebServerRequest *request) {
         return;
     }
 
-    systemSettings.bypassState = state;
+    strncpy(current_config.bypassState, state.c_str(), sizeof(current_config.bypassState) - 1);
+    current_config.bypassState[sizeof(current_config.bypassState) - 1] = '\0'; // Ensure null termination
     scheduleConfigWrite();
 
     sendToTeensy("bypass", state);
 
     DynamicJsonDocument doc(256);
-    doc["bypassState"] = systemSettings.bypassState;
+    doc["bypassState"] = current_config.bypassState;
 
     String response;
     serializeJson(doc, response);
@@ -71,13 +74,14 @@ void handlePutMute(AsyncWebServerRequest *request) {
         return;
     }
 
-    systemSettings.muteState = state;
+    strncpy(current_config.muteState, state.c_str(), sizeof(current_config.muteState) - 1);
+    current_config.muteState[sizeof(current_config.muteState) - 1] = '\0'; // Ensure null termination
     scheduleConfigWrite();
 
     sendToTeensy("mute", state);
 
     DynamicJsonDocument doc(256);
-    doc["muteState"] = systemSettings.muteState;
+    doc["muteState"] = current_config.muteState;
 
     String response;
     serializeJson(doc, response);
@@ -95,13 +99,13 @@ void handlePutMutePercent(AsyncWebServerRequest *request) {
         return;
     }
 
-    systemSettings.mutePercent = percent;
+    current_config.mutePercent = percent;
     scheduleConfigWrite();
 
     sendToTeensy("mute_percent", percentStr);
 
     DynamicJsonDocument doc(256);
-    doc["mutePercent"] = systemSettings.mutePercent;
+    doc["mutePercent"] = current_config.mutePercent;
 
     String response;
     serializeJson(doc, response);

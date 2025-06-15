@@ -9,5 +9,6 @@ void handlePostPresetEQ(AsyncWebServerRequest *request);
 void handleDeletePresetEQ(AsyncWebServerRequest *request);
 void handlePutPresetCrossover(AsyncWebServerRequest *request);
 void handlePutPresetEqualLoudness(AsyncWebServerRequest *request);
+void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total);
 
 #endif // API_PRESET_CONFIG_H

@@ -1,4 +1,5 @@
 #include "globals.h"
+#include "config.h"
 #include "web_server.h"
 #include "websocket.h"
 #include "file_system.h"
@@ -8,7 +9,7 @@
 // Define global objects
 WebSocketsServer webSocket(8080);
 WiFiManager wifiManager;
-SystemSettings systemSettings;
+// SystemSettings systemSettings; // This is now replaced by the global 'current_config' object.
 bool configChanged = false;
 unsigned long lastConfigChange = 0;
 const unsigned long WRITE_DELAY = 500;
@@ -26,7 +27,8 @@ void setupWiFi() {
 
 void handleDebounceWrite() {
     if (configChanged && (millis() - lastConfigChange > WRITE_DELAY)) {
-        saveSystemSettings();
+        Serial.println("Debouncing: Saving configuration to EEPROM...");
+        save_config();
         configChanged = false;
     }
 }
@@ -39,8 +41,8 @@ void scheduleConfigWrite() {
 void setup() {
     Serial.begin(115200);
     Wire.begin();
-    initLittleFS();
-    loadSystemSettings();
+    initLittleFS(); // For serving web files
+    init_config();  // Load configuration from EEPROM
     setupWiFi();
 
     if (MDNS.begin("vybes")) {

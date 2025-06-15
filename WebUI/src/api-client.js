@@ -1,9 +1,11 @@
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://vybes.local'
+
 /*
  * Vybes DSP API Client - Enhanced Version
  * A comprehensive JavaScript client for interacting with the Vybes DSP system
  */
 class VybesAPI {
-  constructor(baseUrl = 'http://vybes-mock.local') {
+  constructor(baseUrl = API_BASE_URL) {
     this.baseUrl = baseUrl;
     this.socket = null;
   }

@@ -20,7 +20,7 @@ void handleFileServing(AsyncWebServerRequest *request) {
         path += "index.html";
     }
 
-    String fsPath = "/web" + path;
+    String fsPath = "/dist" + path;
 
     String contentType = "text/html";
     if (path.endsWith(".css")) {
@@ -85,6 +85,7 @@ void setupWebServer() {
     // API Routes - EQ Management
     server.on("/preset/:name/eq/:type/:spl", HTTP_POST, handlePostPresetEQ);
     server.on("/preset/:name/eq/:type/:spl", HTTP_DELETE, handleDeletePresetEQ);
+    server.on("/preset/:name/eq/:type/:spl", HTTP_PUT, [](AsyncWebServerRequest *request){}, NULL, handlePutPresetEQPoints);
 
     // API Routes - Crossover and Equal Loudness
     server.on("/preset/:name/crossover/:type/:freq", HTTP_PUT, handlePutPresetCrossover);

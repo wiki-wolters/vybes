@@ -1,15 +1,21 @@
 #include "globals.h"
 #include "web_server.h"
 #include "websocket.h"
-#include "file_system.h"
 #include "utilities.h"
-#include "teensy_comm.h"
+#include "config.h"
+#include "api_helpers.h"
+#include <ArduinoJson.h>
+#include <string.h>
+
+// --- API Handlers ---
 
 void handleGetPresets(AsyncWebServerRequest *request) {
     DynamicJsonDocument doc(1024);
     JsonArray presets = doc.to<JsonArray>();
-    for (int i = 0; i < systemSettings.numPresets; i++) {
-        presets.add(systemSettings.presets[i].name);
+    for (int i = 0; i < MAX_PRESETS; i++) {
+        if (strlen(current_config.presets[i].name) > 0) {
+            presets.add(current_config.presets[i].name);
+        }
     }
 
     String response;
@@ -19,73 +25,97 @@ void handleGetPresets(AsyncWebServerRequest *request) {
 
 void handleGetPreset(AsyncWebServerRequest *request) {
     String presetName = request->pathArg(0);
-    String filePath = "/presets/" + presetName + ".json";
+    int presetIndex = find_preset_by_name(presetName.c_str());
 
-    if (!LittleFS.exists(filePath)) {
+    if (presetIndex == -1) {
         request->send(404, "text/plain", "Preset not found");
         return;
     }
 
-    File file = LittleFS.open(filePath, "r");
-    request->send(LittleFS, filePath, "application/json");
-    file.close();
+    const Preset& preset = current_config.presets[presetIndex];
+    DynamicJsonDocument doc(3072); // Increased size for complex presets
+    doc["name"] = preset.name;
+    
+    JsonObject delay = doc.createNestedObject("delay");
+    delay["left"] = preset.delay.left;
+    delay["right"] = preset.delay.right;
+    delay["sub"] = preset.delay.sub;
+
+    JsonObject crossover = doc.createNestedObject("crossover");
+    crossover["lowPass"] = preset.crossover.lowPass;
+    crossover["highPass"] = preset.crossover.highPass;
+
+    doc["equalLoudness"] = preset.equalLoudness;
+
+    JsonArray roomCorrection = doc.createNestedArray("roomCorrection");
+    for(int i=0; i < MAX_PEQ_SETS; i++) {
+        if(preset.room_correction[i].enabled) {
+            JsonObject peqSet = roomCorrection.createNestedObject();
+            peqSet["spl"] = preset.room_correction[i].spl;
+            JsonArray points = peqSet.createNestedArray("points");
+            for(int j=0; j < MAX_PEQ_POINTS; j++) {
+                if(preset.room_correction[i].points[j].enabled) {
+                    JsonObject point = points.createNestedObject();
+                    point["freq"] = preset.room_correction[i].points[j].freq;
+                    point["gain"] = preset.room_correction[i].points[j].gain;
+                    point["q"] = preset.room_correction[i].points[j].q;
+                }
+            }
+        }
+    }
+
+    JsonArray preferenceCurve = doc.createNestedArray("preferenceCurve");
+    for(int i=0; i < MAX_PEQ_SETS; i++) {
+        if(preset.preference_curve[i].enabled) {
+            JsonObject peqSet = preferenceCurve.createNestedObject();
+            peqSet["spl"] = preset.preference_curve[i].spl;
+            JsonArray points = peqSet.createNestedArray("points");
+            for(int j=0; j < MAX_PEQ_POINTS; j++) {
+                if(preset.preference_curve[i].points[j].enabled) {
+                    JsonObject point = points.createNestedObject();
+                    point["freq"] = preset.preference_curve[i].points[j].freq;
+                    point["gain"] = preset.preference_curve[i].points[j].gain;
+                    point["q"] = preset.preference_curve[i].points[j].q;
+                }
+            }
+        }
+    }
+
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
 }
 
 void handlePostPresetCreate(AsyncWebServerRequest *request) {
     String presetName = request->pathArg(0);
 
-    if (presetName.length() == 0 || presetName.length() > 32) {
+    if (presetName.length() == 0 || presetName.length() >= PRESET_NAME_MAX_LEN) {
         request->send(400, "text/plain", "Invalid preset name");
         return;
     }
 
-    for (int i = 0; i < systemSettings.numPresets; i++) {
-        if (strcmp(systemSettings.presets[i].name, presetName.c_str()) == 0) {
-            request->send(409, "text/plain", "Preset name already exists");
-            return;
-        }
+    if (find_preset_by_name(presetName.c_str()) != -1) {
+        request->send(409, "text/plain", "Preset name already exists");
+        return;
     }
 
-    if (systemSettings.numPresets >= MAX_PRESETS) {
+    int newIndex = find_empty_preset_slot();
+    if (newIndex == -1) {
         request->send(507, "text/plain", "Maximum number of presets reached");
         return;
     }
 
-    // Create new preset file
-    String filePath = "/presets/" + presetName + ".json";
-    DynamicJsonDocument doc(2048);
-    doc["name"] = presetName;
-    // Set default values
-    JsonObject delay = doc.createNestedObject("delay");
-    delay["left"] = 0;
-    delay["right"] = 0;
-    delay["sub"] = 0;
+    // Create new preset with default values
+    current_config.presets[newIndex] = Preset();
+    strcpy(current_config.presets[newIndex].name, presetName.c_str());
+    
+    // Specifically initialize the first PEQ set for both curves as this is what the UI expects
+    current_config.presets[newIndex].room_correction[0].enabled = true;
+    current_config.presets[newIndex].room_correction[0].spl = 0;
+    current_config.presets[newIndex].preference_curve[0].enabled = true;
+    current_config.presets[newIndex].preference_curve[0].spl = 0;
 
-    JsonArray roomCorrection = doc.createNestedArray("roomCorrection");
-    JsonObject peqSet = roomCorrection.createNestedObject();
-    peqSet["spl"] = 0;
-    peqSet.createNestedArray("points");
-
-    JsonArray preferenceCurve = doc.createNestedArray("preferenceCurve");
-    JsonObject peqSet2 = preferenceCurve.createNestedObject();
-    peqSet2["spl"] = 0;
-    peqSet2.createNestedArray("points");
-
-    JsonObject crossover = doc.createNestedObject("crossover");
-    crossover["lowPass"] = 80;
-    crossover["highPass"] = 80;
-
-    doc["equalLoudness"] = false;
-
-    File file = LittleFS.open(filePath, "w");
-    serializeJson(doc, file);
-    file.close();
-
-    // Add to system settings
-    strcpy(systemSettings.presets[systemSettings.numPresets].name, presetName.c_str());
-    systemSettings.numPresets++;
     scheduleConfigWrite();
-
     request->send(201, "application/json", "{}");
 }
 
@@ -93,47 +123,34 @@ void handlePostPresetCopy(AsyncWebServerRequest *request) {
     String sourceName = request->pathArg(0);
     String destName = request->pathArg(1);
 
-    if (destName.length() == 0 || destName.length() > 32) {
+    if (destName.length() == 0 || destName.length() >= PRESET_NAME_MAX_LEN) {
         request->send(400, "text/plain", "Invalid destination preset name");
         return;
     }
 
-    for (int i = 0; i < systemSettings.numPresets; i++) {
-        if (strcmp(systemSettings.presets[i].name, destName.c_str()) == 0) {
-            request->send(409, "text/plain", "Destination preset name already exists");
-            return;
-        }
-    }
-
-    if (systemSettings.numPresets >= MAX_PRESETS) {
-        request->send(507, "text/plain", "Maximum number of presets reached");
+    if (find_preset_by_name(destName.c_str()) != -1) {
+        request->send(409, "text/plain", "Destination preset name already exists");
         return;
     }
 
-    String sourcePath = "/presets/" + sourceName + ".json";
-    String destPath = "/presets/" + destName + ".json";
-
-    if (!LittleFS.exists(sourcePath)) {
+    int sourceIndex = find_preset_by_name(sourceName.c_str());
+    if (sourceIndex == -1) {
         request->send(404, "text/plain", "Source preset not found");
         return;
     }
 
-    copyFile(sourcePath.c_str(), destPath.c_str());
+    int destIndex = find_empty_preset_slot();
+    if (destIndex == -1) {
+        request->send(507, "text/plain", "Maximum number of presets reached");
+        return;
+    }
 
-    // Update name in new file
-    File file = LittleFS.open(destPath, "r+");
-    DynamicJsonDocument doc(2048);
-    deserializeJson(doc, file);
-    doc["name"] = destName;
-    file.seek(0);
-    serializeJson(doc, file);
-    file.close();
+    // Copy the preset struct
+    current_config.presets[destIndex] = current_config.presets[sourceIndex];
+    // Update the name
+    strcpy(current_config.presets[destIndex].name, destName.c_str());
 
-    // Add to system settings
-    strcpy(systemSettings.presets[systemSettings.numPresets].name, destName.c_str());
-    systemSettings.numPresets++;
     scheduleConfigWrite();
-
     request->send(201, "application/json", "{}");
 }
 
@@ -141,47 +158,24 @@ void handlePutPresetRename(AsyncWebServerRequest *request) {
     String oldName = request->pathArg(0);
     String newName = request->pathArg(1);
 
-    if (newName.length() == 0 || newName.length() > 32) {
+    if (newName.length() == 0 || newName.length() >= PRESET_NAME_MAX_LEN) {
         request->send(400, "text/plain", "Invalid new preset name");
         return;
     }
 
-    for (int i = 0; i < systemSettings.numPresets; i++) {
-        if (strcmp(systemSettings.presets[i].name, newName.c_str()) == 0) {
-            request->send(409, "text/plain", "New preset name already exists");
-            return;
-        }
+    if (find_preset_by_name(newName.c_str()) != -1) {
+        request->send(409, "text/plain", "New preset name already exists");
+        return;
     }
 
-    int presetIndex = -1;
-    for (int i = 0; i < systemSettings.numPresets; i++) {
-        if (strcmp(systemSettings.presets[i].name, oldName.c_str()) == 0) {
-            presetIndex = i;
-            break;
-        }
-    }
-
+    int presetIndex = find_preset_by_name(oldName.c_str());
     if (presetIndex == -1) {
         request->send(404, "text/plain", "Preset to rename not found");
         return;
     }
 
-    String oldPath = "/presets/" + oldName + ".json";
-    String newPath = "/presets/" + newName + ".json";
-
-    LittleFS.rename(oldPath.c_str(), newPath.c_str());
-
-    // Update name in new file
-    File file = LittleFS.open(newPath, "r+");
-    DynamicJsonDocument doc(2048);
-    deserializeJson(doc, file);
-    doc["name"] = newName;
-    file.seek(0);
-    serializeJson(doc, file);
-    file.close();
-
-    // Update in system settings
-    strcpy(systemSettings.presets[presetIndex].name, newName.c_str());
+    // Update name in config
+    strcpy(current_config.presets[presetIndex].name, newName.c_str());
     scheduleConfigWrite();
 
     request->send(200, "application/json", "{}");
@@ -190,64 +184,57 @@ void handlePutPresetRename(AsyncWebServerRequest *request) {
 void handleDeletePreset(AsyncWebServerRequest *request) {
     String presetName = request->pathArg(0);
 
-    int presetIndex = -1;
-    for (int i = 0; i < systemSettings.numPresets; i++) {
-        if (strcmp(systemSettings.presets[i].name, presetName.c_str()) == 0) {
-            presetIndex = i;
-            break;
-        }
+    if (presetName == "Default") {
+        request->send(400, "text/plain", "Cannot delete the default preset");
+        return;
     }
+
+    int presetIndex = find_preset_by_name(presetName.c_str());
 
     if (presetIndex == -1) {
         request->send(404, "text/plain", "Preset not found");
         return;
     }
 
-    String filePath = "/presets/" + presetName + ".json";
-    LittleFS.remove(filePath);
+    // "Delete" by clearing the name, making the slot available
+    current_config.presets[presetIndex].name[0] = '\0';
 
-    // Remove from system settings
-    for (int i = presetIndex; i < systemSettings.numPresets - 1; i++) {
-        systemSettings.presets[i] = systemSettings.presets[i + 1];
+    // If the deleted preset was the active one, switch to the default preset
+    if (current_config.active_preset_index == presetIndex) {
+        current_config.active_preset_index = 0; // Default is always at index 0
     }
-    systemSettings.numPresets--;
-    scheduleConfigWrite();
 
-    request->send(204, "");
+    scheduleConfigWrite();
+    request->send(200, "application/json", "{}");
 }
 
 void handlePutActivePreset(AsyncWebServerRequest *request) {
     String presetName = request->pathArg(0);
-
-    int presetIndex = -1;
-    for (int i = 0; i < systemSettings.numPresets; i++) {
-        if (strcmp(systemSettings.presets[i].name, presetName.c_str()) == 0) {
-            presetIndex = i;
-            break;
-        }
-    }
+    int presetIndex = find_preset_by_name(presetName.c_str());
 
     if (presetIndex == -1) {
         request->send(404, "text/plain", "Preset not found");
         return;
     }
 
-    systemSettings.currentPreset = presetName;
+    current_config.active_preset_index = presetIndex;
+    strncpy(current_config.currentPresetName, current_config.presets[presetIndex].name, PRESET_NAME_MAX_LEN - 1);
+    current_config.currentPresetName[PRESET_NAME_MAX_LEN - 1] = '\0'; // Ensure null termination
     scheduleConfigWrite();
 
-    // Load preset into Teensy
-    String filePath = "/presets/" + presetName + ".json";
-    File file = LittleFS.open(filePath, "r");
-    String presetData = file.readString();
-    file.close();
-    sendToTeensy("load_preset", presetData);
+    // Here you would typically send the new active preset data to the DSP
+    // sendPresetToTeensy(current_config.presets[presetIndex]);
 
+    request->send(200, "application/json", "{}"); // HTTP response
+
+    // Prepare data for WebSocket broadcast
     DynamicJsonDocument doc(256);
-    doc["currentPreset"] = systemSettings.currentPreset;
+    doc["messageType"] = "activePresetChanged";
+    doc["activePresetName"] = current_config.currentPresetName;
+    doc["activePresetIndex"] = current_config.active_preset_index;
+    
+    String ws_response;
+    serializeJson(doc, ws_response);
 
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
-
-    broadcastWebSocket(response);
+    broadcastWebSocket(ws_response);
 }
