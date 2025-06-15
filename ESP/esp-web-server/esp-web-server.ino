@@ -12,7 +12,7 @@ WiFiManager wifiManager;
 // SystemSettings systemSettings; // This is now replaced by the global 'current_config' object.
 bool configChanged = false;
 unsigned long lastConfigChange = 0;
-const unsigned long WRITE_DELAY = 500;
+const unsigned long WRITE_DELAY = 5000;
 
 void setupWiFi() {
     wifiManager.setAPCallback([](WiFiManager * myWiFiManager) {
