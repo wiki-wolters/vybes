@@ -5,6 +5,7 @@
 #include <SerialFlash.h>
 #include <SD_FAT.h>
 #include "FIRLoader.h"
+#include "PEQProcessor.h"
 
 // Audio generators
 AudioSynthWaveform       Tone_generator;
@@ -20,13 +21,9 @@ AudioMixer4              Left_mixer;
 AudioMixer4              Right_mixer;   
 AudioMixer4              Generator_mixer;   
 
-// Parametric EQs
-AudioFilterBiquad Left_EQ[15];
-AudioFilterBiquad Right_EQ[15];
-// Patchcord arrays for EQ chains
-AudioConnection* patchCord_LeftEQ[16]; // 15 between biquads, 1 from mixer
-AudioConnection* patchCord_RightEQ[16]; // 15 between biquads, 1 from mixer
-
+// Parametric EQ processors (multi-band)
+PEQProcessor peqLeft;
+PEQProcessor peqRight;
 
 // Post EQ checkpoint, including subwoofer (using amps with gain = 1.0)
 AudioAmplifier           Left_Post_EQ_amp;
@@ -90,19 +87,15 @@ AudioConnection* externalInputConnections[] = {
   // AudioConnection          patchCord_BluetoothRToRightMixer(Bluetooth_in, 1, Right_mixer, 1)
 };
 
-// Connect from input mixers to Post-EQ checkpoint via EQ
-// EQ chain connections will be dynamically (re)built as needed in setEQFilters
-AudioConnection* eqConnections[16*2+3]; // Enough for both channels and mono
-
-// Connect from input mixers to Post-EQ checkpoint directly, bypassing EQ
-AudioConnection* bypassEQConnections[] = {
-  AudioConnection          patchCord_LeftMixerToLeftPostEQAmp(Left_mixer, 0, Left_Post_EQ_amp, 0),
-  AudioConnection          patchCord_RightMixerToRightPostEQAmp(Right_mixer, 0, Right_Post_EQ_amp, 0),
-  // Connect right & left input mixers to mono mix
-  AudioConnection          patchCord_LeftMixerToMonoMixer(Left_mixer, Mono_mixer, 0),
-  AudioConnection          patchCord_RightMixerToMonoMixer(Right_mixer, Mono_mixer, 1),
-  // Connect mono mix to checkpoint
-  AudioConnection          patchCord_MonoMixerToMonoPostEQAmp_Bypass(Mono_mixer, Mono_Post_EQ_amp),
+// Patchcords for PEQ processors
+AudioConnection* peqConnections[] = {
+  AudioConnection patchCord_LeftMixerToPEQ(Left_mixer, 0, peqLeft, 0),
+  AudioConnection patchCord_RightMixerToPEQ(Right_mixer, 0, peqRight, 0),
+  AudioConnection patchCord_PEQLeftToPostEQ(peqLeft, 0, Left_Post_EQ_amp, 0),
+  AudioConnection patchCord_PEQRightToPostEQ(peqRight, 0, Right_Post_EQ_amp, 0),
+  AudioConnection patchCord_PEQLeftToMonoMixer(peqLeft, 0, Mono_mixer, 0),
+  AudioConnection patchCord_PEQRightToMonoMixer(peqRight, 0, Mono_mixer, 1),
+  AudioConnection patchCord_PEQMonoToMonoPostEQ(Mono_mixer, Mono_Post_EQ_amp, 0)
 };
 
 // Connect from Post-EQ checkpoint to Post-Crossover checkpoint via crossover
@@ -316,6 +309,9 @@ void loop() {
       save_state();
     }
   }
+
+  // Call this every loop to handle animations
+  peq.update();
 }
 
 void save_state() {
@@ -327,19 +323,9 @@ void save_state() {
 void setEQEnabled(bool enabled) {
   state.eqEnabled = enabled;
   state.isDirty = true;
-
-  const disableConnections = enabled ? bypassEQConnections : eqConnections;
-  const enableConnections = enabled ? eqConnections : bypassEQConnections;
-
-  //Disable connections that bypass EQ
-  foreach (AudioConnection* connection, disableConnections) {
-    connection->disconnect();
-  }
-
-  //Enable connections that use EQ
-  foreach (AudioConnection* connection, enableConnections) {
-    connection->connect();
-  }
+  // Enable/disable both PEQ processors
+  peqLeft.setBypass(!enabled);
+  peqRight.setBypass(!enabled);
 }
 
 void setCrossoverEnabled(bool enabled) {
@@ -421,17 +407,25 @@ void setSpeakerGains(int8_t leftGain, int8_t rightGain, int8_t subGain) {
   Sub_Post_Delay_amp.gain(state.gainSub);
 }
 
-void animateEQFilter(int index, PEQPoint filter) {
-  //Animate the filter
-  Left_EQ[index].setBandpass(filter.frequency, filter.q, filter.gain);
-  Right_EQ[index].setBandpass(filter.frequency, filter.q, filter.gain);
-}
+
 
 void setEQFilters(PEQPoint filters[]) {
   state.filters = filters;
   state.isDirty = true;
-
-  //TODO: Implement this
+  // Convert PEQPoint to PEQBand and update both channels
+  PEQBand bands[MAX_PEQ_BANDS];
+  int nBands = 0;
+  for (int i = 0; i < MAX_PEQ_BANDS; ++i) {
+    if (filters[i].frequency > 0) { // Only add valid bands
+      bands[nBands].frequency = filters[i].frequency;
+      bands[nBands].gain = filters[i].gain;
+      bands[nBands].q = filters[i].q;
+      bands[nBands].enabled = true;
+      nBands++;
+    }
+  }
+  peqLeft.updateBands(bands, nBands);
+  peqRight.updateBands(bands, nBands);
 }
 
 
@@ -468,7 +462,3 @@ void setFIR(String leftFile, String rightFile, String subFile, int8_t taps) {
     FIRLoader::loadFilter(subFile, &Sub_FIR_Filter, taps);
   }
 }
-
-
-  
-  
