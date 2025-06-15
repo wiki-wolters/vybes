@@ -420,54 +420,18 @@ void setSpeakerGains(int8_t leftGain, int8_t rightGain, int8_t subGain) {
   Right_Post_Delay_amp.gain(state.gainRight);
   Sub_Post_Delay_amp.gain(state.gainSub);
 }
-  
+
+void animateEQFilter(int index, PEQPoint filter) {
+  //Animate the filter
+  Left_EQ[index].setBandpass(filter.frequency, filter.q, filter.gain);
+  Right_EQ[index].setBandpass(filter.frequency, filter.q, filter.gain);
+}
+
 void setEQFilters(PEQPoint filters[]) {
   state.filters = filters;
   state.isDirty = true;
 
-  // Disconnect and delete any existing patchcords for EQ chains
-  for (int i = 0; i < 16; ++i) {
-    if (patchCord_LeftEQ[i]) { patchCord_LeftEQ[i]->disconnect(); delete patchCord_LeftEQ[i]; patchCord_LeftEQ[i] = nullptr; }
-    if (patchCord_RightEQ[i]) { patchCord_RightEQ[i]->disconnect(); delete patchCord_RightEQ[i]; patchCord_RightEQ[i] = nullptr; }
-  }
-
-  // Count number of valid filters (assume filters[] is sized up to 15, unused have frequency <= 0)
-  int numFilters = 0;
-  for (int i = 0; i < 15; ++i) {
-    if (filters[i].frequency > 0) ++numFilters;
-    else break;
-  }
-  if (numFilters == 0) numFilters = 1; // Always at least 1 biquad (flat)
-
-  // Connect Left chain: Left_mixer -> Left_EQ[0] -> ... -> Left_EQ[numFilters-1] -> Left_Post_EQ_amp
-  patchCord_LeftEQ[0] = new AudioConnection(Left_mixer, Left_EQ[0]);
-  for (int i = 1; i < numFilters; ++i) {
-    patchCord_LeftEQ[i] = new AudioConnection(Left_EQ[i-1], Left_EQ[i]);
-  }
-  patchCord_LeftEQ[numFilters] = new AudioConnection(Left_EQ[numFilters-1], Left_Post_EQ_amp);
-
-  // Connect Right chain: Right_mixer -> Right_EQ[0] -> ... -> Right_EQ[numFilters-1] -> Right_Post_EQ_amp
-  patchCord_RightEQ[0] = new AudioConnection(Right_mixer, Right_EQ[0]);
-  for (int i = 1; i < numFilters; ++i) {
-    patchCord_RightEQ[i] = new AudioConnection(Right_EQ[i-1], Right_EQ[i]);
-  }
-  patchCord_RightEQ[numFilters] = new AudioConnection(Right_EQ[numFilters-1], Right_Post_EQ_amp);
-
-  // Set biquad coefficients for each filter, unused biquads set to flat
-  for (int i = 0; i < 15; ++i) {
-    if (i < numFilters) {
-      // Set biquad for both channels (example: peaking EQ)
-      float freq = filters[i].frequency;
-      float gain = filters[i].gain;
-      float q = filters[i].q;
-      Left_EQ[i].setPeaking(freq, q, gain);
-      Right_EQ[i].setPeaking(freq, q, gain);
-    } else {
-      // Set unused biquads to flat
-      Left_EQ[i].setPeaking(1000, 1.0, 0.0); // center freq, Q=1, gain=0dB
-      Right_EQ[i].setPeaking(1000, 1.0, 0.0);
-    }
-  }
+  //TODO: Implement this
 }
 
 
@@ -477,11 +441,11 @@ void setCrossoverFrequency(int8_t frequency) {
 
   // 4th-order Linkwitz-Riley crossover, by cascading two 2nd-order Butterworth stages
   Left_highpass.setFrequency(0, state.crossoverFrequency, 0.707);
-  Sub_lowpass.setFrequency(0, state.crossoverFrequency, 0.707);
-  Right_highpass.setFrequency(0, state.crossoverFrequency, 0.707);
   Left_highpass.setFrequency(1, state.crossoverFrequency, 0.707);
-  Sub_lowpass.setFrequency(1, state.crossoverFrequency, 0.707);
+  Right_highpass.setFrequency(0, state.crossoverFrequency, 0.707);
   Right_highpass.setFrequency(1, state.crossoverFrequency, 0.707);
+  Sub_lowpass.setFrequency(0, state.crossoverFrequency, 0.707);
+  Sub_lowpass.setFrequency(1, state.crossoverFrequency, 0.707);
 }
 
 void setFIR(String leftFile, String rightFile, String subFile, int8_t taps) {
