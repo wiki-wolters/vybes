@@ -8,6 +8,7 @@
 #include "PEQProcessor.h"
 #include "I2CCommandRouter.h"
 #include "OutputStream.h"
+#include "AudioFilterFIRFloat.h"
 
 // Create router instance (I2C address 18)
 I2CCommandRouter router(18);
@@ -67,9 +68,9 @@ AudioFilterBiquad        Sub_lowpass;
 AudioFilterBiquad        Right_highpass;
 
 // FIR Filters
-AudioFilterFIR           Sub_FIR_Filter; 
-AudioFilterFIR           Left_FIR_Filter; 
-AudioFilterFIR           Right_FIR_Filter; 
+AudioFilterFIRFloat      Left_FIR_Filter;
+AudioFilterFIRFloat      Right_FIR_Filter;
+AudioFilterFIRFloat      Sub_FIR_Filter;
 
 // Delays
 AudioEffectDelay         Left_delay;   
@@ -313,10 +314,6 @@ void setup() {
   Right_Post_Delay_amp.gain(1.0);
   Sub_Post_Delay_amp.gain(1.0);
 
-  //Bypass all FIR filters
-  Sub_FIR_Filter.begin(FIR_PASSTHRU, 0);
-  Left_FIR_Filter.begin(FIR_PASSTHRU, 0);
-  Right_FIR_Filter.begin(FIR_PASSTHRU, 0);
 
   // Apply state
   setInputGains(state.gainBluetooth, state.gainOptical, state.gainGenerator);
@@ -527,26 +524,56 @@ void setCrossoverFrequency(int frequency) {
   // Sticking to what was literally there before it was deleted.
 }
 
+
 void setFIR(String leftFile, String rightFile, String subFile, int taps) {
   strncpy(state.firFileLeft, leftFile.c_str(), MAX_FILENAME_LEN - 1);
-  state.firFileLeft[MAX_FILENAME_LEN - 1] = '\0'; // Ensure null termination
+  state.firFileLeft[MAX_FILENAME_LEN - 1] = '\0';
   strncpy(state.firFileRight, rightFile.c_str(), MAX_FILENAME_LEN - 1);
-  state.firFileRight[MAX_FILENAME_LEN - 1] = '\0'; // Ensure null termination
+  state.firFileRight[MAX_FILENAME_LEN - 1] = '\0';
   strncpy(state.firFileSub, subFile.c_str(), MAX_FILENAME_LEN - 1);
-  state.firFileSub[MAX_FILENAME_LEN - 1] = '\0'; // Ensure null termination
+  state.firFileSub[MAX_FILENAME_LEN - 1] = '\0';
   state.firTaps = taps;
   state.isDirty = true;
 
+  if (state.firEnabled) {
+    for (size_t i = 0; i < firConnections_len; ++i) {
+      firConnections[i]->disconnect();
+    }
+  }
+
+  uint16_t actualTaps;
+
+  // Load Left Filter or clear it
   if (leftFile.length() > 0) {
-    FIRLoader::loadFilter(leftFile, &Left_FIR_Filter, taps);
+    float* coeffs = FIRLoader::loadCoefficients(leftFile, actualTaps, taps);
+    Left_FIR_Filter.loadCoefficients(coeffs, actualTaps);
+    if (coeffs) delete[] coeffs;
+  } else {
+    Left_FIR_Filter.loadCoefficients(nullptr, 0);
   }
   
+  // Load Right Filter or clear it
   if (rightFile.length() > 0) {
-    FIRLoader::loadFilter(rightFile, &Right_FIR_Filter, taps);
+    float* coeffs = FIRLoader::loadCoefficients(rightFile, actualTaps, taps);
+    Right_FIR_Filter.loadCoefficients(coeffs, actualTaps);
+    if (coeffs) delete[] coeffs;
+  } else {
+    Right_FIR_Filter.loadCoefficients(nullptr, 0);
   }
   
+  // Load Sub Filter or clear it
   if (subFile.length() > 0) {
-    FIRLoader::loadFilter(subFile, &Sub_FIR_Filter, taps);
+    float* coeffs = FIRLoader::loadCoefficients(subFile, actualTaps, taps);
+    Sub_FIR_Filter.loadCoefficients(coeffs, actualTaps);
+    if (coeffs) delete[] coeffs;
+  } else {
+    Sub_FIR_Filter.loadCoefficients(nullptr, 0);
+  }
+
+  if (state.firEnabled) {
+    for (size_t i = 0; i < firConnections_len; ++i) {
+      firConnections[i]->connect();
+    }
   }
 }
 
