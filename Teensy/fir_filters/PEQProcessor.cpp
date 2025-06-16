@@ -1,16 +1,15 @@
 #include "PEQProcessor.h"
 #include <math.h>
 
-PEQProcessor::PEQProcessor() : sampleRate(44100.0f), initialized(false), bypassed(false), 
-                               connectionCount(0), bypassConnection(nullptr),
-                               inputStream(nullptr), outputStream(nullptr), 
-                               inputChannel(0), outputChannel(0) {
+PEQProcessor::PEQProcessor() : AudioStream(1, inputQueue), 
+                               sampleRate(44100.0f), initialized(false), bypassed(false) {
+  // PEQProcessor_instance_count++; // This is in the .h if constructor is inlined there
   // Initialize all bands to disabled/unity gain
   for (int i = 0; i < MAX_PEQ_BANDS; i++) {
     bands[i] = {1000.0f, 0.0f, 1.0f, false};
-    connections[i] = nullptr;
+    // connections[i] = nullptr; // Removed
   }
-  connections[MAX_PEQ_BANDS] = nullptr;
+  // connections[MAX_PEQ_BANDS] = nullptr; // Removed
   
   // Initialize animation state
   animation.active = false;
@@ -91,32 +90,7 @@ int PEQProcessor::getActiveBandCount() const {
   return count;
 }
 
-void PEQProcessor::connectAudio(AudioStream& input, AudioStream& output, int inputChannel, int outputChannel) {
-  // Store references for bypass functionality
-  inputStream = &input;
-  outputStream = &output;
-  this->inputChannel = inputChannel;
-  this->outputChannel = outputChannel;
-  
-  // Clean up existing connections
-  for (int i = 0; i <= MAX_PEQ_BANDS; i++) {
-    if (connections[i]) {
-      delete connections[i];
-      connections[i] = nullptr;
-    }
-  }
-  if (bypassConnection) {
-    delete bypassConnection;
-    bypassConnection = nullptr;
-  }
-  connectionCount = 0;
-  
-  if (bypassed) {
-    setupBypass();
-  } else {
-    setupEQChain();
-  }
-}
+
 
 AudioFilterBiquad& PEQProcessor::getBiquadFilter(int index) {
   if (index < 0 || index >= MAX_PEQ_BANDS) {
@@ -208,9 +182,9 @@ void PEQProcessor::setAnimationSpeed(unsigned long durationMs) {
   animation.duration = durationMs;
 }
 
-void PEQProcessor::update() {
+void PEQProcessor::updateAnimationState() {
   if (animation.active) {
-    updateAnimation();
+    processAnimation(); // Corrected call
   }
 }
 
@@ -222,7 +196,7 @@ void PEQProcessor::stopAnimation() {
   animation.active = false;
 }
 
-void PEQProcessor::updateAnimation() {
+void PEQProcessor::processAnimation() {
   unsigned long currentTime = millis();
   unsigned long elapsed = currentTime - animation.startTime;
   
@@ -263,31 +237,8 @@ float PEQProcessor::interpolate(float start, float end, float progress) {
   return start + (end - start) * progress;
 }
 
-// Bypass methods
 void PEQProcessor::setBypass(bool bypassed) {
-  if (this->bypassed == bypassed) return;
-  
   this->bypassed = bypassed;
-  
-  if (inputStream && outputStream) {
-    // Clean up current connections
-    for (int i = 0; i <= MAX_PEQ_BANDS; i++) {
-      if (connections[i]) {
-        delete connections[i];
-        connections[i] = nullptr;
-      }
-    }
-    if (bypassConnection) {
-      delete bypassConnection;
-      bypassConnection = nullptr;
-    }
-    
-    if (bypassed) {
-      setupBypass();
-    } else {
-      setupEQChain();
-    }
-  }
 }
 
 bool PEQProcessor::isBypassed() const {
@@ -298,23 +249,32 @@ void PEQProcessor::toggleBypass() {
   setBypass(!bypassed);
 }
 
-void PEQProcessor::setupBypass() {
-  // Direct connection from input to output
-  bypassConnection = new AudioConnection(*inputStream, inputChannel, 
-                                        *outputStream, outputChannel);
-}
+// Required by AudioStream
+void PEQProcessor::update(void) {
+  updateAnimationState(); // Update animation parameters if any
 
-void PEQProcessor::setupEQChain() {
-  // Create EQ chain connections
-  connections[0] = new AudioConnection(*inputStream, inputChannel, biquadFilters[0], 0);
-  connectionCount = 1;
-  
-  for (int i = 1; i < MAX_PEQ_BANDS; i++) {
-    connections[i] = new AudioConnection(biquadFilters[i-1], 0, biquadFilters[i], 0);
-    connectionCount++;
+  audio_block_t *block = receiveReadOnly(); // Reads from inputQueueArray[0]
+  if (!block) return;
+
+  if (bypassed) {
+    transmit(block); // Transmits to connected output
+    release(block);
+    return;
   }
-  
-  connections[MAX_PEQ_BANDS] = new AudioConnection(biquadFilters[MAX_PEQ_BANDS-1], 0, 
-                                                  *outputStream, outputChannel);
-  connectionCount++;
+
+  // TODO: Implement actual PEQ processing here.
+  // For now, this is a pass-through. The input block is transmitted as is.
+  // The block->data needs to be processed by the enabled biquadFilters.
+  // This involves iterating through biquadFilters that are enabled
+  // and applying their filtering effect to the samples in block->data.
+  // A common approach is to process in-place if possible, or use an
+  // intermediate buffer if necessary for a chain of filters.
+  // Example for a single biquad (not a chain, and needs adaptation):
+  // if (bands[0].enabled) {
+  //   biquadFilters[0].process(block->data, block->data, AUDIO_BLOCK_SAMPLES);
+  // }
+  // For a chain, you'd typically pass output of one to input of next.
+
+  transmit(block); // Transmit the (currently unprocessed or partially processed) block
+  release(block);
 }

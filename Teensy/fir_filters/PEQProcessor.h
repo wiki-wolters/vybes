@@ -24,7 +24,9 @@ struct AnimationState {
   PEQBand targetBands[MAX_PEQ_BANDS];
 };
 
-class PEQProcessor {
+
+
+class PEQProcessor : public AudioStream {
 public:
   // Constructor
   PEQProcessor();
@@ -62,7 +64,8 @@ public:
   // Animation methods
   void animateToBands(const PEQBand* targetBands, int numBands, unsigned long durationMs = 1000);
   void setAnimationSpeed(unsigned long durationMs);
-  void update(); // Call this in your main loop to handle animations
+  void updateAnimationState(); // Call this in your main loop to handle animations
+  virtual void update(void); // Required by AudioStream
   bool isAnimating() const;
   void stopAnimation();
   
@@ -70,13 +73,12 @@ public:
   void setBypass(bool bypassed);
   bool isBypassed() const;
   void toggleBypass();
-  
-
 
 private:
+  audio_block_t *inputQueue[1];
   AudioFilterBiquad biquadFilters[MAX_PEQ_BANDS];
-  AudioConnection* connections[MAX_PEQ_BANDS + 1];  // +1 for input connection
-  AudioConnection* bypassConnection;
+  // AudioConnection* connections[MAX_PEQ_BANDS + 1];  // +1 for input connection. Will be handled by AudioStream inheritance.
+  // AudioConnection* bypassConnection; // Will be handled by AudioStream inheritance.
   PEQBand bands[MAX_PEQ_BANDS];
 
   AnimationState animation;
@@ -84,8 +86,8 @@ private:
   bool initialized;
   bool bypassed;
   int connectionCount;
-  AudioStream* inputStream;
-  AudioStream* outputStream;
+  // AudioStream* inputStream; // Will be handled by AudioStream inheritance.
+  // AudioStream* outputStream; // Will be handled by AudioStream inheritance.
   int inputChannel;
   int outputChannel;
   
@@ -93,8 +95,10 @@ private:
   void calculateCoefficients(const PEQBand& band, double coeffs[5]);
   void updateBiquadFilter(int bandIndex);
   void setUnityGain(int bandIndex);
-  void updateAnimation();
+  void processAnimation(); // Renamed from updateAnimation to avoid confusion
   float interpolate(float start, float end, float progress);
   void setupBypass();
   void setupEQChain();
 };
+
+#endif
