@@ -2,6 +2,7 @@
 #define PEQ_PROCESSOR_H
 
 #include <Audio.h>
+#include "arm_math.h"
 
 // Maximum number of EQ bands supported
 #define MAX_PEQ_BANDS 15

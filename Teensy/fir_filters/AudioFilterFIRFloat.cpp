@@ -7,8 +7,6 @@ AudioFilterFIRFloat::AudioFilterFIRFloat()
     firState(nullptr),
     numTaps(0)
 {
-  // Initialize an empty FIR filter
-  arm_fir_init_f32(&fir, 0, nullptr, nullptr, AUDIO_BLOCK_SAMPLES);
 }
 
 // Destructor implementation
@@ -48,8 +46,10 @@ void AudioFilterFIRFloat::loadCoefficients(const float* coeffs, uint16_t newNumT
     }
   }
 
-  // Re-initialize the CMSIS FIR instance
-  arm_fir_init_f32(&fir, numTaps, firCoeffs, firState, AUDIO_BLOCK_SAMPLES);
+  // Re-initialize the CMSIS FIR instance only if the filter is active
+  if (numTaps > 0) {
+    arm_fir_init_f32(&fir, numTaps, firCoeffs, firState, AUDIO_BLOCK_SAMPLES);
+  }
 }
 
 // update() method implementation

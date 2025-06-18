@@ -15,11 +15,6 @@ I2CCommandRouter router(18);
 
 #define MAX_FILENAME_LEN 64 // Maximum length for FIR filenames
 
-// Forward declarations
-void setEQFilters(PEQBand filters[], int animationDuration = 20);
-void handleSetSpeakerGains(const String& command, String* args, int argCount);
-void handleGetFiles(const String& command, String* args, int argCount);
-
 // Audio generators
 AudioSynthWaveform       Tone_generator;
 AudioSynthNoisePink      pink1;         
@@ -159,12 +154,18 @@ const size_t bypassCrossoverConnections_len = sizeof(bypassCrossoverConnections)
 
 // Connect from Post-Crossover checkpoint to Post-FIR checkpoint via FIR
 AudioConnection          patchCord_LeftPostCrossoverAmpToFIR(Left_Post_Crossover_amp, 0, Left_FIR_Filter, 0);
+AudioConnection          patchCord_LeftFIRToPostFIRAmp(Left_FIR_Filter, 0, Left_Post_FIR_amp, 0);
 AudioConnection          patchCord_RightPostCrossoverAmpToFIR(Right_Post_Crossover_amp, 0, Right_FIR_Filter, 0);
+AudioConnection          patchCord_RightFIRToPostFIRAmp(Right_FIR_Filter, 0, Right_Post_FIR_amp, 0);
 AudioConnection          patchCord_SubPostCrossoverAmpToFIR(Sub_Post_Crossover_amp, 0, Sub_FIR_Filter, 0);
+AudioConnection          patchCord_SubFIRToPostFIRAmp(Sub_FIR_Filter, 0, Sub_Post_FIR_amp, 0);
 AudioConnection* firConnections[] = {
   &patchCord_LeftPostCrossoverAmpToFIR,
+  &patchCord_LeftFIRToPostFIRAmp,
   &patchCord_RightPostCrossoverAmpToFIR,
-  &patchCord_SubPostCrossoverAmpToFIR
+  &patchCord_RightFIRToPostFIRAmp,
+  &patchCord_SubPostCrossoverAmpToFIR,
+  &patchCord_SubFIRToPostFIRAmp
 };
 const size_t firConnections_len = sizeof(firConnections) / sizeof(firConnections[0]);
 
@@ -208,7 +209,7 @@ AudioConnection* bypassDelayConnections[] = {
 const size_t bypassDelayConnections_len = sizeof(bypassDelayConnections) / sizeof(bypassDelayConnections[0]);
 
 //Connect from Post-delay checkpoint to outputs
-// Analog outs
+//Analog outs
 AudioConnection          patchCord_LeftPostDelayAmpToAnalogOut(Left_Post_Delay_amp, 0, L_R_Analog_Out, 0);
 AudioConnection          patchCord_RightPostDelayAmpToAnalogOut(Right_Post_Delay_amp, 0, L_R_Analog_Out, 1);
 AudioConnection          patchCord_SubPostDelayAmpToAnalogOut(Sub_Post_Delay_amp, 0, Sub_Analog_Out, 0);
@@ -224,8 +225,14 @@ AudioConnection* outputConnections[] = {
 };
 const size_t outputConnections_len = sizeof(outputConnections) / sizeof(outputConnections[0]);
 
+AudioConnection spdifLeftToAnalogOut(Optical_in, 0, L_R_Analog_Out, 0);
+AudioConnection spdifRightToAnalogOut(Optical_in, 1, L_R_Analog_Out, 1);
+
+const int CURRENT_VERSION = 1;
+
 //Define a structure for holding state
 struct State {
+  int version = CURRENT_VERSION;
   bool isDirty = false;
 
   // Input gains
@@ -259,46 +266,56 @@ struct State {
   int delaySubMicroSeconds = 0;
 
   // an array of biquad filters for the left, right, and subwoofer
-  PEQBand filters[15];
-
-  // String toString() {
-  //   return String("State{") +
-  //          "isDirty=" + String(isDirty) + ", " +
-  //          "gainBluetooth=" + String(gainBluetooth) + ", " +
-  //          "gainOptical=" + String(gainOptical) + ", " +
-  //          "gainGenerator=" + String(gainGenerator) + ", " +
-  //          "gainLeft=" + String(gainLeft) + ", " +
-  //          "gainRight=" + String(gainRight) + ", " +
-  //          "gainSub=" + String(gainSub) + ", " +
-  //          "crossoverFrequency=" + String(crossoverFrequency) + ", " +
-  //          "eqEnabled=" + String(eqEnabled) + ", " +
-  //          "crossoverEnabled=" + String(crossoverEnabled) + ", " +
-  //          "firEnabled=" + String(firEnabled) + ", " +
-  //          "delayEnabled=" + String(delayEnabled) + ", " +
-  //          "firFileLeft=" + String(firFileLeft) + ", " +
-  //          "firFileRight=" + String(firFileRight) + ", " +
-  //          "firFileSub=" + String(firFileSub) + ", " +
-  //          "firTaps=" + String(firTaps) + ", " +
-  //          "delayLeftMicroSeconds=" + String(delayLeftMicroSeconds) + ", " +
-  //          "delayRightMicroSeconds=" + String(delayRightMicroSeconds) + ", " +
-  //          "delaySubMicroSeconds=" + String(delaySubMicroSeconds) + ", " +
-  //         "}";
-  // }
+  PEQBand filters[MAX_PEQ_BANDS];
 };
 
 State state;
 
-void setup() {
-  Serial.begin(115200);
-  while (!Serial && millis() < 3000) {
-    // Wait for serial connection or timeout after 3 seconds
+size_t getConsecutiveActiveFilterCount() {
+  size_t count = 0;
+  for (int i = 0; i < MAX_PEQ_BANDS; i++) {
+    if (state.filters[i].enabled) {
+      count++;
+    } else {
+      break; // Stop at first disabled filter
+    }
   }
+  return count;
+}
+
+void setup() {
+  Serial.begin(9600);
+  Serial.println();
+  Serial.println("=== SPDIF to I2S Debug Test ===");
+  Serial.println("Setup starting...");
+
+  if (CrashReport) {
+    Serial.print(CrashReport);
+    CrashReport.clear();
+  }
+
+  pinMode(LED_BUILTIN, OUTPUT);
   
   // Audio connections require memory to work
-  AudioMemory(20);
+  Serial.println("Allocating audio memory");
+  AudioMemory(30); // Increased from 20 to handle complex audio graph
 
-  //Load state from EEPROM
+  Serial.println("Loading state from EEPROM");
+
+  //Load state from EEPROM if it exists, otherwise populate filters with defaults
   EEPROM.get(0, state);
+  if (state.version != CURRENT_VERSION) {
+    //create new state object and save it
+    state.version = CURRENT_VERSION;
+    state = State();
+    //populate filters array with default values
+    for (int i = 0; i < MAX_PEQ_BANDS; i++) {
+      state.filters[i] = {1000.0f, 0.0f, 1.0f, false};
+    }
+    EEPROM.put(0, state);
+  }
+
+  Serial.println("State loaded from EEPROM");
 
   // Explicitly set all amps to gain=1.0
   Left_Post_EQ_amp.gain(1.0);
@@ -316,13 +333,14 @@ void setup() {
 
 
   // Apply state
+  Serial.println("Applying state");
   setInputGains(state.gainBluetooth, state.gainOptical, state.gainGenerator);
   setSpeakerGains(state.gainLeft, state.gainRight, state.gainSub);
   setEQEnabled(state.eqEnabled);
   setCrossoverEnabled(state.crossoverEnabled);
   setFIREnabled(state.firEnabled);
   setDelayEnabled(state.delayEnabled);
-  setEQFilters(state.filters);
+  setEQFilters(state.filters, getConsecutiveActiveFilterCount());
   setCrossoverFrequency(state.crossoverFrequency);
   setFIR(state.firFileLeft, state.firFileRight, state.firFileSub, state.firTaps);
   setDelays(state.delayLeftMicroSeconds, state.delayRightMicroSeconds, state.delaySubMicroSeconds);
@@ -330,8 +348,19 @@ void setup() {
   state.isDirty = false;
 
   //Register handlers for I2C commands
+  Serial.println("Registering I2C handlers");
   router.on("setSpeakerGains", [](const String& cmd, String* args, int count) { handleSetSpeakerGains(cmd, args, count); });
   router.on("getFiles", [](const String& cmd, String* args, int count) { handleGetFiles(cmd, args, count); });
+  router.on("setInputGains", [](const String& cmd, String* args, int count) { handleSetInputGains(cmd, args, count); });
+  router.on("setCrossoverFrequency", [](const String& cmd, String* args, int count) { handleSetCrossoverFrequency(cmd, args, count); });
+  router.on("setEqEnabled", [](const String& cmd, String* args, int count) { handleSetEQEnabled(cmd, args, count); });
+  router.on("setCrossoverEnabled", [](const String& cmd, String* args, int count) { handleSetCrossoverEnabled(cmd, args, count); });
+  router.on("setFirEnabled", [](const String& cmd, String* args, int count) { handleSetFIREnabled(cmd, args, count); });
+  router.on("setDelayEnabled", [](const String& cmd, String* args, int count) { handleSetDelayEnabled(cmd, args, count); });
+  router.on("setFir", [](const String& cmd, String* args, int count) { handleSetFIR(cmd, args, count); });
+  router.on("setDelays", [](const String& cmd, String* args, int count) { handleSetDelays(cmd, args, count); });
+  router.on("setEqFilter", [](const String& cmd, String* args, int count) { handleSetEQFilter(cmd, args, count); });
+  router.on("resetEqFilters", [](const String& cmd, String* args, int count) { handleResetEQFilters(cmd, args, count); });
 }
 
 void loop() {
@@ -345,6 +374,8 @@ void loop() {
     // Check if we're getting input signal
     if (Optical_in.isLocked()) {
       Serial.println("SPDIF Input Locked - Signal detected");
+      Serial.print("Audio memory usage max: ");
+      Serial.println(AudioMemoryUsageMax());
     } else {
       Serial.println("No SPDIF input signal detected");
     }
@@ -359,10 +390,6 @@ void loop() {
       save_state();
     }
   }
-
-  // Call this every loop to handle animations
-  peqLeft.update();
-  peqRight.update();
 }
 
 void save_state() {
@@ -374,7 +401,6 @@ void save_state() {
 void setEQEnabled(bool enabled) {
   state.eqEnabled = enabled;
   state.isDirty = true;
-  // Enable/disable both PEQ processors
   peqLeft.setBypass(!enabled);
   peqRight.setBypass(!enabled);
 }
@@ -382,12 +408,10 @@ void setEQEnabled(bool enabled) {
 void setCrossoverEnabled(bool enabled) {
   state.crossoverEnabled = enabled;
   state.isDirty = true;
-
   AudioConnection** disableConnections = enabled ? bypassCrossoverConnections : crossoverConnections;
   AudioConnection** enableConnections = enabled ? crossoverConnections : bypassCrossoverConnections;
   const size_t disableConnections_len = enabled ? bypassCrossoverConnections_len : crossoverConnections_len;
   const size_t enableConnections_len = enabled ? crossoverConnections_len : bypassCrossoverConnections_len;
-
   for (size_t i = 0; i < disableConnections_len; ++i) {
     AudioConnection* connection = disableConnections[i];
     if (connection) {
@@ -405,12 +429,10 @@ void setCrossoverEnabled(bool enabled) {
 void setFIREnabled(bool enabled) {
   state.firEnabled = enabled;
   state.isDirty = true;
-
   AudioConnection** disableConnections = enabled ? bypassFIRConnections : firConnections;
   AudioConnection** enableConnections = enabled ? firConnections : bypassFIRConnections;
   const size_t disableConnections_len = enabled ? bypassFIRConnections_len : firConnections_len;
   const size_t enableConnections_len = enabled ? firConnections_len : bypassFIRConnections_len;
-
   for (size_t i = 0; i < disableConnections_len; ++i) {
     AudioConnection* connection = disableConnections[i];
     if (connection) {
@@ -428,12 +450,10 @@ void setFIREnabled(bool enabled) {
 void setDelayEnabled(bool enabled) {
   state.delayEnabled = enabled;
   state.isDirty = true;
-
   AudioConnection** disableConnections = enabled ? bypassDelayConnections : delayConnections;
   AudioConnection** enableConnections = enabled ? delayConnections : bypassDelayConnections;
   const size_t disableConnections_len = enabled ? bypassDelayConnections_len : delayConnections_len;
   const size_t enableConnections_len = enabled ? delayConnections_len : bypassDelayConnections_len;
-
   for (size_t i = 0; i < disableConnections_len; ++i) {
     AudioConnection* connection = disableConnections[i];
     if (connection) {
@@ -453,7 +473,6 @@ void setInputGains(float bluetoothGain, float opticalGain, float generatorGain) 
   state.gainOptical = opticalGain;
   state.gainGenerator = generatorGain;
   state.isDirty = true;
-
   Left_mixer.gain(0, state.gainOptical);
   Right_mixer.gain(0, state.gainOptical);
   Left_mixer.gain(1, state.gainBluetooth);
@@ -467,63 +486,28 @@ void setSpeakerGains(float leftGain, float rightGain, float subGain) {
   state.gainRight = rightGain;
   state.gainSub = subGain;
   state.isDirty = true;
-
   Serial.println("Set gains: Left " + String(leftGain) + ", Right " + String(rightGain) + ", Sub " + String(subGain));
-
   Left_Post_Delay_amp.gain(state.gainLeft);
   Right_Post_Delay_amp.gain(state.gainRight);
   Sub_Post_Delay_amp.gain(state.gainSub);
 }
 
 void setEQFilters(PEQBand filters[], int animationDuration) {
-  // Assuming MAX_PEQ_BANDS is 15, matching the size of state.filters
-  // and PEQProcessor::MAX_BANDS if PEQProcessor is designed for a fixed number.
-  // For safety, let's use the actual size of the state.filters array.
-  const int num_filters_to_copy = sizeof(state.filters) / sizeof(state.filters[0]);
-  for (int i = 0; i < num_filters_to_copy; ++i) {
-        if (i < 15) { // Check bounds for input 'filters' if its size is not guaranteed
-        state.filters[i] = filters[i];
-    } else {
-        // Optionally clear remaining state.filters if input is shorter
-        state.filters[i] = {0,0,0}; // Example of clearing a PEQPoint
-    }
-  }
-  state.isDirty = true;
-
-  PEQBand bands[num_filters_to_copy]; // Use the same size
-  int nBands = 0;
-  for (int i = 0; i < num_filters_to_copy; ++i) {
-    if (state.filters[i].frequency > 0) { // Only add valid bands from state
-      bands[nBands].frequency = state.filters[i].frequency;
-      bands[nBands].gain = state.filters[i].gain;
-      bands[nBands].q = state.filters[i].q;
-      bands[nBands].enabled = true; // Assuming PEQBand has an enabled field
-      nBands++;
-    }
-  }
-  peqLeft.animateToBands(bands, nBands, animationDuration);
-  peqRight.animateToBands(bands, nBands, animationDuration);
+  int8_t nBands = getConsecutiveActiveFilterCount();
+  peqLeft.animateToBands(filters, nBands, animationDuration);
+  peqRight.animateToBands(filters, nBands, animationDuration);
 }
 
 void setCrossoverFrequency(int frequency) {
   state.crossoverFrequency = frequency;
   state.isDirty = true;
-
-  // 4th-order Linkwitz-Riley crossover, by cascading two 2nd-order Butterworth stages
   Left_highpass.setHighpass(0, state.crossoverFrequency, 0.707f); // Stage 1
-  Left_highpass.setHighpass(1, state.crossoverFrequency, 0.707f); // Stage 2 for 4th order (assuming AudioFilterBiquad supports multiple stages this way or this is a typo and means two separate filters)
-                                                              // More likely: one call per filter, or the biquad object manages stages internally based on calls.
-                                                              // For Teensy Audio lib, one setHighpass call configures one biquad. To cascade, you use two biquad objects.
-                                                              // Let's assume the object Left_highpass itself is a single biquad. For 4th order, you'd typically chain two such objects.
-                                                              // Given the setup, it's more likely these are parameters for different internal biquads if the object supports it, or it's configuring a single 2nd order filter.
-                                                              // Reverting to original single calls per filter object, assuming each is a 2nd order section.
-  Left_highpass.setHighpass(0, state.crossoverFrequency, 0.707f);
-  Right_highpass.setHighpass(0, state.crossoverFrequency, 0.707f);
-  Sub_lowpass.setLowpass(0, state.crossoverFrequency, 0.707f);
-  // If these were meant to be 4th order, the audio routing and object setup would be different (e.g. Left_Post_EQ_amp -> highpass1 -> highpass2 -> Left_Post_Crossover_amp)
-  // Sticking to what was literally there before it was deleted.
+  Left_highpass.setHighpass(1, state.crossoverFrequency, 0.707f); // Stage 2
+  Right_highpass.setHighpass(0, state.crossoverFrequency, 0.707f); // Stage 1
+  Right_highpass.setHighpass(1, state.crossoverFrequency, 0.707f); // Stage 2
+  Sub_lowpass.setLowpass(0, state.crossoverFrequency, 0.707f); // Stage 1
+  Sub_lowpass.setLowpass(1, state.crossoverFrequency, 0.707f); // Stage 2
 }
-
 
 void setFIR(String leftFile, String rightFile, String subFile, int taps) {
   strncpy(state.firFileLeft, leftFile.c_str(), MAX_FILENAME_LEN - 1);
@@ -534,16 +518,12 @@ void setFIR(String leftFile, String rightFile, String subFile, int taps) {
   state.firFileSub[MAX_FILENAME_LEN - 1] = '\0';
   state.firTaps = taps;
   state.isDirty = true;
-
   if (state.firEnabled) {
     for (size_t i = 0; i < firConnections_len; ++i) {
       firConnections[i]->disconnect();
     }
   }
-
   uint16_t actualTaps;
-
-  // Load Left Filter or clear it
   if (leftFile.length() > 0) {
     float* coeffs = FIRLoader::loadCoefficients(leftFile, actualTaps, taps);
     Left_FIR_Filter.loadCoefficients(coeffs, actualTaps);
@@ -551,8 +531,6 @@ void setFIR(String leftFile, String rightFile, String subFile, int taps) {
   } else {
     Left_FIR_Filter.loadCoefficients(nullptr, 0);
   }
-  
-  // Load Right Filter or clear it
   if (rightFile.length() > 0) {
     float* coeffs = FIRLoader::loadCoefficients(rightFile, actualTaps, taps);
     Right_FIR_Filter.loadCoefficients(coeffs, actualTaps);
@@ -560,8 +538,6 @@ void setFIR(String leftFile, String rightFile, String subFile, int taps) {
   } else {
     Right_FIR_Filter.loadCoefficients(nullptr, 0);
   }
-  
-  // Load Sub Filter or clear it
   if (subFile.length() > 0) {
     float* coeffs = FIRLoader::loadCoefficients(subFile, actualTaps, taps);
     Sub_FIR_Filter.loadCoefficients(coeffs, actualTaps);
@@ -569,7 +545,6 @@ void setFIR(String leftFile, String rightFile, String subFile, int taps) {
   } else {
     Sub_FIR_Filter.loadCoefficients(nullptr, 0);
   }
-
   if (state.firEnabled) {
     for (size_t i = 0; i < firConnections_len; ++i) {
       firConnections[i]->connect();
@@ -582,10 +557,20 @@ void setDelays(int delayL_us, int delayR_us, int delayS_us) {
   state.delayRightMicroSeconds = delayR_us;
   state.delaySubMicroSeconds = delayS_us;
   state.isDirty = true;
-
   Left_delay.delay(0, delayL_us / 1000.0f); // delay time in milliseconds
   Right_delay.delay(0, delayR_us / 1000.0f);
   Sub_delay.delay(0, delayS_us / 1000.0f);
+}
+
+void resetEQFilters(int fromIndex) {
+  for (int i = fromIndex; i < MAX_PEQ_BANDS; i++) {
+    state.filters[i].enabled = false;
+    state.filters[i].frequency = 1000.0f;
+    state.filters[i].gain = 0.0f;
+    state.filters[i].q = 1.0f;
+  }
+  state.isDirty = true;
+  setEQFilters(state.filters, getConsecutiveActiveFilterCount());
 }
 
 /*
@@ -628,4 +613,72 @@ void handleGetFiles(const String& command, String* args, int argCount) {
   }
   root.close();
   // stream.write("\0END\n", 5); // Temporarily commented out
+}
+
+void handleSetInputGains(const String& command, String* args, int argCount) {
+  if (argCount == 3) {
+    setInputGains(args[0].toFloat(), args[1].toFloat(), args[2].toFloat());
+  }
+}
+
+void handleSetCrossoverFrequency(const String& command, String* args, int argCount) {
+  if (argCount == 1) {
+    setCrossoverFrequency(args[0].toInt());
+  }
+}
+
+void handleSetEQEnabled(const String& command, String* args, int argCount) {
+  if (argCount == 1) {
+    setEQEnabled(args[0].toInt() == 1);
+  }
+}
+
+void handleSetCrossoverEnabled(const String& command, String* args, int argCount) {
+  if (argCount == 1) {
+    setCrossoverEnabled(args[0].toInt() == 1);
+  }
+}
+
+void handleSetFIREnabled(const String& command, String* args, int argCount) {
+  if (argCount == 1) {
+    setFIREnabled(args[0].toInt() == 1);
+  }
+}
+
+void handleSetDelayEnabled(const String& command, String* args, int argCount) {
+  if (argCount == 1) {
+    setDelayEnabled(args[0].toInt() == 1);
+  }
+}
+
+void handleSetFIR(const String& command, String* args, int argCount) {
+  if (argCount == 4) {
+    setFIR(args[0], args[1], args[2], args[3].toInt());
+  }
+}
+
+void handleSetDelays(const String& command, String* args, int argCount) {
+  if (argCount == 3) {
+    setDelays(args[0].toInt(), args[1].toInt(), args[2].toInt());
+  }
+}
+
+void handleResetEQFilters(const String& command, String* args, int argCount) {
+  if (argCount == 1) {
+    resetEQFilters(args[0].toInt());
+  }
+}
+
+void handleSetEQFilter(const String& command, String* args, int argCount) {
+  if (argCount == 5) {
+    int index = args[0].toInt();
+    if (index >= 0 && index < MAX_PEQ_BANDS) {
+      state.filters[index].enabled = true;
+      state.filters[index].frequency = args[2].toFloat();
+      state.filters[index].q = args[3].toFloat();
+      state.filters[index].gain = args[4].toFloat();
+      state.isDirty = true;
+      setEQFilters(state.filters, getConsecutiveActiveFilterCount());
+    }
+  }
 }
