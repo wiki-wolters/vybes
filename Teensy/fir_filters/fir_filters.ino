@@ -348,18 +348,18 @@ void setup() {
 
   //Register handlers for I2C commands
   Serial.println("Registering I2C handlers");
-  router.on("setSpeakerGains", [](const String& cmd, String* args, int count) { handleSetSpeakerGains(cmd, args, count); });
-  router.on("getFiles", [](const String& cmd, String* args, int count) { handleGetFiles(cmd, args, count); });
-  router.on("setInputGains", [](const String& cmd, String* args, int count) { handleSetInputGains(cmd, args, count); });
-  router.on("setCrossoverFrequency", [](const String& cmd, String* args, int count) { handleSetCrossoverFrequency(cmd, args, count); });
-  router.on("setEqEnabled", [](const String& cmd, String* args, int count) { handleSetEQEnabled(cmd, args, count); });
-  router.on("setCrossoverEnabled", [](const String& cmd, String* args, int count) { handleSetCrossoverEnabled(cmd, args, count); });
-  router.on("setFirEnabled", [](const String& cmd, String* args, int count) { handleSetFIREnabled(cmd, args, count); });
-  router.on("setDelayEnabled", [](const String& cmd, String* args, int count) { handleSetDelayEnabled(cmd, args, count); });
-  router.on("setFir", [](const String& cmd, String* args, int count) { handleSetFIR(cmd, args, count); });
-  router.on("setDelays", [](const String& cmd, String* args, int count) { handleSetDelays(cmd, args, count); });
-  router.on("setEqFilter", [](const String& cmd, String* args, int count) { handleSetEQFilter(cmd, args, count); });
-  router.on("resetEqFilters", [](const String& cmd, String* args, int count) { handleResetEQFilters(cmd, args, count); });
+  router.on("setSpeakerGains", handleSetSpeakerGains);
+  router.on("getFiles", handleGetFiles);
+  router.on("setInputGains", handleSetInputGains);
+  router.on("setCrossoverFrequency", handleSetCrossoverFrequency);
+  router.on("setEqEnabled", handleSetEQEnabled);
+  router.on("setCrossoverEnabled", handleSetCrossoverEnabled);
+  router.on("setFirEnabled", handleSetFIREnabled);
+  router.on("setDelayEnabled", handleSetDelayEnabled);
+  router.on("setFir", handleSetFIR);
+  router.on("setDelays", handleSetDelays);
+  router.on("setEqFilter", handleSetEQFilter);
+  router.on("resetEqFilters", handleResetEQFilters);
 }
 
 void loop() {
@@ -599,7 +599,7 @@ void resetEQFilters(int fromIndex) {
  * Define I2C command handlers
  */
 
-void handleSetSpeakerGains(const String& command, String* args, int argCount) {
+void handleSetSpeakerGains(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 3) {
     float leftGain = args[0].toFloat();
     float rightGain = args[1].toFloat();
@@ -610,88 +610,92 @@ void handleSetSpeakerGains(const String& command, String* args, int argCount) {
   }
 }
 
-void handleGetFiles(const String& command, String* args, int argCount) {
+void handleGetFiles(const String& command, String* args, int argCount, OutputStream& stream) {
   File root = SD.open("/");
   if (!root) {
-    // stream.write("ERROR: No SD card\n", 19); // Temporarily commented out
-    Serial.println("ERROR: No SD card"); // Placeholder for error reporting
+    stream.write("ERROR: No SD card\n", 19);
     return;
   }
   if (!root.isDirectory()) {
-    // stream.write("ERROR: Not a directory\n", 23); // Temporarily commented out
-    Serial.println("ERROR: Not a directory"); // Placeholder for error reporting
+    stream.write("ERROR: Not a directory\n", 24);
+    root.close();
     return;
   }
 
+  bool firstFile = true;
   File file = root.openNextFile();
   while (file) {
     if (!file.isDirectory()) {
-      // stream.write(file.name(), strlen(file.name())); // Temporarily commented out
-      // stream.write("\n",1); // Temporarily commented out
-      Serial.println(file.name()); // Placeholder for output
+      if (!firstFile) {
+        stream.write("\n", 1);
+      }
+      stream.write(file.name(), strlen(file.name()));
+      firstFile = false;
     }
     file.close();
     file = root.openNextFile();
   }
   root.close();
-  // stream.write("\0END\n", 5); // Temporarily commented out
+  
+  // Add a final newline to mark the end of the file list
+  stream.write("\n", 1);
 }
 
-void handleSetInputGains(const String& command, String* args, int argCount) {
+void handleSetInputGains(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 3) {
     setInputGains(args[0].toFloat(), args[1].toFloat(), args[2].toFloat());
   }
 }
 
-void handleSetCrossoverFrequency(const String& command, String* args, int argCount) {
+void handleSetCrossoverFrequency(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 1) {
     setCrossoverFrequency(args[0].toInt());
   }
 }
 
-void handleSetEQEnabled(const String& command, String* args, int argCount) {
+void handleSetEQEnabled(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 1) {
     setEQEnabled(args[0].toInt() == 1);
   }
 }
 
-void handleSetCrossoverEnabled(const String& command, String* args, int argCount) {
+void handleSetCrossoverEnabled(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 1) {
     setCrossoverEnabled(args[0].toInt() == 1);
   }
 }
 
-void handleSetFIREnabled(const String& command, String* args, int argCount) {
+void handleSetFIREnabled(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 1) {
     setFIREnabled(args[0].toInt() == 1);
   }
 }
 
-void handleSetDelayEnabled(const String& command, String* args, int argCount) {
+void handleSetDelayEnabled(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 1) {
     setDelayEnabled(args[0].toInt() == 1);
   }
 }
 
-void handleSetFIR(const String& command, String* args, int argCount) {
+void handleSetFIR(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 3) {
     setFIR(args[0], args[1], args[2]);
   }
 }
 
-void handleSetDelays(const String& command, String* args, int argCount) {
+void handleSetDelays(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 3) {
     setDelays(args[0].toInt(), args[1].toInt(), args[2].toInt());
   }
 }
 
-void handleResetEQFilters(const String& command, String* args, int argCount) {
+void handleResetEQFilters(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 1) {
     resetEQFilters(args[0].toInt());
   }
 }
 
-void handleSetEQFilter(const String& command, String* args, int argCount) {
+void handleSetEQFilter(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 5) {
     int index = args[0].toInt();
     if (index >= 0 && index < MAX_PEQ_BANDS) {

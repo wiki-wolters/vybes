@@ -4,9 +4,10 @@
 I2CCommandRouter* I2CCommandRouter::instance = nullptr;
 
 I2CCommandRouter::I2CCommandRouter(uint8_t i2cAddress) 
-    : commandCount(0), address(i2cAddress), delimiter(' ') {
+    : commandCount(0), address(i2cAddress), delimiter(' '), responseLength(0) {
     instance = this;
     buffer.reserve(128); // Increased buffer size for commands and args
+    memset(responseBuffer, 0, sizeof(responseBuffer));
 }
 
 void I2CCommandRouter::begin() {
@@ -19,7 +20,7 @@ void I2CCommandRouter::setDelimiter(char delimiter) {
     this->delimiter = delimiter;
 }
 
-void I2CCommandRouter::on(const String& commandName, CommandHandler handler) {
+void I2CCommandRouter::on(const String& commandName, I2CHandler handler) {
     if (commandCount < MAX_COMMANDS) {
         commands[commandCount].name = commandName;
         commands[commandCount].handler = handler;
@@ -30,7 +31,7 @@ void I2CCommandRouter::on(const String& commandName, CommandHandler handler) {
     }
 }
 
-void I2CCommandRouter::processCommand(const String& rawCommand) {
+void I2CCommandRouter::processCommand(const String& rawCommand, OutputStream& output) {
     String cmd_str; // Renamed to avoid conflict with member 'commands'
     String argsString;
     
@@ -52,8 +53,8 @@ void I2CCommandRouter::processCommand(const String& rawCommand) {
             int argCount;
             String* args = parseArgs(argsString, argCount);
             
-            // Call the handler with command name, args array, and count
-            commands[i].handler(cmd_str, args, argCount);
+            // Call the handler with command name, args array, count, and output stream
+            commands[i].handler(cmd_str, args, argCount, output);
             
             // Clean up
             if (argCount > 0 && args != nullptr) {
@@ -97,11 +98,16 @@ String* I2CCommandRouter::parseArgs(const String& argsString, int& count) {
 
 void I2CCommandRouter::handleI2CReceive(int bytes) {
     buffer = "";
+    responseLength = 0; // Reset response buffer
+    
     while (Wire.available()) {
         char c = Wire.read();
         if (c == '\n' || c == '\r') {
             if (buffer.length() > 0) {
-                processCommand(buffer);
+                // Create a buffer stream for the output
+                I2CCommandRouterBufferStream stream(responseBuffer, sizeof(responseBuffer) - 1);
+                processCommand(buffer, stream);
+                responseLength = stream.length;
                 buffer = "";
             }
         } else {
@@ -111,7 +117,9 @@ void I2CCommandRouter::handleI2CReceive(int bytes) {
     
     // Process command if no newline was sent
     if (buffer.length() > 0) {
-        processCommand(buffer);
+        I2CCommandRouterBufferStream stream(responseBuffer, sizeof(responseBuffer) - 1);
+        processCommand(buffer, stream);
+        responseLength = stream.length;
         buffer = "";
     }
 }
@@ -131,10 +139,18 @@ void I2CCommandRouter::i2cRequestWrapper() {
 
 // Instance method to handle I2C onRequest event
 void I2CCommandRouter::handleI2CRequest() {
-    // This function is called when a master requests data from this slave device.
-    // You need to implement the logic to send data back to the master.
-    // For example, Wire.write("hello\n");
-    // Or send data from a buffer prepared by one of your commands.
-    // This is a placeholder.
-    Wire.write("ACK"); // Send a simple acknowledgment
+    // Send the response buffer back to the master
+    if (responseLength > 0) {
+        Wire.write(responseBuffer, responseLength);
+        // Null-terminate the buffer for good measure
+        if (responseLength < sizeof(responseBuffer)) {
+            responseBuffer[responseLength] = '\0';
+        }
+    } else {
+        // Send a simple acknowledgment if no response was prepared
+        Wire.write("OK\n");
+    }
+    
+    // Reset the response buffer for the next command
+    responseLength = 0;
 }

@@ -25,8 +25,8 @@ public:
 
 class I2CCommandRouter {
 public:
-    // Simple handler function that receives command name and array of arguments
-    typedef std::function<void(const String&, String*, int)> CommandHandler;
+    // Handler function that receives command name, array of arguments, and output stream
+    using I2CHandler = std::function<void(const String&, String*, int, OutputStream&)>;
     
     // Constructor
     I2CCommandRouter(uint8_t i2cAddress);
@@ -35,10 +35,10 @@ public:
     void begin();
     
     // Register a command handler
-    void on(const String& command, CommandHandler handler);
+    void on(const String& command, I2CHandler handler);
     
     // Manual processing (if you want to handle I2C events manually)
-    void processCommand(const String& rawCommand);
+    void processCommand(const String& rawCommand, OutputStream& output);
     
     // Set custom delimiter (default is space)
     void setDelimiter(char delimiter);
@@ -46,7 +46,7 @@ public:
 private:
     struct Command {
         String name;
-        CommandHandler handler;
+        I2CHandler handler;
     };
     
     static const int MAX_COMMANDS = 20;
@@ -60,12 +60,17 @@ private:
     void handleI2CReceive(int bytes);
     String* parseArgs(const String& args, int& count);
     
+    // Buffer for I2C response
+    char responseBuffer[256];
+    size_t responseLength;
+    
     // Static wrapper for I2C callback
     static I2CCommandRouter* instance;
     static void i2cReceiveWrapper(int bytes);
     static void i2cRequestWrapper(); // Added for Wire.onRequest
 
     void handleI2CRequest(); // Added for Wire.onRequest
+    void handleI2CReceive(int bytes);
 };
 
 #endif
