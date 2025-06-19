@@ -16,10 +16,9 @@
 
     <div class="flex flex-col gap-6">
       <div class="w-full">
-        <div v-if="isLoadingData" class="text-center py-10">
-           <svg class="animate-spin h-8 w-8 text-vybes-primary mx-auto mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle> <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path> </svg>
-          <p class="text-vybes-text-secondary">Loading...</p>
+        <Loading v-if="isLoadingData" message="Loading preset data..." />
+        <div v-else-if="!selectedPresetName">
+          <p class="text-center text-vybes-text-secondary">No preset selected</p>
         </div>
         <div v-else>
           <div class="flex flex-col md:flex-row md:justify-between md:items-center space-y-3 md:space-y-0 mb-4">
@@ -31,8 +30,44 @@
                 <button @click="openPresetModal('rename', selectedPresetName)" class="btn-icon btn-secondary-icon p-1" title="Rename Preset">✏️</button> <button @click="openPresetModal('copy', selectedPresetName)" class="btn-icon btn-secondary-icon p-1" title="Copy Preset">📋</button> <button @click="handleDeletePreset(selectedPresetName)" class="btn-icon btn-danger-icon p-1" title="Delete Preset">🗑️</button> </div>
             </div>
           </div>
+          
+          <CollapsibleSection title="EQ" v-model="prefEQExpanded">
+            <EQSection
+              :eq-sets="prefEQSets"
+              @update-eq-points="handleEQPointsUpdate('pref', $event)"
+              @delete-set="handleDeleteEQSet('pref')"
+              @create-new-set="handleCreateNewSet('pref', $event)"
+            />
+          </CollapsibleSection>
 
-          <CardSection title="Subwoofer Crossover">
+          <CollapsibleSection title="FIR Filters" v-model="firExpanded">
+            <!-- Select dropdowns for Left, Right and Sub -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <SelectGroup 
+                v-model="selectedPresetData.firLeft" 
+                :label="'Left'"
+              >
+                <option key="" value="">None</option>
+                <option v-for="file in selectedPresetData.firFiles" :key="`left-${file}`" :value="file">{{ file }}</option>
+              </SelectGroup>
+              <SelectGroup 
+                v-model="selectedPresetData.firRight" 
+                :label="'Right'"
+              >
+                <option key="" value="">None</option>
+                <option v-for="file in selectedPresetData.firFiles" :key="`right-${file}`" :value="file">{{ file }}</option>
+              </SelectGroup>
+              <SelectGroup 
+                v-model="selectedPresetData.firSub" 
+                :label="'Sub'"
+              >
+                <option key="" value="">None</option>
+                <option v-for="file in selectedPresetData.firFiles" :key="`sub-${file}`" :value="file">{{ file }}</option>
+              </SelectGroup>
+            </div>
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Subwoofer Crossover" v-model="crossoverExpanded">
             <div>
               <RangeSlider
                 v-model="crossoverFreq"
@@ -42,41 +77,15 @@
                 unit="Hz"
                 :decimals="0"
               /> </div>
-          </CardSection>
-            
-          <CardSection title="Equal Loudness Compensation">
-            <div class="flex items-center justify-between">
-              <div>
-                <span class="text-sm text-vybes-text-secondary">Enable equal loudness compensation</span> <p class="text-sm text-vybes-text-secondary mt-1">Automatically adjusts EQ based on volume level</p>
-              </div>
-              <label class="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" v-model="equalLoudness" class="sr-only peer">
-                <div class="w-11 h-6 bg-vybes-dark-input peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-vybes-primary rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-vybes-primary"></div> </label>
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Speaker Delays" v-model="speakerDelayExpanded">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <SpeakerDelayInput title="Left" v-model="speakerDelays.left" />
+              <SpeakerDelayInput title="Right" v-model="speakerDelays.right" />
+              <SpeakerDelayInput title="Sub" v-model="speakerDelays.sub" />
             </div>
-          </CardSection>
-
-          <CardSection title="Speaker Delays">
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6"> <SpeakerDelayInput title="Left Speaker" v-model="speakerDelays.left" />
-              <SpeakerDelayInput title="Right Speaker" v-model="speakerDelays.right" />
-              <SpeakerDelayInput title="Subwoofer" v-model="speakerDelays.sub" />
-            </div>
-          </CardSection>
-
-          <EQSection
-            title="Room Correction"
-            :eq-sets="roomEQSets"
-            @update-eq-points="handleEQPointsUpdate('room', $event)"
-            @delete-set="handleDeleteEQSet('room')"
-            @create-new-set="handleCreateNewSet('room', $event)"
-          />
-
-          <EQSection
-            title="Preference Curve" 
-            :eq-sets="prefEQSets"
-            @update-eq-points="handleEQPointsUpdate('pref', $event)"
-            @delete-set="handleDeleteEQSet('pref')"
-            @create-new-set="handleCreateNewSet('pref', $event)"
-          />
+          </CollapsibleSection>
         </div>
       </div>
     </div>
@@ -93,33 +102,50 @@
 </template>
 
 <script setup>
-import { useRouter } from 'vue-router';
-import { ref, reactive, computed, onMounted, watch, inject } from 'vue';
+import { ref, reactive, computed, onMounted, inject } from 'vue';
+import SelectGroup from '../components/shared/SelectGroup.vue';
 import { throttleAndDebounce } from '../utilities.js'; // [cite: 42] Utility for rate limiting function calls
-import ParametricEQ from '../components/ParametricEQ.vue';
 import RangeSlider from '../components/shared/RangeSlider.vue';
 import InputGroup from '../components/shared/InputGroup.vue';
-import CardSection from '../components/shared/CardSection.vue';
 import ModalDialog from '../components/shared/ModalDialog.vue';
 import SpeakerDelayInput from '../components/shared/SpeakerDelayInput.vue'; // New component for speaker delay inputs
 import EQSection from '../components/shared/EQSection.vue'; // New component for EQ sections
+import CollapsibleSection from '../components/shared/CollapsibleSection.vue';
+import Loading from '../components/shared/Loading.vue';
 
 // Define props for the component
 const props = defineProps({ // [cite: 44]
-  name: { // Name of the preset to load, passed via route or prop
+  initialPreset: {
     type: String,
-    required: false
+    required: false,
+    default: null
+  },
+  isNew: {
+    type: Boolean,
+    default: false
+  },
+  isCopy: {
+    type: Boolean,
+    default: false
+  },
+  copySourcePreset: {
+    type: String,
+    default: ''
+  },
+  name: {
+    type: String,
+    default: ''
   }
 });
-const apiClient = inject('vybesAPI'); // Injected API client for backend communication [cite: 45]
-const liveUpdateData = inject('liveUpdateData'); // Injected reactive data for live updates via WebSockets [cite: 45]
-const router = useRouter();
 
+const apiClient = inject('vybesAPI'); // Injected API client for backend communication [cite: 45] 
+const prefEQExpanded = ref(false);
+const crossoverExpanded = ref(true);
+const speakerDelayExpanded = ref(false);
 // General reactive state
-const presets = ref([]); // List of all available presets
-const selectedPresetName = ref(null); // Name of the currently selected preset
+const selectedPresetName = ref(null); // Selected preset name [cite: 45]
 const selectedPresetData = ref(null); // Holds the full preset data object for the selected preset [cite: 45]
-const isLoadingData = ref(false); // True when fetching data for a selected preset [cite: 46]
+const isLoadingData = ref(true); // True when fetching data for a selected preset [cite: 46]
 const editorMessage = ref(''); // Feedback message displayed to the user [cite: 46]
 const messageType = ref('info'); // Type of feedback message: 'success', 'error', 'info' [cite: 47]
 
@@ -137,26 +163,16 @@ const showModal = ref(false); // Controls visibility of the unified modal
 // Preset-specific editable properties
 const speakerDelays = reactive({ left: 0, right: 0, sub: 0 }); // Speaker delays [cite: 49]
 const crossoverFreq = ref(80); // Crossover frequency, Default 80Hz [cite: 50]
-// const crossoverSlope = ref('12'); // Default 12dB/oct - Note: Not directly editable in UI, assumed fixed in debouncedSetCrossover [cite: 50]
-const equalLoudness = ref(false); // Equal loudness compensation toggle [cite: 51]
 
 // EQ States
-const roomEQSets = ref([]); // Array of room correction EQ sets ({ spl: Number, peqSet: Array }) [cite: 58]
-const currentRoomSPL = ref(85); // Default SPL value for room correction [cite: 58]
 const prefEQSets = ref([]); // Array of preference curve EQ sets ({ spl: Number, peqSet: Array }) [cite: 59]
-const currentPrefSPL = ref(85); // Default SPL value for preference curve [cite: 59]
+const currentPrefSPL = ref(0); // Default SPL value for preference curve [cite: 59]
 
 // Helper to get reactive refs for a given EQ type ('room' or 'pref')
-const getEQRefs = (type) => type === 'room'
-    ? { sets: roomEQSets, currentSPL: currentRoomSPL, type }
-    : { sets: prefEQSets, currentSPL: currentPrefSPL, type };
+const getEQRefs = { sets: prefEQSets, currentSPL: currentPrefSPL, type: 'pref' };
 
 // Computed properties for EQ points to be passed to the EQSection/ParametricEQ component
-const roomEQPointsForEditor = computed(() => { // [cite: 60]
-  const currentSet = roomEQSets.value.find(set => set.spl === currentRoomSPL.value);
-  return currentSet ? currentSet.peqSet : [];
-});
-const prefEQPointsForEditor = computed(() => { // [cite: 61]
+const prefEQPointsForEditor = computed(() => { // [cite: 60]
   const currentSet = prefEQSets.value.find(set => set.spl === currentPrefSPL.value);
   return currentSet ? currentSet.peqSet : [];
 });
@@ -178,8 +194,22 @@ async function performApiCall(apiCall, successCallback, failureMessage) {
   }
 }
 
+// Save crossover enabled (not debounced)
+const setCrossoverEnabled = async () => { // [cite: 51]
+  if (!selectedPresetName.value) return;
+  const success = await performApiCall(
+    () => apiClient.setCrossoverEnabled(selectedPresetName.value, crossoverEnabled.value),
+    null,
+    'Failed to set crossover enabled'
+  );
+  if (!success) {
+    // Reset to previous value on failure
+    crossoverEnabled.value = selectedPresetData.value?.crossover.enabled === true; // [cite: 51]
+  }
+};
+
 // Create throttled and debounced save functions (limit to 5 calls per second = 200ms, debounce 500ms)
-const debouncedSetCrossover = throttleAndDebounce(async () => { // [cite: 51]
+const debouncedSetCrossoverFreq = throttleAndDebounce(async () => { // [cite: 51]
   if (!selectedPresetName.value) return;
   const success = await performApiCall(
     () => apiClient.setCrossover(selectedPresetName.value, crossoverFreq.value, '12'), // Assuming '12dB/oct' slope from original code [cite: 51]
@@ -189,19 +219,6 @@ const debouncedSetCrossover = throttleAndDebounce(async () => { // [cite: 51]
   if (!success && selectedPresetData.value?.crossover) {
     // Reset to previous value on failure
     crossoverFreq.value = selectedPresetData.value.crossover.frequency || 80; // [cite: 51]
-  }
-}, 500, 200);
-
-const debouncedSetEqualLoudness = throttleAndDebounce(async () => { // [cite: 52]
-  if (!selectedPresetName.value) return;
-  const success = await performApiCall(
-    () => apiClient.setEqualLoudness(selectedPresetName.value, equalLoudness.value),
-    null,
-    'Failed to toggle equal loudness'
-  );
-  if (!success) {
-    // Reset to previous value on failure
-    equalLoudness.value = selectedPresetData.value?.equalLoudness === true; // [cite: 52]
   }
 }, 500, 200);
 
@@ -297,6 +314,21 @@ onMounted(async () => { // [cite: 156]
 
   await selectPreset(props.name);
 });
+
+async function openPresetModal(type, name) {
+  modalState.type = type;
+  modalState.title = type === 'create' ? 'Create New Preset' : 'Rename Preset';
+  modalState.confirmText = type === 'create' ? 'Create' : 'Rename';
+  modalState.inputValue = name;
+  modalState.sourceName = name;
+  showModal.value = true;
+
+  //On next tick, focus the input field and select all text
+  nextTick(() => {
+    newPresetNameInput.value.focus();
+    newPresetNameInput.value.select();
+  });
+}
 
 // Handles the confirmation (submit) from the unified modal
 async function handleModalConfirm() {

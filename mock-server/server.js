@@ -28,9 +28,15 @@ db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS presets (
     name TEXT PRIMARY KEY,
     is_current INTEGER DEFAULT 0,
+    is_speaker_delay_enabled INTEGER DEFAULT 0,
     speaker_delays TEXT DEFAULT '{"left": 0, "right": 0, "sub": 0}',
-    crossover TEXT DEFAULT '{"frequency": 80, "slope": "12"}',
-    equal_loudness INTEGER DEFAULT 0,
+    is_crossover_enabled INTEGER DEFAULT 0,
+    crossover_freq TEXT DEFAULT '80',
+    is_fir_enabled INTEGER DEFAULT 0,
+    fir_left TEXT DEFAULT '',
+    fir_right TEXT DEFAULT '',
+    fir_sub TEXT DEFAULT '',
+    is_preference_eq_enabled INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
@@ -116,6 +122,276 @@ function setSetting(key, value) {
 }
 
 // ===== API ROUTES =====
+
+// Get FIR filter files
+app.get('/fir/files', (req, res) => {
+  // Return a list of sample FIR filter files
+  res.json([
+    'fir_flat.txt',
+    'fir_room1.txt',
+    'fir_room2.txt',
+    'fir_speaker1.txt',
+    'fir_speaker2.txt'
+  ]);
+});
+
+// Get speaker delays for a preset
+app.get('/preset/:name/delays', (req, res) => {
+  const presetName = decodeURIComponent(req.params.name);
+  
+  db.get("SELECT speaker_delays FROM presets WHERE name = ?", [presetName], (err, row) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    if (!row) {
+      return res.status(404).json({ error: 'Preset not found' });
+    }
+    
+    try {
+      const delays = JSON.parse(row.speaker_delays || '{"left": 0, "right": 0, "sub": 0}');
+      res.json(delays);
+    } catch (e) {
+      res.status(500).json({ error: 'Invalid delays data' });
+    }
+  });
+});
+
+// Get crossover settings for a preset
+app.get('/preset/:name/crossover', (req, res) => {
+  const presetName = decodeURIComponent(req.params.name);
+  
+  db.get("SELECT is_crossover_enabled, crossover_freq FROM presets WHERE name = ?", [presetName], (err, row) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    if (!row) {
+      return res.status(404).json({ error: 'Preset not found' });
+    }
+    
+    res.json({
+      enabled: row.is_crossover_enabled === 1,
+      frequency: parseInt(row.crossover_freq) || 80
+    });
+  });
+});
+
+// Set crossover frequency for a preset
+app.put('/preset/:name/crossover/freq/:freq', (req, res) => {
+  const presetName = decodeURIComponent(req.params.name);
+  const frequency = parseInt(req.params.freq);
+  
+  if (isNaN(frequency) || frequency < 20 || frequency > 200) {
+    return res.status(400).json({ error: 'Frequency must be between 20 and 200 Hz' });
+  }
+  
+  db.run("UPDATE presets SET crossover_freq = ? WHERE name = ?", 
+    [frequency.toString(), presetName], 
+    function(err) {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      
+      if (this.changes === 0) {
+        return res.status(404).json({ error: 'Preset not found' });
+      }
+      
+      broadcast({ 
+        event: 'crossover_updated', 
+        preset: presetName,
+        frequency 
+      });
+      
+      res.json({ success: true, frequency });
+    }
+  );
+});
+
+// Set FIR filter for a channel
+app.put('/preset/:name/fir/:channel/:filter', (req, res) => {
+  const presetName = decodeURIComponent(req.params.name);
+  const channel = req.params.channel;
+  const filterName = decodeURIComponent(req.params.filter);
+  
+  if (!['left', 'right', 'sub'].includes(channel)) {
+    return res.status(400).json({ error: 'Invalid channel. Must be left, right, or sub' });
+  }
+  
+  const column = `fir_${channel}`;
+  db.run(`UPDATE presets SET ${column} = ? WHERE name = ?`,
+    [filterName, presetName],
+    function(err) {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      
+      if (this.changes === 0) {
+        return res.status(404).json({ error: 'Preset not found' });
+      }
+      
+      broadcast({
+        event: 'fir_updated',
+        preset: presetName,
+        channel,
+        filter: filterName
+      });
+      
+      res.json({ success: true, channel, filter: filterName });
+    }
+  );
+});
+
+// Get all EQ sets for a preset and type
+app.get('/preset/:name/eq/:type', (req, res) => {
+  const presetName = decodeURIComponent(req.params.name);
+  const type = req.params.type;
+  
+  if (!['room', 'pref'].includes(type)) {
+    return res.status(400).json({ error: 'Type must be either "room" or "pref"' });
+  }
+  
+  db.all(
+    "SELECT spl, peq_data FROM eq_configs WHERE preset_name = ? AND type = ? ORDER BY spl",
+    [presetName, type],
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      
+      const eqSets = rows.map(row => ({
+        spl: row.spl,
+        peqSet: JSON.parse(row.peq_data || '[]')
+      }));
+      
+      res.json(eqSets);
+    }
+  );
+});
+
+// Create or update an EQ set
+app.post('/preset/:name/eq/:type/:spl', (req, res) => {
+  const presetName = decodeURIComponent(req.params.name);
+  const type = req.params.type;
+  const spl = parseInt(req.params.spl);
+  const { peqPoints } = req.body;
+  
+  if (!['room', 'pref'].includes(type)) {
+    return res.status(400).json({ error: 'Type must be either "room" or "pref"' });
+  }
+  
+  if (isNaN(spl) || spl < 0 || spl > 120) {
+    return res.status(400).json({ error: 'SPL must be between 0 and 120' });
+  }
+  
+  if (!Array.isArray(peqPoints)) {
+    return res.status(400).json({ error: 'peqPoints must be an array' });
+  }
+  
+  // First, check if the preset exists
+  db.get("SELECT name FROM presets WHERE name = ?", [presetName], (err, preset) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    
+    if (!preset) {
+      return res.status(404).json({ error: 'Preset not found' });
+    }
+    
+    // Check if EQ set already exists for this SPL and type
+    db.get(
+      "SELECT id FROM eq_configs WHERE preset_name = ? AND type = ? AND spl = ?",
+      [presetName, type, spl],
+      (err, existing) => {
+        if (err) {
+          return res.status(500).json({ error: err.message });
+        }
+        
+        const peqData = JSON.stringify(peqPoints);
+        
+        if (existing) {
+          // Update existing EQ set
+          db.run(
+            "UPDATE eq_configs SET peq_data = ? WHERE id = ?",
+            [peqData, existing.id],
+            function(err) {
+              if (err) {
+                return res.status(500).json({ error: err.message });
+              }
+              
+              broadcast({
+                event: 'eq_updated',
+                preset: presetName,
+                type,
+                spl,
+                peqPoints
+              });
+              
+              res.json({ success: true, spl, peqPoints });
+            }
+          );
+        } else {
+          // Create new EQ set
+          db.run(
+            "INSERT INTO eq_configs (preset_name, type, spl, peq_data) VALUES (?, ?, ?, ?)",
+            [presetName, type, spl, peqData],
+            function(err) {
+              if (err) {
+                return res.status(500).json({ error: err.message });
+              }
+              
+              broadcast({
+                event: 'eq_created',
+                preset: presetName,
+                type,
+                spl,
+                peqPoints
+              });
+              
+              res.status(201).json({ success: true, spl, peqPoints });
+            }
+          );
+        }
+      }
+    );
+  });
+});
+
+// Delete an EQ set
+app.delete('/preset/:name/eq/:type/:spl', (req, res) => {
+  const presetName = decodeURIComponent(req.params.name);
+  const type = req.params.type;
+  const spl = parseInt(req.params.spl);
+  
+  if (!['room', 'pref'].includes(type)) {
+    return res.status(400).json({ error: 'Type must be either "room" or "pref"' });
+  }
+  
+  if (isNaN(spl)) {
+    return res.status(400).json({ error: 'Invalid SPL value' });
+  }
+  
+  db.run(
+    "DELETE FROM eq_configs WHERE preset_name = ? AND type = ? AND spl = ?",
+    [presetName, type, spl],
+    function(err) {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      
+      if (this.changes === 0) {
+        return res.status(404).json({ error: 'EQ set not found' });
+      }
+      
+      broadcast({
+        event: 'eq_deleted',
+        preset: presetName,
+        type,
+        spl
+      });
+      
+      res.json({ success: true });
+    }
+  );
+});
 
 // Calibration
 app.put('/calibrate/:spl', async (req, res) => {
@@ -287,11 +563,17 @@ app.get('/preset/:name', (req, res) => {
       res.json({
         name: preset.name,
         isCurrent: Boolean(preset.is_current),
+        isFIREnabled: Boolean(preset.is_fir_enabled),
+        firFiles: ['couch_left', 'couch_right', 'couch_sub', 'dining_left', 'dining_right', 'dining_sub'],
+        firLeft: preset.fir_left,
+        firRight: preset.fir_right,
+        firSub: preset.fir_sub,
+        isSpeakerDelayEnabled: Boolean(preset.is_speaker_delay_enabled),
         speakerDelays: JSON.parse(preset.speaker_delays),
+        isCrossoverEnabled: Boolean(preset.is_crossover_enabled),
         crossover: JSON.parse(preset.crossover),
-        roomCorrection,
+        isPreferenceEQEnabled: Boolean(preset.is_preference_eq_enabled),
         preferenceEQ,
-        equalLoudness: Boolean(preset.equal_loudness)
       });
     });
   });
@@ -300,10 +582,13 @@ app.get('/preset/:name', (req, res) => {
 app.post('/preset/create/:name', (req, res) => {
   const name = decodeURIComponent(req.params.name);
 
-  const defaultCrossover = JSON.stringify({ subwoofer: { frequency: 40, enabled: true } });
+  const defaultCrossoverFreq = '80';
   const defaultSpeakerDelays = JSON.stringify({ left: 0, right: 0, sub: 0 });
-  const defaultEqualLoudness = 0; // false
   const defaultIsCurrent = 1; // false, new presets are not current by default
+  const defaultIsFIREnabled = 0; // false
+  const defaultIsSpeakerDelayEnabled = 0; // false
+  const defaultIsCrossoverEnabled = 1; // true
+  const defaultIsPreferenceEQEnabled = 0; // false
 
   // Default PEQ points: 3 points with gain 0, Q 1.0, at 100Hz, 1kHz, 10kHz
   // Assuming type PK (parametric) and enabled for each point.
@@ -322,8 +607,8 @@ app.post('/preset/create/:name', (req, res) => {
     //Update any existing current preset to not be current
     db.run("UPDATE presets SET is_current = 0 WHERE is_current = 1");
 
-    db.run("INSERT INTO presets (name, crossover, speaker_delays, equal_loudness, is_current) VALUES (?, ?, ?, ?, ?)",
-      [name, defaultCrossover, defaultSpeakerDelays, defaultEqualLoudness, defaultIsCurrent],
+    db.run("INSERT INTO presets (name, crossover_freq, speaker_delays, is_current, is_speaker_delay_enabled, is_crossover_enabled, is_fir_enabled, is_preference_eq_enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [name, defaultCrossoverFreq, defaultSpeakerDelays, defaultIsCurrent, defaultIsSpeakerDelayEnabled, defaultIsCrossoverEnabled, defaultIsFIREnabled, defaultIsPreferenceEQEnabled],
       function(err) {
         if (err) {
           db.run('ROLLBACK');
@@ -363,11 +648,17 @@ app.post('/preset/create/:name', (req, res) => {
                   const newPresetForResponse = {
                     name,
                     isCurrent: Boolean(defaultIsCurrent),
+                    firLeft: '',
+                    firRight: '',
+                    firSub: '',
+                    firFiles: ['couch_left', 'couch_right', 'couch_sub', 'dining_left', 'dining_right', 'dining_sub'],
+                    isFIREnabled: Boolean(defaultIsFIREnabled),
+                    isSpeakerDelayEnabled: Boolean(defaultIsSpeakerDelayEnabled),
                     speakerDelays: defaultSpeakerDelays,
-                    crossover: defaultCrossover,
-                    roomCorrection: [{ spl: 0, peqs: defaultPEQPoints }],
+                    isCrossoverEnabled: Boolean(defaultIsCrossoverEnabled),
+                    crossoverFreq: defaultCrossoverFreq,
+                    isPreferenceEQEnabled: Boolean(defaultIsPreferenceEQEnabled),
                     preferenceEQ: [{ spl: 0, peqs: defaultPEQPoints }],
-                    equalLoudness: Boolean(defaultEqualLoudness)
                   }
                   res.status(201).json(newPresetForResponse);
                 });
@@ -392,9 +683,9 @@ app.post('/preset/copy/:source/:new', (req, res) => {
       return res.status(404).json({ error: 'Source preset not found' });
     }
     
-    db.run(`INSERT INTO presets (name, speaker_delays, crossover, equal_loudness) 
-            VALUES (?, ?, ?, ?)`, 
-           [newName, source.speaker_delays, source.crossover, source.equal_loudness], 
+    db.run(`INSERT INTO presets (name, speaker_delays, crossover_freq, is_current, is_speaker_delay_enabled, is_crossover_enabled, is_fir_enabled, is_preference_eq_enabled, fir_left, fir_right, fir_sub) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+           [newName, source.speaker_delays, source.crossover_freq, 1, source.is_speaker_delay_enabled, source.is_crossover_enabled, source.is_fir_enabled, source.is_preference_eq_enabled, source.fir_left, source.fir_right, source.fir_sub], 
            function(err) {
       if (err) {
         if (err.code === 'SQLITE_CONSTRAINT') {
@@ -414,9 +705,19 @@ app.post('/preset/copy/:source/:new', (req, res) => {
           stmt.run(newName, row.type, row.spl, row.peq_data);
         });
         stmt.finalize();
-        
-        broadcast({ event: 'preset', action: 'copied', source: sourceName, name: newName });
-        res.json({ success: true, name: newName });
+
+        //Source is_current must be updated to zero
+        db.run("UPDATE presets SET is_current = 0 WHERE name = ?", [sourceName], function(err) {
+          if (err) {
+            return res.status(500).json({ error: err.message });
+          }
+          if (this.changes === 0) {
+            return res.status(404).json({ error: 'Source preset not found' });
+          }
+
+          broadcast({ event: 'preset', action: 'copied', source: sourceName, name: newName });
+          res.json({ success: true, name: newName });
+        });
       });
     });
   });
@@ -476,6 +777,31 @@ app.delete('/preset/:name', (req, res) => {
   });
 });
 
+// Toggle speaker delay
+app.put('/preset/:name/delay/:state', (req, res) => {
+  const state = req.params.state;
+  const name  = req.params.name;
+  
+  if (!['on', 'off'].includes(state)) {
+    return res.status(400).json({ error: 'State must be "on" or "off"' });
+  }
+  
+  const delayEnabled = state === 'on' ? 1 : 0;
+  
+  db.run("UPDATE presets SET is_speaker_delay_enabled = ? WHERE name = ?", [delayEnabled, name], function(err) {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    
+    if (this.changes === 0) {
+      return res.status(404).json({ error: 'Preset not found' });
+    }
+    
+    broadcast({ event: 'is_speaker_delay_enabled', name, state });
+    res.json({ success: true, name, state });
+  });
+});
+
 // Speaker delays
 app.put('/preset/delay/:speaker/:ms', (req, res) => {
   const speaker = req.params.speaker;
@@ -505,6 +831,35 @@ app.put('/preset/delay/:speaker/:ms', (req, res) => {
       broadcast({ event: 'speaker_delay', speaker, delayMs, preset: preset.name });
       res.json({ success: true, speaker, delayMs });
     });
+  });
+});
+
+// Toggle EQ
+app.put('/preset/:name/eq/:type/:state', (req, res) => {
+  const presetName = decodeURIComponent(req.params.name);
+  const type = req.params.type;
+  const state = req.params.state;
+  
+  if (!['room', 'pref'].includes(type)) {
+    return res.status(400).json({ error: 'Type must be "room" or "pref"' });
+  }
+  if (!['on', 'off'].includes(state)) {
+    return res.status(400).json({ error: 'State must be "on" or "off"' });
+  }
+  
+  const eqEnabled = state === 'on' ? 1 : 0;
+  
+  db.run("UPDATE eq_configs SET enabled = ? WHERE preset_name = ? AND type = ?", [eqEnabled, presetName, type], function(err) {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    
+    if (this.changes === 0) {
+      return res.status(404).json({ error: 'EQ configuration not found' });
+    }
+    
+    broadcast({ event: 'eq', preset: presetName, type, state });
+    res.json({ success: true, preset: presetName, type, state });
   });
 });
 
@@ -564,6 +919,31 @@ app.delete('/preset/:name/eq/:type/:spl', (req, res) => {
   });
 });
 
+// Toggle crossover
+app.put('/preset/:name/crossover/:state', (req, res) => {
+  const presetName = decodeURIComponent(req.params.name);
+  const state = req.params.state;
+  
+  if (!['on', 'off'].includes(state)) {
+    return res.status(400).json({ error: 'State must be "on" or "off"' });
+  }
+  
+  const crossoverEnabled = state === 'on' ? 1 : 0;
+  
+  db.run("UPDATE presets SET is_crossover_enabled = ? WHERE name = ?", [crossoverEnabled, presetName], function(err) {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    
+    if (this.changes === 0) {
+      return res.status(404).json({ error: 'Preset not found' });
+    }
+    
+    broadcast({ event: 'crossover', preset: presetName, state });
+    res.json({ success: true, preset: presetName });
+  });
+});
+
 // Crossover
 app.put('/preset/:name/crossover/:freq/:slope', (req, res) => {
   const presetName = decodeURIComponent(req.params.name);
@@ -590,31 +970,6 @@ app.put('/preset/:name/crossover/:freq/:slope', (req, res) => {
     
     broadcast({ event: 'crossover', preset: presetName, frequency, slope });
     res.json({ success: true, preset: presetName, frequency, slope });
-  });
-});
-
-// Equal loudness
-app.put('/preset/:name/equal-loudness/:state', (req, res) => {
-  const presetName = decodeURIComponent(req.params.name);
-  const state = req.params.state;
-  
-  if (!['on', 'off'].includes(state)) {
-    return res.status(400).json({ error: 'State must be "on" or "off"' });
-  }
-  
-  const equalLoudness = state === 'on' ? 1 : 0;
-  
-  db.run("UPDATE presets SET equal_loudness = ? WHERE name = ?", [equalLoudness, presetName], function(err) {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    
-    if (this.changes === 0) {
-      return res.status(404).json({ error: 'Preset not found' });
-    }
-    
-    broadcast({ event: 'equal_loudness', preset: presetName, state });
-    res.json({ success: true, preset: presetName, state });
   });
 });
 
@@ -751,6 +1106,54 @@ app.put('/preset/:name/delay/:speaker/:ms', (req, res) => {
       broadcast({ event: 'speaker_delay', speaker, delayMs, preset: presetName });
       res.json({ success: true, speaker, delayMs, preset: presetName });
     });
+  });
+});
+
+//Enable FIR filters
+app.put('/preset/:name/fir/enabled', (req, res) => {
+  const name = decodeURIComponent(req.params.name);
+  
+  db.run("UPDATE presets SET is_fir_enabled = 1 WHERE name = ?", [name], function(err) {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    
+    if (this.changes === 0) {
+      return res.status(404).json({ error: 'Preset not found' });
+    }
+    
+    broadcast({ event: 'fir_enabled', preset: name });
+    res.json({ success: true, preset: name });
+  });
+});
+
+//Set FIR files
+app.put('/preset/:name/fir/:speaker/:file', (req, res) => {
+  const name = decodeURIComponent(req.params.name);
+  const speaker = req.params.speaker;
+  const file = req.params.file;
+
+  //speaker must be one of 'left', 'right', 'sub'
+  if (!['left', 'right', 'sub'].includes(speaker)) {
+    return res.status(400).json({ error: 'Speaker must be "left", "right", or "sub"' });
+  }
+
+  //file must be a string, or empty
+  if (typeof file !== 'string' && file !== '') {
+    return res.status(400).json({ error: 'File must be a string or empty' });
+  }
+  
+  db.run("UPDATE presets SET fir_" + speaker + " = ? WHERE name = ?", [file, name], function(err) {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    
+    if (this.changes === 0) {
+      return res.status(404).json({ error: 'Preset not found' });
+    }
+    
+    broadcast({ event: 'fir_file', speaker, file, preset: name });
+    res.json({ success: true, speaker, file, preset: name });
   });
 });
 

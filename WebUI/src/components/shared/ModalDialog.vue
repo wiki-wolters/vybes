@@ -1,12 +1,11 @@
 <template>
-  <div v-if="modelValue" class="modal-backdrop" @click.self="$emit('update:modelValue', false)">
-    <div class="modal-content">
-      <h3 class="text-xl font-semibold mb-4">{{ title }}</h3>
-      <slot></slot>
-      <div class="flex justify-end space-x-3 mt-4">
-        <button @click="$emit('update:modelValue', false)" class="btn-secondary">{{ cancelText }}</button>
-        <button @click="$emit('confirm')" class="btn-primary">{{ confirmText }}</button>
-      </div>
+  <div v-if="modelValue" class="modal-backdrop" @click.self="$emit('update:modelValue', false)"></div>
+  <div v-if="modelValue" class="modal-content">
+    <h3 class="text-xl font-semibold mb-4">{{ title }}</h3>
+    <slot></slot>
+    <div class="flex justify-end space-x-3 mt-4">
+      <button @click="$emit('update:modelValue', false)" class="btn-secondary">{{ cancelText }}</button>
+      <button @click="$emit('confirm')" class="btn-primary">{{ confirmText }}</button>
     </div>
   </div>
 </template>
@@ -56,5 +55,10 @@ defineEmits(['update:modelValue', 'confirm']);
   max-width: 500px;
   width: 90%;
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+  z-index: 51;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 }
 </style>

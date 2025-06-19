@@ -180,6 +180,92 @@ class VybesAPI {
   }
 
   /**
+   * Get all FIR filter files
+   * @returns {Promise<Array>} Array of FIR filter filenames
+   */
+  async getFirFiles() {
+    return this.request('GET', '/fir/files');
+  }
+
+  /**
+   * Get speaker delays for a preset
+   * @param {string} presetName - Name of the preset
+   * @returns {Promise<Object>} Object containing delays for left, right, and sub
+   */
+  async getSpeakerDelays(presetName) {
+    return this.request('GET', `/preset/${encodeURIComponent(presetName)}/delays`);
+  }
+
+  /**
+   * Set speaker delay for a specific channel
+   * @param {string} presetName - Name of the preset
+   * @param {string} speaker - Speaker channel ('left', 'right', or 'sub')
+   * @param {number} delayMs - Delay in milliseconds
+   */
+  async setSpeakerDelay(presetName, speaker, delayMs) {
+    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/delay/${speaker}/${delayMs}`);
+  }
+
+  /**
+   * Get crossover settings for a preset
+   * @param {string} presetName - Name of the preset
+   * @returns {Promise<Object>} Crossover settings
+   */
+  async getCrossover(presetName) {
+    return this.request('GET', `/preset/${encodeURIComponent(presetName)}/crossover`);
+  }
+
+  /**
+   * Set crossover frequency for a preset
+   * @param {string} presetName - Name of the preset
+   * @param {number} frequency - Crossover frequency in Hz
+   */
+  async setCrossoverFreq(presetName, frequency) {
+    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/crossover/freq/${frequency}`);
+  }
+
+  /**
+   * Set FIR filter for a channel
+   * @param {string} presetName - Name of the preset
+   * @param {string} channel - Channel ('left', 'right', or 'sub')
+   * @param {string} filterName - Name of the FIR filter file (empty string to clear)
+   */
+  async setFirFilter(presetName, channel, filterName) {
+    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/fir/${channel}/${encodeURIComponent(filterName)}`);
+  }
+
+  /**
+   * Get all EQ sets for a preset and type
+   * @param {string} presetName - Name of the preset
+   * @param {string} type - EQ type ('room' or 'pref')
+   * @returns {Promise<Array>} Array of EQ sets with SPL and PEQ data
+   */
+  async getEqSets(presetName, type) {
+    return this.request('GET', `/preset/${encodeURIComponent(presetName)}/eq/${type}`);
+  }
+
+  /**
+   * Create or update an EQ set
+   * @param {string} presetName - Name of the preset
+   * @param {string} type - EQ type ('room' or 'pref')
+   * @param {number} spl - SPL value for this EQ set
+   * @param {Array} peqPoints - Array of PEQ points
+   */
+  async saveEqSet(presetName, type, spl, peqPoints) {
+    return this.request('POST', `/preset/${encodeURIComponent(presetName)}/eq/${type}/${spl}`, { peqPoints });
+  }
+
+  /**
+   * Delete an EQ set
+   * @param {string} presetName - Name of the preset
+   * @param {string} type - EQ type ('room' or 'pref')
+   * @param {number} spl - SPL value of the EQ set to delete
+   */
+  async deleteEqSet(presetName, type, spl) {
+    return this.request('DELETE', `/preset/${encodeURIComponent(presetName)}/eq/${type}/${spl}`);
+  }
+
+  /**
    * Get specific preset data
    * @param {string} name - Preset name
    * @returns {Promise<Object>} Preset configuration

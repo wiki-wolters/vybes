@@ -13,20 +13,20 @@ const routes = [
       title: 'Vybes DSP - Home'
     }
   },
-  {
-    path: '/calibrate',
-    name: 'Calibrate',
-    component: CalibrateView,
-    meta: {
-      title: 'Vybes DSP - Calibration'
-    }
-  },
+  // {
+  //   path: '/calibrate',
+  //   name: 'Calibrate',
+  //   component: CalibrateView,
+  //   meta: {
+  //     title: 'Vybes DSP - Calibration'
+  //   }
+  // },
   {
     path: '/tools',
     name: 'Tools',
     component: ToolsView,
     meta: {
-      title: 'Vybes DSP - Tools'
+      title: 'Tone generator etc'
     }
   },
   {
@@ -35,7 +35,7 @@ const routes = [
     component: PresetView,
     props: true,
     meta: {
-      title: 'Vybes DSP - Preset Configuration'
+      title: 'Preset Configuration'
     }
   },
   {

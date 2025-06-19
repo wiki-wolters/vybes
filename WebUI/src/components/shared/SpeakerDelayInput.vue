@@ -4,7 +4,7 @@
       <InputGroup
         :model-value="modelValue"
         @update:model-value="$emit('update:modelValue', $event)"
-        label="Delay (ms)"
+        label="Delay (&mu;s)"
         type="number"
         :min="0"
         :max="100"

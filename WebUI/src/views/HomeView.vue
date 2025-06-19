@@ -57,40 +57,28 @@
       </CardSection>
 
       <!-- Subwoofer Control -->
-      <CardSection title="Subwoofer">
-        <label class="switch-container">
-          <input
-            type="checkbox"
-            v-model="subwooferEnabled"
-            @change="toggleSubwoofer"
-            class="switch-input"
-          >
-          <span class="switch-slider"></span>
-          <span class="switch-label">{{ subwooferEnabled ? 'On' : 'Off' }}</span>
-        </label>
+      <CardSection title="Speakers">
+        <div class="flex justify-between gap-3">
+          <div class="switch-container">
+            <ToggleSwitch v-model="subwooferEnabled" @change="toggleSubwoofer" label="Subwoofer"/>
+          </div>
+
+          <div class="switch-container">
+            <ToggleSwitch v-model="leftEnabled" @change="toggleLeft" label="Left" />
+          </div>
+
+          <div class="switch-container">
+            <ToggleSwitch v-model="rightEnabled" @change="toggleRight" label="Right" />
+          </div>
+        </div>
       </CardSection>
 
-      <!-- DSP Bypass Control -->
-      <CardSection title="DSP Processing">
-        <label class="switch-container">
-          <input
-            type="checkbox"
-            v-model="dspBypass"
-            @change="toggleDspBypass"
-            class="switch-input"
-          >
-          <span class="switch-slider"></span>
-          <span class="switch-label">{{ dspBypass ? 'Bypassed' : 'Active' }}</span>
-        </label>
-      </CardSection>
-
-      <!-- Mute Controls -->
       <CardSection title="Mute">
         <div class="space-y-4">
           <!-- Mute Percentage Slider -->
           <RangeSlider
             v-model="mutePercentage"
-            label="Volume"
+            label="Volume reduction"
             :min="1"
             :max="100"
             unit="%"
@@ -98,16 +86,7 @@
           />
           
           <!-- Mute On/Off Switch -->
-          <label class="switch-container">
-            <input
-              type="checkbox"
-              v-model="muteEnabled"
-              @change="toggleMute"
-              class="switch-input"
-            >
-            <span class="switch-slider"></span>
-            <span class="switch-label">{{ muteEnabled ? 'Muted' : 'Unmuted' }}</span>
-          </label>
+          <ToggleSwitch v-model="muteEnabled" @change="toggleMute" label="Mute"/>
         </div>
       </CardSection>
 
@@ -141,6 +120,7 @@ import CardSection from '../components/shared/CardSection.vue';
 import InputGroup from '../components/shared/InputGroup.vue';
 import RangeSlider from '../components/shared/RangeSlider.vue';
 import ModalDialog from '../components/shared/ModalDialog.vue';
+import ToggleSwitch from '../components/shared/ToggleSwitch.vue';
 
 const router = useRouter();
 
@@ -149,7 +129,6 @@ const isLoading = ref(true);
 const errorMessage = ref('');
 const presets = ref([]);
 const subwooferEnabled = ref(false);
-const dspBypass = ref(false);
 const muteEnabled = ref(false);
 const mutePercentage = ref(100);
 let muteUpdateTimeout = null;
@@ -172,7 +151,8 @@ async function loadSystemData() {
     try {
       const status = await apiClient.getStatus();
       subwooferEnabled.value = status.subwoofer === 'on';
-      dspBypass.value = status.bypass === 'on';
+      leftEnabled.value = status.left === 'on';
+      rightEnabled.value = status.right === 'on';
       muteEnabled.value = status.mute === 'on';
       mutePercentage.value = status.mutePercent || 100;
     } catch (statusError) {
@@ -246,17 +226,6 @@ async function toggleSubwoofer() {
     errorMessage.value = `Failed to toggle subwoofer: ${error.message}`;
     // Revert state on error
     subwooferEnabled.value = !subwooferEnabled.value;
-  }
-}
-
-async function toggleDspBypass() {
-  try {
-    await apiClient.setBypass(dspBypass.value);
-  } catch (error) {
-    console.error('Failed to toggle DSP bypass:', error);
-    errorMessage.value = `Failed to toggle DSP bypass: ${error.message}`;
-    // Revert state on error
-    dspBypass.value = !dspBypass.value;
   }
 }
 
@@ -365,7 +334,7 @@ onUnmounted(() => {
 }
 
 .switch-container {
-  @apply flex items-center space-x-3 cursor-pointer;
+  @apply flex items-center space-x-3 cursor-pointer w-1/3;
 }
 
 .switch-input {

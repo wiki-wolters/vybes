@@ -1,39 +1,10 @@
 <template>
-    <CardSection :title="title">
-      <div class="mb-4">
-        <div class="flex justify-between items-center mb-2">
-          <span class="text-sm text-vybes-text-secondary">EQ Sets:</span>
-        </div>
-        <div v-if="sortedEqSets && sortedEqSets.length > 0" class="flex flex-wrap gap-2">
-          <button
-            v-for="set in sortedEqSets"
-            :key="set.spl"
-            @click="$emit('select-set', set.spl)"
-            :class="['px-3 py-1 rounded-md text-sm',
-              currentSpl === set.spl ? 'bg-vybes-primary text-white' : 'bg-vybes-dark-input text-vybes-text-secondary hover:bg-vybes-dark-hover']"
-          >
-            {{ set.spl }}
-          </button>
-          <button @click="promptAndAddNewSet" class="btn-secondary btn-sm py-1 px-2">Add</button>
-        </div>
-        <div v-else class="text-sm text-vybes-text-secondary italic">No EQ sets defined. Add one to get started.</div>
-      </div>
-  
+    <CardSection>
       <ParametricEQ
           :eq-points="eqPointsForEditor"
           @update:eq-points="$emit('update-eq-points', $event)"
           class="min-h-[400px] h-auto"
       />
-  
-      <template #actions>
-        <button 
-          @click="$emit('delete-set')" 
-          class="btn-danger" 
-          v-if="eqSets && eqSets.some(set => set.spl === currentSpl)"
-        >
-          Delete {{ currentSpl }} SPL Set
-        </button>
-      </template>
     </CardSection>
   </template>
   
@@ -43,11 +14,10 @@
   import ParametricEQ from '../ParametricEQ.vue';
   
   const props = defineProps({
-    title: String,
     eqSets: Array, // Expected format: [{ spl: Number, peqSet: Array }, ...]
   });
   
-  const emit = defineEmits(['update-eq-points', 'delete-set', 'create-new-set']);
+  const emit = defineEmits(['update-eq-points']);
 
   const sortedEqSets = computed(() => {
     if (!props.eqSets) return [];
