@@ -330,8 +330,7 @@ const updateSpeakerDelayEnabled = async (value) => {
 };
 
 const updateSpeakerDelay = async (speaker, value) => {
-  const currentValue = selectedPresetData.value.speakerDelays[speaker];
-  selectedPresetData.value.speakerDelays[speaker] = value;
+  speakerDelays[speaker] = value;
   await debouncedApiCall(() => apiClient.setSpeakerDelay(
     selectedPresetName.value,
     speaker,
@@ -340,7 +339,6 @@ const updateSpeakerDelay = async (speaker, value) => {
     showSuccess(`${speaker} speaker delay updated`);
   }, 'Failed to update speaker delay', () => {
     showError('Failed to update speaker delay');
-    selectedPresetData.value.speakerDelays[speaker] = currentValue;
   });
 };
 
@@ -366,6 +364,7 @@ async function fetchPresetData(presetName, isNewOrCopy = false) { // [cite: 72]
     () => apiClient.getPreset(presetName), // [cite: 74]
     (data) => {
       selectedPresetData.value = data;
+      speakerDelays.value = {...data.speakerDelays};
     },
     `Failed to load data for '${presetName}'`,
     () => {

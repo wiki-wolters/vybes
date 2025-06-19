@@ -51,12 +51,13 @@ db.serialize(() => {
   )`);
 
   // Insert default settings if they don't exist
-  db.get("SELECT value FROM system_settings WHERE key = 'subwoofer_state'", (err, row) => {
+  db.get("SELECT value FROM system_settings WHERE key = 'sub_gain'", (err, row) => {
     if (!row) {
       const defaultSettings = [
         ['calibration_spl', '85'],
-        ['subwoofer_state', 'on'],
-        ['bypass_state', 'off'],
+        ['sub_gain', '1.0'],
+        ['left_gain', '1.0'],
+        ['right_gain', '1.0'],
         ['mute_state', 'off'],
         ['mute_percent', '0'],
         ['tone_frequency', '1000'],
@@ -135,46 +136,6 @@ app.get('/fir/files', (req, res) => {
   ]);
 });
 
-// Get speaker delays for a preset
-app.get('/preset/:name/delays', (req, res) => {
-  const presetName = decodeURIComponent(req.params.name);
-  
-  db.get("SELECT speaker_delays FROM presets WHERE name = ?", [presetName], (err, row) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    if (!row) {
-      return res.status(404).json({ error: 'Preset not found' });
-    }
-    
-    try {
-      const delays = JSON.parse(row.speaker_delays || '{"left": 0, "right": 0, "sub": 0}');
-      res.json(delays);
-    } catch (e) {
-      res.status(500).json({ error: 'Invalid delays data' });
-    }
-  });
-});
-
-// Get crossover settings for a preset
-app.get('/preset/:name/crossover', (req, res) => {
-  const presetName = decodeURIComponent(req.params.name);
-  
-  db.get("SELECT is_crossover_enabled, crossover_freq FROM presets WHERE name = ?", [presetName], (err, row) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    if (!row) {
-      return res.status(404).json({ error: 'Preset not found' });
-    }
-    
-    res.json({
-      enabled: row.is_crossover_enabled === 1,
-      frequency: parseInt(row.crossover_freq) || 80
-    });
-  });
-});
-
 // Set crossover frequency for a preset
 app.put('/preset/:name/crossover/freq/:freq', (req, res) => {
   const presetName = decodeURIComponent(req.params.name);
@@ -240,38 +201,11 @@ app.put('/preset/:name/fir/file/:channel/:filter', (req, res) => {
   );
 });
 
-// Get all EQ sets for a preset and type
-app.get('/preset/:name/eq/:type', (req, res) => {
-  const presetName = decodeURIComponent(req.params.name);
-  const type = req.params.type;
-  
-  if (!['room', 'pref'].includes(type)) {
-    return res.status(400).json({ error: 'Type must be either "room" or "pref"' });
-  }
-  
-  db.all(
-    "SELECT spl, peq_data FROM eq_configs WHERE preset_name = ? AND type = ? ORDER BY spl",
-    [presetName, type],
-    (err, rows) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      
-      const eqSets = rows.map(row => ({
-        spl: row.spl,
-        peqSet: JSON.parse(row.peq_data || '[]')
-      }));
-      
-      res.json(eqSets);
-    }
-  );
-});
-
 // Create or update an EQ set
-app.post('/preset/:name/eq/:type/:spl', (req, res) => {
+app.post('/preset/:name/eq', (req, res) => {
   const presetName = decodeURIComponent(req.params.name);
-  const type = req.params.type;
-  const spl = parseInt(req.params.spl);
+  const type = 'pref';
+  const spl = 0;
   const { peqPoints } = req.body;
   
   if (!['room', 'pref'].includes(type)) {
@@ -355,86 +289,20 @@ app.post('/preset/:name/eq/:type/:spl', (req, res) => {
   });
 });
 
-// Delete an EQ set
-app.delete('/preset/:name/eq/:type/:spl', (req, res) => {
-  const presetName = decodeURIComponent(req.params.name);
-  const type = req.params.type;
-  const spl = parseInt(req.params.spl);
-  
-  if (!['room', 'pref'].includes(type)) {
-    return res.status(400).json({ error: 'Type must be either "room" or "pref"' });
+app.put('/speaker/:speaker/gain/:gain', async (req, res) => {
+  const gain = parseFloat(req.params.gain);
+  if (gain < 0 || gain > 2) {
+    return res.status(400).json({ error: 'Gain must be between 0 and 2' });
   }
-  
-  if (isNaN(spl)) {
-    return res.status(400).json({ error: 'Invalid SPL value' });
-  }
-  
-  db.run(
-    "DELETE FROM eq_configs WHERE preset_name = ? AND type = ? AND spl = ?",
-    [presetName, type, spl],
-    function(err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      
-      if (this.changes === 0) {
-        return res.status(404).json({ error: 'EQ set not found' });
-      }
-      
-      broadcast({
-        event: 'eq_deleted',
-        preset: presetName,
-        type,
-        spl
-      });
-      
-      res.json({ success: true });
-    }
-  );
-});
-
-// Calibration
-app.put('/calibrate/:spl', async (req, res) => {
-  const spl = parseInt(req.params.spl);
-  if (spl < 40 || spl > 120) {
-    return res.status(400).json({ error: 'SPL must be between 40 and 120' });
+  const speaker = req.params.speaker;
+  if (!['left', 'right', 'sub'].includes(speaker)) {
+    return res.status(400).json({ error: 'Speaker must be "left", "right", or "sub"' });
   }
   
   try {
-    await setSetting('calibration_spl', spl.toString());
-    broadcast({ event: 'calibration', spl });
-    res.json({ success: true, spl });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// System controls
-app.put('/sub/:state', async (req, res) => {
-  const state = req.params.state;
-  if (!['on', 'off'].includes(state)) {
-    return res.status(400).json({ error: 'State must be "on" or "off"' });
-  }
-  
-  try {
-    await setSetting('subwoofer_state', state);
-    broadcast({ event: 'subwoofer', state });
-    res.json({ success: true, state });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.put('/bypass/:state', async (req, res) => {
-  const state = req.params.state;
-  if (!['on', 'off'].includes(state)) {
-    return res.status(400).json({ error: 'State must be "on" or "off"' });
-  }
-  
-  try {
-    await setSetting('bypass_state', state);
-    broadcast({ event: 'bypass', state });
-    res.json({ success: true, state });
+    await setSetting(`${speaker}_gain`, gain.toString());
+    broadcast({ event: `${speaker}_gain`, gain });
+    res.json({ success: true, gain });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -468,48 +336,6 @@ app.put('/mute/percent/:percent', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
-});
-
-// Tone generation
-app.put('/generate/tone/:freq/:volume', async (req, res) => {
-  const freq = parseInt(req.params.freq);
-  const volume = parseInt(req.params.volume);
-  
-  if (freq < 10 || freq > 20000) {
-    return res.status(400).json({ error: 'Frequency must be between 10 and 20000 Hz' });
-  }
-  if (volume < 1 || volume > 100) {
-    return res.status(400).json({ error: 'Volume must be between 1 and 100' });
-  }
-  
-  try {
-    await setSetting('tone_frequency', freq.toString());
-    await setSetting('tone_volume', volume.toString());
-    broadcast({ event: 'tone', frequency: freq, volume });
-    res.json({ success: true, frequency: freq, volume });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.put('/generate/noise/:volume', async (req, res) => {
-  const volume = parseInt(req.params.volume);
-  if (volume < 0 || volume > 100) {
-    return res.status(400).json({ error: 'Volume must be between 0 and 100' });
-  }
-  
-  try {
-    await setSetting('noise_volume', volume.toString());
-    broadcast({ event: 'noise', volume });
-    res.json({ success: true, volume });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.put('/pulse', (req, res) => {
-  broadcast({ event: 'pulse', timestamp: Date.now() });
-  res.json({ success: true, message: 'Playing test pulse' });
 });
 
 // Preset management
@@ -961,8 +787,9 @@ app.get('/status', async (req, res) => {
   try {
     const [
       calibrationSpl,
-      subwooferState,
-      bypassState,
+      subGain,
+      leftGain,
+      rightGain,
       muteState,
       mutePercent,
       toneFrequency,
@@ -970,8 +797,9 @@ app.get('/status', async (req, res) => {
       noiseVolume
     ] = await Promise.all([
       getSetting('calibration_spl'),
-      getSetting('subwoofer_state'),
-      getSetting('bypass_state'),
+      getSetting('sub_gain'),
+      getSetting('left_gain'),
+      getSetting('right_gain'),
       getSetting('mute_state'),
       getSetting('mute_percent'),
       getSetting('tone_frequency'),
@@ -992,8 +820,11 @@ app.get('/status', async (req, res) => {
         isCalibrated: calibrationSpl !== null,
         spl: calibrationSpl ? parseInt(calibrationSpl) : null
       },
-      subwoofer: subwooferState || 'on',
-      bypass: bypassState || 'off',
+      speakerGains: {
+        sub: subGain ? parseFloat(subGain) : 0,
+        left: leftGain ? parseFloat(leftGain) : 0,
+        right: rightGain ? parseFloat(rightGain) : 0
+      },
       mute: {
         state: muteState || 'off',
         percent: mutePercent ? parseInt(mutePercent) : 0

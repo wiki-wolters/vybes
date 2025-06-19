@@ -431,6 +431,11 @@ class VybesAPI {
     return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/equal-loudness/${stateStr}`);
   }
 
+  // ===== SPEAKER GAIN ===== //
+  async setGlobalSpeakerGain(speaker, gain) {
+    return this.request('PUT', `/speaker/${speaker}/gain/${gain}`);
+  }
+
   // ===== WEBSOCKET LIVE UPDATES =====
 
   /**

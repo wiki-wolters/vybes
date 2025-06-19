@@ -56,19 +56,19 @@
         </div>
       </CardSection>
 
-      <!-- Subwoofer Control -->
+      <!-- Speakers -->
       <CardSection title="Speakers">
         <div class="flex justify-between gap-3">
           <div class="switch-container">
-            <ToggleSwitch v-model="subwooferEnabled" @change="toggleSubwoofer" label="Subwoofer"/>
+            <ToggleSwitch v-model="speakersEnabled.sub" @change="toggleSpeaker('sub')" label="Subwoofer"/>
           </div>
 
           <div class="switch-container">
-            <ToggleSwitch v-model="leftEnabled" @change="toggleLeft" label="Left" />
+            <ToggleSwitch v-model="speakersEnabled.left" @change="toggleSpeaker('left')" label="Left" />
           </div>
 
           <div class="switch-container">
-            <ToggleSwitch v-model="rightEnabled" @change="toggleRight" label="Right" />
+            <ToggleSwitch v-model="speakersEnabled.right" @change="toggleSpeaker('right')" label="Right" />
           </div>
         </div>
       </CardSection>
@@ -77,12 +77,12 @@
         <div class="space-y-4">
           <!-- Mute Percentage Slider -->
           <RangeSlider
-            v-model="mutePercentage"
+            :model-value="mutePercentage"
             label="Volume reduction"
             :min="1"
             :max="100"
             unit="%"
-            @update:modelValue="updateMutePercentage"
+            @update:modelValue="updateMutePercentage($event)"
           />
           
           <!-- Mute On/Off Switch -->
@@ -128,7 +128,7 @@ const router = useRouter();
 const isLoading = ref(true);
 const errorMessage = ref('');
 const presets = ref([]);
-const subwooferEnabled = ref(false);
+const speakersEnabled = ref({sub: true, left: true, right: true});
 const muteEnabled = ref(false);
 const mutePercentage = ref(100);
 let muteUpdateTimeout = null;
@@ -150,10 +150,12 @@ async function loadSystemData() {
     // Load system status (you'll need to add this endpoint)
     try {
       const status = await apiClient.getStatus();
-      subwooferEnabled.value = status.subwoofer === 'on';
-      leftEnabled.value = status.left === 'on';
-      rightEnabled.value = status.right === 'on';
-      muteEnabled.value = status.mute === 'on';
+      speakersEnabled.value = {
+        sub: status.speakerGains.sub !== 0.0,
+        left: status.speakerGains.left !== 0.0,
+        right: status.speakerGains.right !== 0.0
+      };
+      muteEnabled.value = status.muteState === 'on';
       mutePercentage.value = status.mutePercent || 100;
     } catch (statusError) {
       console.warn('Could not load system status:', statusError);
@@ -218,14 +220,12 @@ async function createNewPreset() {
 }
 
 // System controls
-async function toggleSubwoofer() {
+async function toggleSpeaker(speaker) {
   try {
-    await apiClient.setSubwoofer(subwooferEnabled.value);
+    await apiClient.setGlobalSpeakerGain(speaker, speakersEnabled.value[speaker] ? '1.0' : '0.0');
   } catch (error) {
-    console.error('Failed to toggle subwoofer:', error);
-    errorMessage.value = `Failed to toggle subwoofer: ${error.message}`;
-    // Revert state on error
-    subwooferEnabled.value = !subwooferEnabled.value;
+    console.error('Failed to toggle speaker:', error);
+    errorMessage.value = `Failed to toggle speaker: ${error.message}`;
   }
 }
 
@@ -241,10 +241,12 @@ async function toggleMute() {
   }
 }
 
-function updateMutePercentage() {
+function updateMutePercentage(newValue) {
   if (muteUpdateTimeout) {
     clearTimeout(muteUpdateTimeout);
   }
+
+  mutePercentage.value = newValue;
   
   muteUpdateTimeout = setTimeout(async () => {
     try {
@@ -253,7 +255,7 @@ function updateMutePercentage() {
       console.error('Failed to update mute percentage:', error);
       errorMessage.value = `Failed to update volume: ${error.message}`;
     }
-  }, 100);
+  }, 500);
 }
 
 // WebSocket live updates
