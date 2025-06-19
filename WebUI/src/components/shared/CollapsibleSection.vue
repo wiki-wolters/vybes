@@ -7,7 +7,7 @@
           <slot name="header-actions"></slot>
           
           <!-- Toggle Switch -->
-          <ToggleSwitch v-model="isExpanded" />
+          <ToggleSwitch :model-value="isExpanded" @update:modelValue="handleToggle" />
         </div>
       </div>
       
@@ -47,12 +47,8 @@
     },
     modelValue: {
       type: Boolean,
-      default: null
+      required: true
     },
-    defaultExpanded: {
-      type: Boolean,
-      default: true
-    }
   })
   
   const emit = defineEmits(['update:modelValue', 'toggle'])
@@ -60,19 +56,13 @@
   // Use v-model if provided, otherwise use internal state
   const isExpanded = computed({
     get() {
-      return props.modelValue !== null ? props.modelValue : internalExpanded.value
+      return props.modelValue
     },
     set(value) {
-      if (props.modelValue !== null) {
-        emit('update:modelValue', value)
-      } else {
-        internalExpanded.value = value
-      }
-      emit('toggle', value)
+      emit('update:modelValue', value)
     }
   })
   
-  const internalExpanded = ref(props.defaultExpanded)
   const contentRef = ref(null)
   const innerContentRef = ref(null)
   const contentHeight = ref(0)
@@ -84,6 +74,10 @@
     }
   }
   
+  const handleToggle = (value) => {
+    isExpanded.value = value
+  }
+
   const toggleExpanded = () => {
     isExpanded.value = !isExpanded.value
   }

@@ -5,7 +5,7 @@
       <h1 class="text-3xl font-bold mb-4 text-vybes-light-blue text-center">Preset Editor</h1>
     </div>
 
-    <div v-if="editorMessage" class="mb-6 p-4 rounded-md text-sm text-center transition-all duration-300"
+    <div v-if="editorMessage && messageType === 'error'" class="mb-6 p-4 rounded-md text-sm text-center transition-all duration-300"
       :class="{
         'bg-green-700 text-green-100': messageType === 'success',
         'bg-red-700 text-red-100': messageType === 'error',
@@ -31,21 +31,23 @@
             </div>
           </div>
           
-          <CollapsibleSection title="EQ" v-model="prefEQExpanded">
+          <CollapsibleSection title="EQ" :model-value="selectedPresetData.isPreferenceEQEnabled" @update:modelValue="updateEQEnabled($event)">
             <EQSection
               :eq-sets="prefEQSets"
               @update-eq-points="handleEQPointsUpdate('pref', $event)"
               @delete-set="handleDeleteEQSet('pref')"
               @create-new-set="handleCreateNewSet('pref', $event)"
+              :is-enabled="selectedPresetData.isPreferenceEQEnabled"
             />
           </CollapsibleSection>
 
-          <CollapsibleSection title="FIR Filters" v-model="firExpanded">
-            <!-- Select dropdowns for Left, Right and Sub -->
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <CollapsibleSection title="FIR Filters" :model-value="selectedPresetData.isFIREnabled" @update:modelValue="updateFIREnabled($event)">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6" :class="{ 'opacity-50': !selectedPresetData.isFIREnabled }">
               <SelectGroup 
                 v-model="selectedPresetData.firLeft" 
                 :label="'Left'"
+                :disabled="!selectedPresetData.isFIREnabled"
+                @update:modelValue="updateFIRFilter('left', $event)"
               >
                 <option key="" value="">None</option>
                 <option v-for="file in selectedPresetData.firFiles" :key="`left-${file}`" :value="file">{{ file }}</option>
@@ -53,6 +55,8 @@
               <SelectGroup 
                 v-model="selectedPresetData.firRight" 
                 :label="'Right'"
+                :disabled="!selectedPresetData.isFIREnabled"
+                @update:modelValue="updateFIRFilter('right', $event)"
               >
                 <option key="" value="">None</option>
                 <option v-for="file in selectedPresetData.firFiles" :key="`right-${file}`" :value="file">{{ file }}</option>
@@ -60,6 +64,8 @@
               <SelectGroup 
                 v-model="selectedPresetData.firSub" 
                 :label="'Sub'"
+                :disabled="!selectedPresetData.isFIREnabled"
+                @update:modelValue="updateFIRFilter('sub', $event)"
               >
                 <option key="" value="">None</option>
                 <option v-for="file in selectedPresetData.firFiles" :key="`sub-${file}`" :value="file">{{ file }}</option>
@@ -67,23 +73,40 @@
             </div>
           </CollapsibleSection>
 
-          <CollapsibleSection title="Subwoofer Crossover" v-model="crossoverExpanded">
-            <div>
+          <CollapsibleSection title="Subwoofer Crossover" :model-value="selectedPresetData.isCrossoverEnabled" @update:modelValue="updateCrossoverEnabled($event)">
+            <div :class="{ 'opacity-50': !selectedPresetData.isCrossoverEnabled }">
               <RangeSlider
-                v-model="crossoverFreq"
+                :model-value="Number(selectedPresetData.crossoverFreq)"
                 label="Frequency" :min="40"
-                :max="150"
-                :step="1"
+                :max="500"
+                :step="5"
                 unit="Hz"
                 :decimals="0"
-              /> </div>
+                @update:modelValue="updateCrossoverFreq($event)"
+              />
+            </div>
           </CollapsibleSection>
 
-          <CollapsibleSection title="Speaker Delays" v-model="speakerDelayExpanded">
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <SpeakerDelayInput title="Left" v-model="speakerDelays.left" />
-              <SpeakerDelayInput title="Right" v-model="speakerDelays.right" />
-              <SpeakerDelayInput title="Sub" v-model="speakerDelays.sub" />
+          <CollapsibleSection title="Speaker Delays" :model-value="selectedPresetData.isSpeakerDelayEnabled" @update:modelValue="updateSpeakerDelayEnabled($event)">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6" :class="{ 'opacity-50': !selectedPresetData.isSpeakerDelayEnabled }">
+              <SpeakerDelayInput 
+                title="Left" 
+                v-model="speakerDelays.left" 
+                :disabled="!selectedPresetData.isSpeakerDelayEnabled"
+                @update:modelValue="updateSpeakerDelay('left', $event)"
+              />
+              <SpeakerDelayInput 
+                title="Right" 
+                v-model="speakerDelays.right"
+                :disabled="!selectedPresetData.isSpeakerDelayEnabled"
+                @update:modelValue="updateSpeakerDelay('right', $event)"
+              />
+              <SpeakerDelayInput 
+                title="Sub" 
+                v-model="speakerDelays.sub"
+                :disabled="!selectedPresetData.isSpeakerDelayEnabled"
+                @update:modelValue="updateSpeakerDelay('sub', $event)"
+              />
             </div>
           </CollapsibleSection>
         </div>
@@ -102,9 +125,9 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, inject } from 'vue';
+import { ref, reactive, computed, onMounted, inject, watch } from 'vue';
 import SelectGroup from '../components/shared/SelectGroup.vue';
-import { throttleAndDebounce } from '../utilities.js'; // [cite: 42] Utility for rate limiting function calls
+import { asyncDebounce } from '../utilities.js'; // [cite: 42] Utility for rate limiting function calls
 import RangeSlider from '../components/shared/RangeSlider.vue';
 import InputGroup from '../components/shared/InputGroup.vue';
 import ModalDialog from '../components/shared/ModalDialog.vue';
@@ -112,6 +135,10 @@ import SpeakerDelayInput from '../components/shared/SpeakerDelayInput.vue'; // N
 import EQSection from '../components/shared/EQSection.vue'; // New component for EQ sections
 import CollapsibleSection from '../components/shared/CollapsibleSection.vue';
 import Loading from '../components/shared/Loading.vue';
+import ToggleSwitch from '../components/shared/ToggleSwitch.vue';
+import { useRouter } from 'vue-router';
+
+const router = useRouter();
 
 // Define props for the component
 const props = defineProps({ // [cite: 44]
@@ -171,6 +198,19 @@ const currentPrefSPL = ref(0); // Default SPL value for preference curve [cite: 
 // Helper to get reactive refs for a given EQ type ('room' or 'pref')
 const getEQRefs = { sets: prefEQSets, currentSPL: currentPrefSPL, type: 'pref' };
 
+// Helper functions for showing messages
+const showSuccess = (message) => {
+  editorMessage.value = message;
+  messageType.value = 'success';
+  setTimeout(clearMessage, 3000);
+};
+
+const showError = (message) => {
+  editorMessage.value = message;
+  messageType.value = 'error';
+  setTimeout(clearMessage, 5000);
+};
+
 // Computed properties for EQ points to be passed to the EQSection/ParametricEQ component
 const prefEQPointsForEditor = computed(() => { // [cite: 60]
   const currentSet = prefEQSets.value.find(set => set.spl === currentPrefSPL.value);
@@ -181,7 +221,7 @@ const prefEQPointsForEditor = computed(() => { // [cite: 60]
 const clearMessage = () => { editorMessage.value = ''; messageType.value = 'info'; }; // [cite: 62]
 
 // Generic helper to perform an API call and handle common success/failure patterns
-async function performApiCall(apiCall, successCallback, failureMessage) {
+async function performApiCall(apiCall, successCallback, failureMessage, failureCallback) {
   try {
     const response = await apiCall();
     if (successCallback) successCallback(response);
@@ -190,113 +230,148 @@ async function performApiCall(apiCall, successCallback, failureMessage) {
     console.error(failureMessage, error);
     editorMessage.value = `${failureMessage}: ${error.message}`;
     messageType.value = 'error';
+    if (failureCallback) failureCallback(error);
     return false; // Indicate failure
   }
 }
 
-// Save crossover enabled (not debounced)
-const setCrossoverEnabled = async () => { // [cite: 51]
-  if (!selectedPresetName.value) return;
-  const success = await performApiCall(
-    () => apiClient.setCrossoverEnabled(selectedPresetName.value, crossoverEnabled.value),
-    null,
-    'Failed to set crossover enabled'
-  );
-  if (!success) {
-    // Reset to previous value on failure
-    crossoverEnabled.value = selectedPresetData.value?.crossover.enabled === true; // [cite: 51]
-  }
+const debouncedApiCall = asyncDebounce(async (apiCall, successCallback, failureMessage, failureCallback) => {
+  return await performApiCall(apiCall, successCallback, failureMessage, failureCallback);
+}, 500);
+
+
+// API methods for updating preset settings
+const updateEQEnabled = async (value) => {
+  selectedPresetData.value.isPreferenceEQEnabled = value;
+  await performApiCall(() => apiClient.setEQEnabled(
+    selectedPresetName.value,
+    'pref',
+    value
+  ), () => {
+    showSuccess('Preference EQ setting updated');
+  }, 'Failed to update EQ setting', () => {
+    showError('Failed to update EQ setting');
+    selectedPresetData.value.isPreferenceEQEnabled = !selectedPresetData.value.isPreferenceEQEnabled;
+  });
 };
 
-// Create throttled and debounced save functions (limit to 5 calls per second = 200ms, debounce 500ms)
-const debouncedSetCrossoverFreq = throttleAndDebounce(async () => { // [cite: 51]
-  if (!selectedPresetName.value) return;
-  const success = await performApiCall(
-    () => apiClient.setCrossover(selectedPresetName.value, crossoverFreq.value, '12'), // Assuming '12dB/oct' slope from original code [cite: 51]
-    null,
-    'Failed to set crossover'
-  );
-  if (!success && selectedPresetData.value?.crossover) {
-    // Reset to previous value on failure
-    crossoverFreq.value = selectedPresetData.value.crossover.frequency || 80; // [cite: 51]
-  }
-}, 500, 200);
-
-const debouncedSetSpeakerDelay = throttleAndDebounce(async (speaker, delayMs) => { // [cite: 53]
-  if (!selectedPresetName.value) return;
-  const success = await performApiCall(
-    () => apiClient.setSpeakerDelay(selectedPresetName.value, speaker, delayMs),
-    null,
-    `Failed to set ${speaker} delay`
-  );
-  if (!success && selectedPresetData.value?.speakerDelays) {
-    // Reset to previous value on failure
-    speakerDelays[speaker] = selectedPresetData.value.speakerDelays[speaker] || 0; // [cite: 53]
-  }
-}, 500, 200);
-
-const debouncedSaveEQ = throttleAndDebounce(async (type) => { // Combines debouncedSaveRoomEQ [cite: 54] and debouncedSavePrefEQ [cite: 56]
-  if (!selectedPresetName.value) return;
-  const { sets, currentSPL } = getEQRefs(type);
-  const currentSet = sets.value.find(set => set.spl === currentSPL.value);
-  if (currentSet) {
-    await performApiCall(
-      () => apiClient.setEQ(selectedPresetName.value, type, currentSPL.value, currentSet.peqSet),
-      null, // No specific success message for debounced saves, UI reflects change
-      `Failed to save ${type} EQ`
-      // Note: Original code did not have rollback for EQ saves on error, relies on user or re-fetch.
-    );
-  }
-}, 500, 200);
-
-// Handles creating a new EQ set for a given type (room/pref) and SPL
-async function handleCreateNewSet(type, newSPL) {
-  if (!selectedPresetName.value) {
-    editorMessage.value = 'Please select a preset before adding an EQ set.';
-    messageType.value = 'error';
-    return;
-  }
-  const { sets, currentSPL } = getEQRefs(type);
-
-  if (sets.value.some(set => set.spl === newSPL)) {
-    editorMessage.value = `An EQ set for SPL ${newSPL} already exists in ${type === 'room' ? 'Room Correction' : 'Preference Curve'}.`;
-    messageType.value = 'error';
-    return;
-  }
-
-  const defaultPEQPoints = [
-    { freq: 100, gain: 0, q: 1.0 },
-    { freq: 1000, gain: 0, q: 1.0 },
-    { freq: 10000, gain: 0, q: 1.0 }
-  ];
-  const newPeqSetPayload = (newSPL === 0) ? defaultPEQPoints : [];
-
-  editorMessage.value = ''; // Clear previous messages
-  const success = await performApiCall(
-    () => apiClient.setEQ(selectedPresetName.value, type, newSPL, newPeqSetPayload),
+const updateFIREnabled = async (value) => {
+  selectedPresetData.value.isFIREnabled = value;
+  await performApiCall(
+    () => apiClient.updateFIREnabled(
+      selectedPresetName.value,
+      value
+    ),
+    () => showSuccess('FIR filter setting updated'),
+    'Failed to update FIR setting',
     () => {
-      sets.value.push({ spl: newSPL, peqSet: [...newPeqSetPayload] }); // Add to local state
-      sets.value.sort((a, b) => a.spl - b.spl); // Keep sets sorted by SPL
-      currentSPL.value = newSPL; // Select the newly created set
-      editorMessage.value = `New EQ set at ${newSPL} SPL created for ${type === 'room' ? 'Room Correction' : 'Preference Curve'}.`;
-      messageType.value = 'success';
-    },
-    `Failed to create new EQ set for ${type === 'room' ? 'Room Correction' : 'Preference Curve'} at ${newSPL} SPL`
+      showError('Failed to update FIR setting');
+      selectedPresetData.value.isFIREnabled = !selectedPresetData.value.isFIREnabled;
+    }
   );
-}
+};
+
+const updateFIRFilter = async (speaker, value) => {
+  selectedPresetData.value[speaker] = value;
+  await performApiCall(() => apiClient.setFirFilter(
+    selectedPresetName.value,
+    speaker,
+    value
+  ), () => {
+    showSuccess(`${speaker} FIR filter updated`);
+  }, 'Failed to update FIR filter', () => {
+    showError('Failed to update FIR filter');
+  });
+};
+
+const updateCrossoverEnabled = async (value) => {
+  const currentValue = selectedPresetData.value.isCrossoverEnabled;
+  selectedPresetData.value.isCrossoverEnabled = value;
+  await debouncedApiCall(() => apiClient.updateCrossoverEnabled(
+    selectedPresetName.value,
+    value
+  ), () => {
+    showSuccess('Crossover setting updated');
+  }, 'Failed to update crossover setting', () => {
+    showError('Failed to update crossover setting');
+    selectedPresetData.value.isCrossoverEnabled = currentValue;
+  });
+};
+
+let prevValue = null;
+const updateCrossoverFreq = async (value) => {
+  if (prevValue === null) prevValue = selectedPresetData.value.crossoverFreq;
+  selectedPresetData.value.crossoverFreq = value;
+  await debouncedApiCall(() => apiClient.updateCrossoverFreq(
+    selectedPresetName.value,
+    value
+  ), () => {
+    showSuccess('Crossover frequency updated');
+    prevValue = null;
+  }, 'Failed to update crossover frequency', () => {
+    showError('Failed to update crossover frequency');
+    selectedPresetData.value.crossoverFreq = prevValue;
+    prevValue = null;
+  });
+};
+
+const updateSpeakerDelayEnabled = async (value) => {
+  const currentValue = selectedPresetData.value.isSpeakerDelayEnabled;
+  selectedPresetData.value.isSpeakerDelayEnabled = value;
+  await debouncedApiCall(() => apiClient.setSpeakerDelayEnabled(
+    selectedPresetName.value,
+    value
+  ), () => {
+    showSuccess('Speaker delay setting updated');
+  }, 'Failed to update speaker delay setting', () => {
+    showError('Failed to update speaker delay setting');
+    selectedPresetData.value.isSpeakerDelayEnabled = currentValue;
+  });
+};
+
+const updateSpeakerDelay = async (speaker, value) => {
+  const currentValue = selectedPresetData.value.speakerDelays[speaker];
+  selectedPresetData.value.speakerDelays[speaker] = value;
+  await debouncedApiCall(() => apiClient.setSpeakerDelay(
+    selectedPresetName.value,
+    speaker,
+    value
+  ), () => {
+    showSuccess(`${speaker} speaker delay updated`);
+  }, 'Failed to update speaker delay', () => {
+    showError('Failed to update speaker delay');
+    selectedPresetData.value.speakerDelays[speaker] = currentValue;
+  });
+};
+
+// Save crossover enabled (not debounced)
+const setCrossoverEnabled = async () => {
+  if (!selectedPresetName.value) return;
+  const currentValue = selectedPresetData.value?.crossover.enabled;
+  await debouncedApiCall(() => apiClient.setCrossoverEnabled(selectedPresetName.value, crossoverEnabled.value),
+    null,
+    'Failed to set crossover enabled',
+    () => {
+      // Reset to previous value on failure
+      crossoverEnabled.value = currentValue;
+    }
+  );
+};
 
 // Fetch detailed data for a specific preset
 async function fetchPresetData(presetName, isNewOrCopy = false) { // [cite: 72]
   if (!presetName) { selectedPresetData.value = null; isLoadingData.value = false; return; } // [cite: 72]
   isLoadingData.value = true; clearMessage(); // [cite: 73]
-  const success = await performApiCall(
+  await performApiCall(
     () => apiClient.getPreset(presetName), // [cite: 74]
     (data) => {
       selectedPresetData.value = data;
     },
-    `Failed to load data for '${presetName}'` // [cite: 77]
+    `Failed to load data for '${presetName}'`,
+    () => {
+      selectedPresetData.value = null;
+    }
   );
-  if (!success) selectedPresetData.value = null; // Clear data on error [cite: 77]
   isLoadingData.value = false; // [cite: 79]
 }
 
@@ -305,7 +380,7 @@ async function selectPreset(presetName, isNewOrCopy = false) { // [cite: 92]
   // Allow re-selection if isNewOrCopy is true, to ensure re-initialization logic runs for new/copied presets.
   if (selectedPresetName.value === presetName && selectedPresetData.value && !isNewOrCopy) return;
   selectedPresetName.value = presetName;
-  await fetchPresetData(presetName, isNewOrCopy); 
+  await fetchPresetData(presetName, isNewOrCopy);
 }
 
 // Component lifecycle hook
@@ -334,7 +409,6 @@ async function openPresetModal(type, name) {
 async function handleModalConfirm() {
   const { type, inputValue, sourceName } = modalState;
   editorMessage.value = ''; // Clear message before operation
-  let success = false;
   let newSelectedName = null; // To store the name of the preset to be selected after action
 
   const trimmedValue = inputValue.trim();
@@ -345,17 +419,21 @@ async function handleModalConfirm() {
   }
 
   if (type === 'create') {
-    success = await performApiCall(
+    await performApiCall(
       () => apiClient.createPreset(trimmedValue), // [cite: 169]
       () => { editorMessage.value = `Preset '${trimmedValue}' created successfully.`; messageType.value = 'success'; newSelectedName = trimmedValue; }, // [cite: 169]
-      'Failed to create preset' // [cite: 171]
+      'Failed to create preset',
+      () => {
+        editorMessage.value = 'Failed to create preset';
+        messageType.value = 'error';
+      }
     );
   } else if (type === 'rename') {
     if (trimmedValue === sourceName) { // [cite: 174]
       editorMessage.value = 'New name is the same as the old name.'; // [cite: 174]
       messageType.value = 'info'; // [cite: 175]
     }
-    success = await performApiCall(
+    await performApiCall(
       () => apiClient.renamePreset(sourceName, trimmedValue), // [cite: 177]
       () => { editorMessage.value = `Preset '${sourceName}' renamed to '${trimmedValue}'.`; messageType.value = 'success'; newSelectedName = trimmedValue; }, // [cite: 177]
       'Failed to rename preset' // [cite: 181]
@@ -365,13 +443,17 @@ async function handleModalConfirm() {
       editorMessage.value = 'Copy name cannot be the same as the source name.'; // [cite: 184]
       messageType.value = 'error'; // [cite: 185]
     }
-    success = await performApiCall(
+    await performApiCall(
       () => apiClient.copyPreset(sourceName, trimmedValue), // [cite: 186]
       () => { editorMessage.value = `Preset '${sourceName}' copied to '${trimmedValue}'.`; messageType.value = 'success'; newSelectedName = trimmedValue; }, // [cite: 186]
-      'Failed to copy preset' // [cite: 188]
+      'Failed to copy preset',
+      () => {
+        editorMessage.value = 'Failed to copy preset';
+        messageType.value = 'error';
+      }
     );
   } else if (type === 'delete') {
-    success = await performApiCall(
+    await performApiCall(
       () => apiClient.deletePreset(sourceName),
       () => {
         editorMessage.value = `Preset '${sourceName}' deleted successfully.`;
@@ -384,31 +466,20 @@ async function handleModalConfirm() {
     // If deletion is successful and we redirect, we might not need to fall through to the generic 'if (success)' block below
     // for preset list refreshing if the page context is about to change entirely.
     // However, if the redirect is conditional or might not happen, ensure 'success' is handled appropriately.
-    if (success) {
-      // Explicitly stop further processing in this function if redirecting
-      // Or ensure that operations like showModal.value = false still execute if desired before redirect.
-      // For now, the redirect is in the success callback, so this block might not be strictly necessary
-      // if the redirect is the final action for a successful delete.
-      showModal.value = false; // Close modal
-      return; // Exit function early as we've redirected or handled the delete fully.
-    }
+    showModal.value = false; // Close modal
+    return; // Exit function early as we've redirected or handled the delete fully.
   }
 
-  if (success) {
-    if (newSelectedName) {
-        // Determine if it's a create or copy operation for the isNewOrCopy flag
-        const isCreatingOrCopying = type === 'create' || type === 'copy';
-        await selectPreset(newSelectedName, isCreatingOrCopying); 
-    }
+  if (newSelectedName) {
+    await selectPreset(newSelectedName);
+    await router.push(`/preset/${newSelectedName}`);
   }
-  if (success) { // [cite: 169, 175, 178, 186]
-    // Message for rename is set here. Create/Copy messages are handled by fetchPresetData.
-    if (type === 'rename') {
-        editorMessage.value = `Preset '${inputValue}' renamed successfully.`;
-        messageType.value = 'success';
-    }
-    showModal.value = false; // [cite: 169, 175, 178, 186]
+  // Message for rename is set here. Create/Copy messages are handled by fetchPresetData.
+  if (type === 'rename') {
+    editorMessage.value = `Preset '${inputValue}' renamed successfully.`;
+    messageType.value = 'success';
   }
+  showModal.value = false;
 }
 
 // Handles deletion of a preset (prompted by a direct button, not modal)

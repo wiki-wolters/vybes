@@ -224,6 +224,10 @@ class VybesAPI {
     return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/crossover/freq/${frequency}`);
   }
 
+  async updateFIREnabled(presetName, value) {
+    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/fir/enabled/${value ? 'on' : 'off'}`);
+  }
+
   /**
    * Set FIR filter for a channel
    * @param {string} presetName - Name of the preset
@@ -231,7 +235,7 @@ class VybesAPI {
    * @param {string} filterName - Name of the FIR filter file (empty string to clear)
    */
   async setFirFilter(presetName, channel, filterName) {
-    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/fir/${channel}/${encodeURIComponent(filterName)}`);
+    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/fir/file/${channel}/${encodeURIComponent(filterName)}`);
   }
 
   /**
@@ -312,18 +316,41 @@ class VybesAPI {
 
   /**
    * Set speaker delay
+   * @param {string} presetName - Preset name
    * @param {string} speaker - Speaker type: "left", "right", or "sub"
-   * @param {number} delayMs - Delay in milliseconds (float)
+   * @param {number} delayUs - Delay in microseconds (float)
    */
-  async setSpeakerDelay(speaker, delayMs) {
+  async setSpeakerDelay(presetName, speaker, delayUs) {
     const validSpeakers = ['left', 'right', 'sub'];
     if (!validSpeakers.includes(speaker)) {
       throw new Error('Speaker must be "left", "right", or "sub"');
     }
-    return this.request('PUT', `/preset/delay/${speaker}/${delayMs}`);
+    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/delay/${speaker}/${delayUs}`);
+  }
+
+  async setSpeakerDelayEnabled(presetName, enabled) {
+    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/delay/enabled/${enabled ? 'on' : 'off'}`);
   }
 
   // ===== EQ MANAGEMENT =====
+
+  /**
+   * Set EQ enabled state for a preset
+   * @param {string} presetName - Preset name
+   * @param {string} type - EQ type: "room" or "pref"
+   * @param {boolean} enabled - Whether EQ is enabled
+   */
+  async setEQEnabled(presetName, type, enabled) {
+    const validTypes = ['room', 'pref'];
+    if (!validTypes.includes(type)) {
+      throw new Error('EQ type must be "room" or "pref"');
+    }
+    if (typeof enabled !== 'boolean') {
+      throw new Error('Enabled must be a boolean');
+    }
+
+    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/eq/${type}/enabled/${enabled ? 'on' : 'off'}`);
+  }
 
   /**
    * Set EQ configuration for a preset
@@ -372,20 +399,24 @@ class VybesAPI {
   // ===== CROSSOVER =====
 
   /**
+   * Set crossover enabled state for a preset
+   * @param {string} presetName - Preset name
+   * @param {boolean} enabled - Whether crossover is enabled
+   */
+  async updateCrossoverEnabled(presetName, enabled) {
+    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/crossover/enabled/${enabled ? 'on' : 'off'}`);
+  }
+
+  /**
    * Set crossover configuration
    * @param {string} presetName - Preset name
-   * @param {number} frequency - Crossover frequency (40-150 Hz)
-   * @param {string} slope - Slope: "12" or "24" (dB)
+   * @param {number} frequency - Crossover frequency (40-500 Hz)
    */
-  async setCrossover(presetName, frequency, slope = '12') {
-    if (frequency < 40 || frequency > 150) {
-      throw new Error('Crossover frequency must be between 40 and 150 Hz');
+  async updateCrossoverFreq(presetName, frequency) {
+    if (frequency < 40 || frequency > 500) {
+      throw new Error('Crossover frequency must be between 40 and 500 Hz');
     }
-    const validSlopes = ['12', '24'];
-    if (!validSlopes.includes(slope)) {
-      throw new Error('Slope must be "12" or "24"');
-    }
-    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/crossover/${frequency}/${slope}`);
+    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/crossover/freq/${frequency}`);
   }
 
   // ===== EQUAL LOUDNESS =====

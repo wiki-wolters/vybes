@@ -41,7 +41,25 @@ function throttleAndDebounce(func, throttleWait = 500, debounceWait = 200) {
     };
   }
 
+  function asyncDebounce(func, wait = 200) {
+    let timeout;
+    return function(...args) {
+      return new Promise((resolve, reject) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(async () => {
+          try {
+            const result = await func.apply(this, args);
+            resolve(result);
+          } catch (error) {
+            reject(error);
+          }
+        }, wait);
+      });
+    };
+  }
+
   export {
     throttleAndDebounce,
-    debounce
+    debounce,
+    asyncDebounce
   }
