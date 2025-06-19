@@ -228,7 +228,7 @@ const size_t outputConnections_len = sizeof(outputConnections) / sizeof(outputCo
 AudioConnection spdifLeftToAnalogOut(Optical_in, 0, L_R_Analog_Out, 0);
 AudioConnection spdifRightToAnalogOut(Optical_in, 1, L_R_Analog_Out, 1);
 
-const int CURRENT_VERSION = 1;
+const int CURRENT_VERSION = 2;
 
 //Define a structure for holding state
 struct State {
@@ -258,7 +258,6 @@ struct State {
   char firFileLeft[MAX_FILENAME_LEN] = "";
   char firFileRight[MAX_FILENAME_LEN] = "";
   char firFileSub[MAX_FILENAME_LEN] = "";
-  int firTaps = 256;
 
   // Speaker delay config (default to 0)
   int delayLeftMicroSeconds = 0;
@@ -342,7 +341,7 @@ void setup() {
   setDelayEnabled(state.delayEnabled);
   setEQFilters(state.filters, getConsecutiveActiveFilterCount());
   setCrossoverFrequency(state.crossoverFrequency);
-  setFIR(state.firFileLeft, state.firFileRight, state.firFileSub, state.firTaps);
+  setFIR(state.firFileLeft, state.firFileRight, state.firFileSub);
   setDelays(state.delayLeftMicroSeconds, state.delayRightMicroSeconds, state.delaySubMicroSeconds);
   // State hasn't changed, so don't save
   state.isDirty = false;
@@ -509,42 +508,65 @@ void setCrossoverFrequency(int frequency) {
   Sub_lowpass.setLowpass(1, state.crossoverFrequency, 0.707f); // Stage 2
 }
 
-void setFIR(String leftFile, String rightFile, String subFile, int taps) {
+void setFIR(String leftFile, String rightFile, String subFile) {
   strncpy(state.firFileLeft, leftFile.c_str(), MAX_FILENAME_LEN - 1);
   state.firFileLeft[MAX_FILENAME_LEN - 1] = '\0';
   strncpy(state.firFileRight, rightFile.c_str(), MAX_FILENAME_LEN - 1);
   state.firFileRight[MAX_FILENAME_LEN - 1] = '\0';
   strncpy(state.firFileSub, subFile.c_str(), MAX_FILENAME_LEN - 1);
   state.firFileSub[MAX_FILENAME_LEN - 1] = '\0';
-  state.firTaps = taps;
   state.isDirty = true;
+  
   if (state.firEnabled) {
     for (size_t i = 0; i < firConnections_len; ++i) {
       firConnections[i]->disconnect();
     }
   }
-  uint16_t actualTaps;
+  
+  uint16_t actualTaps = 0;
+  
+  // Load left channel FIR
   if (leftFile.length() > 0) {
-    float* coeffs = FIRLoader::loadCoefficients(leftFile, actualTaps, taps);
-    Left_FIR_Filter.loadCoefficients(coeffs, actualTaps);
-    if (coeffs) delete[] coeffs;
+    actualTaps = 0;
+    float* coeffs = FIRLoader::loadCoefficients(leftFile, actualTaps);
+    if (coeffs) {
+      Left_FIR_Filter.loadCoefficients(coeffs, actualTaps);
+      delete[] coeffs;
+    } else {
+      Left_FIR_Filter.loadCoefficients(nullptr, 0);
+    }
   } else {
     Left_FIR_Filter.loadCoefficients(nullptr, 0);
   }
+  
+  // Load right channel FIR
   if (rightFile.length() > 0) {
-    float* coeffs = FIRLoader::loadCoefficients(rightFile, actualTaps, taps);
-    Right_FIR_Filter.loadCoefficients(coeffs, actualTaps);
-    if (coeffs) delete[] coeffs;
+    actualTaps = 0;
+    float* coeffs = FIRLoader::loadCoefficients(rightFile, actualTaps);
+    if (coeffs) {
+      Right_FIR_Filter.loadCoefficients(coeffs, actualTaps);
+      delete[] coeffs;
+    } else {
+      Right_FIR_Filter.loadCoefficients(nullptr, 0);
+    }
   } else {
     Right_FIR_Filter.loadCoefficients(nullptr, 0);
   }
+  
+  // Load subwoofer FIR
   if (subFile.length() > 0) {
-    float* coeffs = FIRLoader::loadCoefficients(subFile, actualTaps, taps);
-    Sub_FIR_Filter.loadCoefficients(coeffs, actualTaps);
-    if (coeffs) delete[] coeffs;
+    actualTaps = 0;
+    float* coeffs = FIRLoader::loadCoefficients(subFile, actualTaps);
+    if (coeffs) {
+      Sub_FIR_Filter.loadCoefficients(coeffs, actualTaps);
+      delete[] coeffs;
+    } else {
+      Sub_FIR_Filter.loadCoefficients(nullptr, 0);
+    }
   } else {
     Sub_FIR_Filter.loadCoefficients(nullptr, 0);
   }
+  
   if (state.firEnabled) {
     for (size_t i = 0; i < firConnections_len; ++i) {
       firConnections[i]->connect();
@@ -652,8 +674,8 @@ void handleSetDelayEnabled(const String& command, String* args, int argCount) {
 }
 
 void handleSetFIR(const String& command, String* args, int argCount) {
-  if (argCount == 4) {
-    setFIR(args[0], args[1], args[2], args[3].toInt());
+  if (argCount == 3) {
+    setFIR(args[0], args[1], args[2]);
   }
 }
 

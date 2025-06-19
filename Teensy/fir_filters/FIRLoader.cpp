@@ -1,67 +1,109 @@
 #include "FIRLoader.h"
 #include <SPI.h> // Usually needed for SD card
 
-// No direct loadFilter method in FIRLoader as it now returns the coefficient array.
-// The filter creation/updating is handled by the caller.
-
-// Renamed from loadFilter to just loadCoefficients, and takes maxTaps.
-// Returns a dynamically allocated float array, caller must delete.
-float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps, int8_t maxTaps) {
+// This method loads coefficients from a file into a float array and returns a pointer to it.
+// The caller is responsible for deleting the returned float array.
+// The method will read the entire file to determine the number of taps.
+// Returns a pointer to the coefficients array and sets actualTaps to the number of taps found.
+float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps) {
     actualTaps = 0; // Initialize actualTaps to 0
     if (filename == "") {
         logError("Filename cannot be empty.");
         return nullptr;
     }
 
+    // First, count the number of coefficients in the file
     File file = SD.open(filename.c_str());
     if (!file) {
         logError("Failed to open FIR file: " + filename);
         return nullptr;
     }
 
-    float* coeffs = nullptr;
-
-    // Determine file format and load accordingly
+    // Count the number of coefficients first
+    int coeffCount = 0;
     if (filename.endsWith(".wav") || filename.endsWith(".WAV")) {
-        coeffs = new float[maxTaps]; // Allocate max possible coeffs
-        if (!coeffs) {
-            logError("Failed to allocate memory for WAV coefficients.");
-            file.close();
-            return nullptr;
+        // For WAV files, we'll count the number of samples in the data chunk
+        if (file.size() >= 44) { // Minimum valid WAV header size
+            file.seek(40); // Points to the data chunk size (4 bytes after 'data' marker)
+            uint32_t dataSize = 0;
+            for (int i = 0; i < 4; i++) {
+                dataSize |= (file.read() << (i * 8));
+            }
+            // Assuming 32-bit float samples (4 bytes per sample)
+            coeffCount = dataSize / 4;
         }
-        actualTaps = loadFromWAV(file, coeffs, maxTaps);
     } else if (filename.endsWith(".txt") || filename.endsWith(".TXT")) {
-        coeffs = new float[maxTaps]; // Allocate max possible coeffs
-        if (!coeffs) {
-            logError("Failed to allocate memory for TXT coefficients.");
-            file.close();
-            return nullptr;
+        // For text files, count the number of valid number entries
+        String line = "";
+        while (file.available()) {
+            char c = file.read();
+            if (c == '\n' || c == '\r' || c == ',' || c == ' ' || c == '\t') {
+                if (line.length() > 0) {
+                    coeffCount++;
+                    line = "";
+                }
+            } else if (c != '\0') {
+                line += c;
+            }
         }
-        actualTaps = loadFromTXT(file, coeffs, maxTaps);
+        // Handle last coefficient if file ends without delimiter
+        if (line.length() > 0) {
+            coeffCount++;
+        }
     } else {
         logError("Unsupported FIR file format: " + filename);
-    }
-
-    file.close();
-
-    if (actualTaps > 0 && coeffs != nullptr) {
-        logInfo("Successfully loaded FIR coefficients: " + filename + " (using " + String(actualTaps) + " taps)");
-        // If actualTaps is less than maxTaps, you could reallocate to exact size
-        // for memory optimization, but for simplicity, we return the larger buffer.
-        // The FIR filter will only use actualTaps anyway.
-        return coeffs;
-    } else {
-        if (coeffs) {
-            delete[] coeffs; // Clean up if loading failed
-        }
+        file.close();
         return nullptr;
     }
+    
+    file.close();
+    
+    if (coeffCount <= 0) {
+        logError("No valid coefficients found in file: " + filename);
+        return nullptr;
+    }
+    
+    // Now that we know how many coefficients we have, allocate the array
+    float* coeffs = new float[coeffCount];
+    if (!coeffs) {
+        logError("Failed to allocate memory for coefficients.");
+        return nullptr;
+    }
+    
+    // Reopen the file to read the actual coefficients
+    file = SD.open(filename.c_str());
+    if (!file) {
+        logError("Failed to reopen FIR file: " + filename);
+        delete[] coeffs;
+        return nullptr;
+    }
+    
+    // Load the coefficients
+    int loadedCount = 0;
+    if (filename.endsWith(".wav") || filename.endsWith(".WAV")) {
+        loadedCount = loadFromWAV(file, coeffs, coeffCount);
+    } else if (filename.endsWith(".txt") || filename.endsWith(".TXT")) {
+        loadedCount = loadFromTXT(file, coeffs, coeffCount);
+    }
+    
+    file.close();
+    
+    if (loadedCount != coeffCount) {
+        logError("Mismatch in expected and loaded coefficient count");
+        delete[] coeffs;
+        return nullptr;
+    }
+    
+    actualTaps = coeffCount;
+    logInfo("Successfully loaded FIR coefficients: " + filename + " (" + String(actualTaps) + " taps)");
+    return coeffs;
 }
 
-// --- loadFromTXT: Now loads into float array ---
-int FIRLoader::loadFromTXT(File& file, float* coeffs, int8_t maxTaps) {
+// --- loadFromTXT: Loads coefficients from a text file into a float array ---
+int FIRLoader::loadFromTXT(File& file, float* coeffs, int maxTaps) {
     int coeffCount = 0;
     String line = "";
+    file.seek(0); // Rewind to start of file
 
     while (file.available() && coeffCount < maxTaps) {
         char c = file.read();
@@ -83,15 +125,12 @@ int FIRLoader::loadFromTXT(File& file, float* coeffs, int8_t maxTaps) {
         coeffCount++;
     }
 
-    if (file.available()) {
-        logInfo("File has more coefficients than requested taps (" + String(maxTaps) + "), using first " + String(coeffCount));
-    }
-
     return coeffCount;
 }
 
-// --- loadFromWAV: Now supports 32-bit float WAV (Format 3) and converts other formats ---
-int FIRLoader::loadFromWAV(File& file, float* coeffs, int8_t maxTaps) {
+// --- loadFromWAV: Loads coefficients from a WAV file into a float array ---
+// Supports 32-bit float WAV (Format 3) and converts other formats
+int FIRLoader::loadFromWAV(File& file, float* coeffs, int maxTaps) {
     if (file.size() < 44) {
         logError("WAV file too small (less than header size).");
         return 0;

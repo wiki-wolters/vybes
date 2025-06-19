@@ -11,12 +11,11 @@
 
 class FIRLoader {
 public:
-    // This method now loads coefficients into a float array and returns a pointer to it.
+    // This method loads coefficients into a float array and returns a pointer to it.
     // The caller is responsible for deleting the returned float array.
-    // It is no longer directly integrated with AudioFilterFIRFloat's begin method
-    // because that object's constructor takes the pointer.
-    // The 'taps' parameter is now 'maxTaps' to limit allocation.
-    static float* loadCoefficients(String filename, uint16_t& actualTaps, int8_t maxTaps);
+    // The method will read the entire file to determine the number of taps.
+    // Returns a pointer to the coefficients array and sets actualTaps to the number of taps found.
+    static float* loadCoefficients(String filename, uint16_t& actualTaps);
 
 private:
     // Helper methods, now static as they don't depend on FIRLoader instance state.
