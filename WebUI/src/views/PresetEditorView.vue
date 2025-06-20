@@ -211,12 +211,6 @@ const showError = (message) => {
   setTimeout(clearMessage, 5000);
 };
 
-// Computed properties for EQ points to be passed to the EQSection/ParametricEQ component
-const prefEQPointsForEditor = computed(() => { // [cite: 60]
-  const currentSet = prefEQSets.value.find(set => set.spl === currentPrefSPL.value);
-  return currentSet ? currentSet.peqSet : [];
-});
-
 // Clears the editor feedback message
 const clearMessage = () => { editorMessage.value = ''; messageType.value = 'info'; }; // [cite: 62]
 
@@ -241,6 +235,44 @@ const debouncedApiCall = asyncDebounce(async (apiCall, successCallback, failureM
 
 
 // API methods for updating preset settings
+const handleEQPointsUpdate = async (type, updatedPoints) => {
+  console.log('handleEQPointsUpdate called', { type, updatedPoints });
+  if (type === 'pref') {
+    console.log('Current SPL:', currentPrefSPL.value);
+    console.log('All EQ Sets:', JSON.parse(JSON.stringify(prefEQSets.value)));
+    
+    const currentSet = prefEQSets.value.find(set => set.spl === currentPrefSPL.value);
+    console.log('Current set found:', currentSet);
+    
+    if (currentSet) {
+      console.log('Updating EQ points for SPL:', currentPrefSPL.value, 'with:', updatedPoints);
+      currentSet.peqSet = [...updatedPoints]; // Create a new array to ensure reactivity
+      
+      try {
+        await performApiCall(
+          () => apiClient.saveEqSet(
+            selectedPresetName.value,
+            'pref',
+            currentPrefSPL.value,
+            updatedPoints
+          ),
+          () => {
+            console.log('Successfully updated EQ points');
+            showSuccess('EQ points updated');
+          },
+          'Failed to update EQ points',
+          () => {
+            console.error('Failed to update EQ points');
+            showError('Failed to update EQ points');
+          }
+        );
+      } catch (error) {
+        console.error('Error in handleEQPointsUpdate:', error);
+      }
+    }
+  }
+};
+
 const updateEQEnabled = async (value) => {
   selectedPresetData.value.isPreferenceEQEnabled = value;
   await performApiCall(() => apiClient.setEQEnabled(
@@ -365,10 +397,24 @@ async function fetchPresetData(presetName, isNewOrCopy = false) { // [cite: 72]
     (data) => {
       selectedPresetData.value = data;
       speakerDelays.value = {...data.speakerDelays};
+      
+      // Initialize prefEQSets from the preference curve data
+      if (data.preferenceEQ) {
+        prefEQSets.value = data.preferenceEQ;
+        if (prefEQSets.value.length > 0) {
+          currentPrefSPL.value = prefEQSets.value[0].spl;
+        }
+      } else {
+        // Default empty set if no preference curve data exists
+        prefEQSets.value = [];
+        currentPrefSPL.value = 0;
+      }
     },
     `Failed to load data for '${presetName}'`,
     () => {
       selectedPresetData.value = null;
+      prefEQSets.value = [];
+      currentPrefSPL.value = 0;
     }
   );
   isLoadingData.value = false; // [cite: 79]

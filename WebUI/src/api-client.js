@@ -256,7 +256,7 @@ class VybesAPI {
    * @param {Array} peqPoints - Array of PEQ points
    */
   async saveEqSet(presetName, type, spl, peqPoints) {
-    return this.request('POST', `/preset/${encodeURIComponent(presetName)}/eq/${type}/${spl}`, { peqPoints });
+    return this.request('POST', `/preset/${encodeURIComponent(presetName)}/eq/${type}/${spl}`, peqPoints);
   }
 
   /**

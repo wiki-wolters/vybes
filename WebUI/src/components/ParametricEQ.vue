@@ -82,7 +82,7 @@
         class="eq-point"
         :class="{ active: selectedPoint === index }"
         :style="{
-          left: frequencyToX(point.frequency) + 'px',
+          left: frequencyToX(point.freq) + 'px',
           top: gainToY(point.gain) + 'px'
         }"
         @mousedown="startDrag(index, $event)"
@@ -92,7 +92,7 @@
       >
         <div class="point-circle"></div>
         <div class="point-label">
-          {{ Math.round(point.frequency) }}Hz
+          {{ Math.round(point.freq) }}Hz
           <br>
           {{ point.gain > 0 ? '+' : '' }}{{ point.gain.toFixed(1) }}dB
         </div>
@@ -130,7 +130,7 @@
           :step="1"
           unit="Hz"
           :decimals="0"
-          v-model="localEqPoints[selectedPoint].frequency"
+          v-model="localEqPoints[selectedPoint].freq"
           @update:modelValue="emitChange"
         />
       </div>
@@ -169,9 +169,9 @@ const props = defineProps({
   peqPoints: {
     type: Array,
     default: () => [
-      { id: 1, frequency: 100, gain: 0, q: 1 },
-      { id: 2, frequency: 1000, gain: 0, q: 1 },
-      { id: 3, frequency: 10000, gain: 0, q: 1 }
+      { id: 1, freq: 100, gain: 0, q: 1 },
+      { id: 2, freq: 1000, gain: 0, q: 1 },
+      { id: 3, freq: 10000, gain: 0, q: 1 }
     ]
   }
 });
@@ -200,23 +200,36 @@ const localEqPoints = reactive([]);
 let nextId = 1;
 
 // Initialize local points from props
-const initializePoints = () => {
-  localEqPoints.splice(0, localEqPoints.length);
-  props.peqPoints.forEach(point => {
-    localEqPoints.push({ ...point });
-    if (point.id >= nextId) {
-      nextId = point.id + 1;
-    }
-  });
-  
+function initializePoints() {
+  console.log('ParametricEQ - initializePoints called with:', props.peqPoints);
+  localEqPoints.length = 0; // Clear existing points
+  if (props.peqPoints && props.peqPoints.length > 0) {
+    console.log('ParametricEQ - Initializing with', props.peqPoints.length, 'points');
+    props.peqPoints.forEach((point, index) => {
+      console.log(`ParametricEQ - Adding point ${index + 1}:`, point);
+      localEqPoints.push({
+        id: nextId++,
+        freq: point.freq,
+        gain: point.gain,
+        q: point.q || 1.0
+      });
+    });
+  } else {
+    console.log('ParametricEQ - No points to initialize');
+  }
   // Ensure we have at least one point
   if (localEqPoints.length === 0) {
-    localEqPoints.push({ id: nextId++, frequency: 1000, gain: 0, q: 1 });
+    localEqPoints.push({ id: nextId++, freq: 1000, gain: 0, q: 1 });
   }
 };
 
 // Watch for prop changes
-watch(() => props.peqPoints, initializePoints, { immediate: true, deep: true });
+watch(() => props.peqPoints, (newVal, oldVal) => {
+  console.log('ParametricEQ - peqPoints prop changed');
+  console.log('Old value:', oldVal);
+  console.log('New value:', newVal);
+  initializePoints();
+}, { immediate: true, deep: true });
 
 const selectedPoint = ref(0);
 const dragState = reactive({
@@ -239,7 +252,7 @@ const emitChange = () => {
     // Create a clean copy of the points for emission
     const pointsToEmit = localEqPoints.map(point => ({
       id: point.id,
-      frequency: point.frequency,
+      freq: point.freq,
       gain: point.gain,
       q: point.q
     }));
@@ -305,7 +318,7 @@ const curvePath = computed(() => {
     let totalGain = 0;
     // Calculate combined response from all EQ points
     localEqPoints.forEach(point => {
-      const gain = calculateBellFilter(freq, point.frequency, point.gain, point.q);
+      const gain = calculateBellFilter(freq, point.freq, point.gain, point.q);
       totalGain += gain;
     });
 
@@ -330,7 +343,7 @@ const addPoint = () => {
 
   const newPoint = {
     id: nextId++,
-    frequency: 1000,
+    freq: 1000,
     gain: 0,
     q: 1
   };
@@ -363,7 +376,7 @@ const startDrag = (index, event) => {
   dragState.pointIndex = index;
   dragState.startX = clientX;
   dragState.startY = clientY;
-  dragState.startFreq = localEqPoints[index].frequency;
+  dragState.startFreq = localEqPoints[index].freq;
   dragState.startGain = localEqPoints[index].gain;
 };
 
@@ -382,7 +395,7 @@ const onMouseMove = (event) => {
   const newFreq = Math.max(20, Math.min(20000, xToFrequency(currentX)));
   const newGain = Math.max(-15, Math.min(15, yToGain(currentY)));
 
-  localEqPoints[dragState.pointIndex].frequency = newFreq;
+  localEqPoints[dragState.pointIndex].freq = newFreq;
   localEqPoints[dragState.pointIndex].gain = newGain;
   
   emitChange();

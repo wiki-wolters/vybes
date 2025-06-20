@@ -42,11 +42,11 @@ db.serialize(() => {
 
   // EQ configurations table
   db.run(`CREATE TABLE IF NOT EXISTS eq_configs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
     preset_name TEXT,
     type TEXT,
     spl INTEGER,
     peq_data TEXT,
+    PRIMARY KEY (preset_name, type, spl),
     FOREIGN KEY (preset_name) REFERENCES presets (name) ON DELETE CASCADE
   )`);
 
@@ -374,15 +374,20 @@ app.get('/preset/:name', (req, res) => {
       const preferenceEQ = [];
       
       eqRows.forEach(row => {
-        const eqData = {
-          spl: row.spl,
-          peqSet: JSON.parse(row.peq_data)
-        };
-        
-        if (row.type === 'room') {
-          roomCorrection.push(eqData);
-        } else if (row.type === 'pref') {
-          preferenceEQ.push(eqData);
+        try {
+          const peqData = typeof row.peq_data === 'string' ? JSON.parse(row.peq_data) : row.peq_data;
+          const eqData = {
+            spl: row.spl,
+            peqs: peqData
+          };
+          
+          if (row.type === 'room') {
+            roomCorrection.push(eqData);
+          } else if (row.type === 'pref') {
+            preferenceEQ.push(eqData);
+          }
+        } catch (e) {
+          console.error('Error parsing PEQ data:', e);
         }
       });
       
@@ -677,8 +682,8 @@ app.post('/preset/:name/eq/:type/:spl', (req, res) => {
   // Validate PEQ points
   for (let i = 0; i < peqSet.length; i++) {
     const point = peqSet[i];
-    if (!point.frequency || !point.gain || !point.q) {
-      return res.status(400).json({ error: `PEQ point ${i} must have frequency, gain, and q properties` });
+    if (point.freq === undefined || point.gain === undefined || point.q === undefined) {
+      return res.status(400).json({ error: `PEQ point ${i} must have freq, gain, and q properties` });
     }
   }
   
