@@ -70,7 +70,6 @@ private:
     static void i2cRequestWrapper(); // Added for Wire.onRequest
 
     void handleI2CRequest(); // Added for Wire.onRequest
-    void handleI2CReceive(int bytes);
 };
 
 #endif

@@ -100,7 +100,7 @@ float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps) {
 }
 
 // --- loadFromTXT: Loads coefficients from a text file into a float array ---
-int FIRLoader::loadFromTXT(File& file, float* coeffs, int maxTaps) {
+int FIRLoader::loadFromTXT(File& file, float* coeffs, int8_t maxTaps) {
     int coeffCount = 0;
     String line = "";
     file.seek(0); // Rewind to start of file
@@ -130,7 +130,7 @@ int FIRLoader::loadFromTXT(File& file, float* coeffs, int maxTaps) {
 
 // --- loadFromWAV: Loads coefficients from a WAV file into a float array ---
 // Supports 32-bit float WAV (Format 3) and converts other formats
-int FIRLoader::loadFromWAV(File& file, float* coeffs, int maxTaps) {
+int FIRLoader::loadFromWAV(File& file, float* coeffs, int8_t maxTaps) {
     if (file.size() < 44) {
         logError("WAV file too small (less than header size).");
         return 0;
