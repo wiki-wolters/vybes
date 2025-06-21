@@ -14,7 +14,7 @@
 
     <div class="grid md:grid-cols-1 lg:grid-cols-3 gap-8">
       <!-- Tone Generator Section -->
-      <CardSection title="Tone Generator">
+      <!-- <CardSection title="Tone Generator">
         <div class="mb-4">
           <InputGroup
             v-model.number="toneFrequency"
@@ -45,7 +45,7 @@
           </button>
         </div>
         <p v-if="isGeneratingTone" class="mt-3 text-xs text-green-400 text-center">Tone is currently active.</p>
-      </CardSection>
+      </CardSection> -->
 
       <!-- Pink Noise Generator Section -->
       <CardSection title="Pink Noise Generator">
@@ -68,7 +68,7 @@
       </CardSection>
 
       <!-- Test Pulse Section -->
-      <CardSection title="System Test Pulse">
+      <!-- <CardSection title="System Test Pulse">
         <p class="text-sm text-vybes-text-secondary mb-4">
           Plays a short audio pulse through the system. Useful for testing connections and basic output.
         </p>
@@ -82,7 +82,7 @@
           </span>
           <span v-else>Play Test Pulse</span>
         </button>
-      </CardSection>
+      </CardSection> -->
     </div>
   </div>
 </template>

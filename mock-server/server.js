@@ -54,7 +54,6 @@ db.serialize(() => {
   db.get("SELECT value FROM system_settings WHERE key = 'sub_gain'", (err, row) => {
     if (!row) {
       const defaultSettings = [
-        ['calibration_spl', '85'],
         ['sub_gain', '1.0'],
         ['left_gain', '1.0'],
         ['right_gain', '1.0'],
@@ -772,26 +771,10 @@ app.put('/preset/:name/crossover/:freq/:slope', (req, res) => {
   });
 });
 
-// Calibration - GET endpoint
-app.get('/calibration', async (req, res) => {
-  try {
-    const calibrationSpl = await getSetting('calibration_spl');
-    const isCalibrated = calibrationSpl !== null;
-    
-    res.json({
-      isCalibrated,
-      spl: calibrationSpl ? parseInt(calibrationSpl) : null
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 // System status - GET endpoint
 app.get('/status', async (req, res) => {
   try {
     const [
-      calibrationSpl,
       subGain,
       leftGain,
       rightGain,
@@ -801,7 +784,6 @@ app.get('/status', async (req, res) => {
       toneVolume,
       noiseVolume
     ] = await Promise.all([
-      getSetting('calibration_spl'),
       getSetting('sub_gain'),
       getSetting('left_gain'),
       getSetting('right_gain'),
@@ -821,10 +803,6 @@ app.get('/status', async (req, res) => {
     });
 
     res.json({
-      calibration: {
-        isCalibrated: calibrationSpl !== null,
-        spl: calibrationSpl ? parseInt(calibrationSpl) : null
-      },
       speakerGains: {
         sub: subGain ? parseFloat(subGain) : 0,
         left: leftGain ? parseFloat(leftGain) : 0,
@@ -846,12 +824,6 @@ app.get('/status', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
-});
-
-// Stop tone generation
-app.put('/generate/tone/stop', (req, res) => {
-  broadcast({ event: 'tone', frequency: 0, volume: 0, stopped: true });
-  res.json({ success: true, message: 'Tone generation stopped' });
 });
 
 // Set active preset
@@ -930,6 +902,12 @@ app.put('/preset/:name/fir/enabled/:state', (req, res) => {
     broadcast({ event: 'fir_enabled', preset: name });
     res.json({ success: true, preset: name });
   });
+});
+
+app.put('/generate/noise/:volume', (req, res) => {
+  const volume = req.params.volume;
+  broadcast({ event: 'noise', volume });
+  res.json({ success: true, volume });
 });
 
 // Error handling middleware

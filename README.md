@@ -81,87 +81,114 @@ This page is for editing the properties of an individual preset.
     * Q: slider & input, to adjust value for selected point
 * Preference curve: same interface as room correction
 * Equal loudness: switch
- 
+
 ## API Endpoints
 
-### Calibration
-* **GET /calibration**
-  * Returns calibration status and SPL value
-* **PUT /calibrate/{spl}**
-  * spl: 40-120 The SPL measured at the listening position. When saved, it is saved with the corresponding SPL measured from the internal mic.
-
-### System Controls
+### System Status
 * **GET /status**
-  * Returns current system status including all settings
-* **PUT /sub/{state}**
-  * state: "on" or "off"
-* **PUT /bypass/{state}**
-  * state: "on" or "off"
+  * Returns current system status including:
+    * Speaker gains (left, right, sub)
+    * Mute state and percentage
+    * Tone generation settings
+    * Noise volume
+    * Current active preset
+
+### Speaker Controls
+* **PUT /speaker/{speaker}/gain/{gain}**
+  * speaker: "left", "right", or "sub"
+  * gain: 0.0 to 2.0
 * **PUT /mute/{state}**
   * state: "on" or "off"
 * **PUT /mute/percent/{percent}**
   * percent: 1-100
-* **PUT /preset/active/{name}**
-  * name: preset name to activate
-
-### Tone Generation
-* **PUT /generate/tone/{freq}/{volume}**
-  * freq: 10-20k
-  * volume: 1-100
-* **PUT /generate/tone/stop**
-  * Stops tone generation
 * **PUT /generate/noise/{volume}**
-  * volume: 0-100 A zero value turns off the noise
-* **PUT /pulse**
-  * Plays a 100hz pulse for 200ms on each output, with a 300ms silence inbetween
+  * volume: 0-100 (0 turns off noise)
 
 ### Preset Management
 * **GET /presets**
-  * Returns a JSON array of presets, where each preset object contains name and isCurrent boolean
+  * Returns array of all presets with names and current status
 * **GET /preset/{name}**
-  * Returns JSON of all preset data
+  * Returns complete preset configuration including:
+    * FIR filter settings
+    * Speaker delays
+    * Crossover settings
+    * EQ configurations (room correction and preference curves)
 * **POST /preset/create/{name}**
-  * name: string not matching existing preset
-* **POST /preset/copy/{name}/{new}**
-  * name: string matching existing preset
-  * new: new preset name
-* **PUT /preset/rename/{name}/{new}**
-  * name: string matching existing preset
+  * Creates a new preset with default settings
+  * name: must be unique
+* **POST /preset/copy/{source}/{new}**
+  * source: name of preset to copy
+  * new: name for new preset
+* **PUT /preset/rename/{old}/{new}**
+  * old: current preset name
   * new: new preset name
 * **DELETE /preset/{name}**
-  * name: string matching existing preset
+  * Deletes the specified preset
 
 ### Speaker Configuration
-* **PUT /preset/delay/{speaker}/{ms}**
-  * speaker: "left", "right", "sub"
-  * ms: float, millisecond value
-
-### EQ Management
-* **POST /preset/{name}/eq/{type}/{spl}**
-  * type: "room" or "pref"
-  * name: string matching existing preset
-  * spl: 0-120
-  * body: JSON representation of PEQ set
-* **DELETE /preset/{name}/eq/{type}/{spl}**
-  * type: "room" or "pref"
-  * name: string matching existing preset
-  * spl: 0-120 matching existing spl for this preset
-
-### Crossover Configuration
-* **PUT /preset/{name}/crossover/{freq}/{slope}**
-  * name: string matching existing preset
-  * freq: 40-150
-  * slope: "12" or "24"
-
-### Equal Loudness
-* **PUT /preset/{name}/equal-loudness/{state}**
-  * name: string matching existing preset
+* **PUT /preset/{name}/delay/{speaker}/{us}**
+  * name: preset name
+  * speaker: "left", "right", or "sub"
+  * us: delay in microseconds (float)
+* **PUT /preset/{name}/delay/enabled/{state}**
+  * name: preset name
   * state: "on" or "off"
 
-### Live Updates
-* **SOCKET /live-updates**
-  * Messages to be received are JSON format with the following properties:
-    * event: "rta", "preset", "eq", "calibration", "subwoofer", "bypass", "mute", "mute_percent", "tone", "noise", "pulse", "speaker_delay", "crossover", "equal_loudness", "eq_deleted"
+### FIR Filter Management
+* **GET /fir/files**
+  * Returns list of available FIR filter files
+* **PUT /preset/{name}/fir/file/{channel}/{filter}**
+  * name: preset name
+  * channel: "left", "right", or "sub"
+  * filter: name of FIR filter file
+* **PUT /preset/{name}/fir/enabled/{state}**
+  * name: preset name
+  * state: "on" or "off"
+
+### EQ Management
+* **POST /preset/{name}/eq**
+  * Creates or updates an EQ set
+  * Body: { peqPoints: Array }
+* **POST /preset/{name}/eq/{type}/{spl}**
+  * type: "room" or "pref"
+  * spl: 0-120 (0 = default set)
+  * body: Array of PEQ points
+* **DELETE /preset/{name}/eq/{type}/{spl}**
+  * type: "room" or "pref"
+  * spl: SPL value of set to delete
+* **PUT /preset/{name}/eq/{type}/enabled/{state}**
+  * type: "room" or "pref"
+  * state: "on" or "off"
+
+### Crossover Configuration
+* **PUT /preset/{name}/crossover/freq/{freq}**
+  * name: preset name
+  * freq: 20-500 Hz
+* **PUT /preset/{name}/crossover/enabled/{state}**
+  * name: preset name
+  * state: "on" or "off"
+
+### System Controls
+* **PUT /preset/active/{name}**
+  * name: preset name to activate
+* **PUT /generate/noise/{volume}**
+  * volume: 0-100 (0 turns off noise)
+
+### Live Updates (WebSocket)
+* **ws://vybes.local:8080**
+  * Messages are JSON objects with event types:
+    * speaker_gain: { speaker: string, gain: number }
+    * mute: { state: string }
+    * mute_percent: { percent: number }
+    * preset: { action: string, name: string, [additional fields] }
+    * speaker_delay: { speaker: string, delayUs: number, preset: string }
+    * fir_enabled: { preset: string }
+    * fir_updated: { preset: string, channel: string, filter: string }
+    * eq_updated: { preset: string, type: string, spl: number, peqPoints: Array }
+    * eq_created: { preset: string, type: string, spl: number, peqPoints: Array }
+    * eq_deleted: { preset: string, type: string, spl: number }
+    * crossover: { preset: string, frequency: number, slope: string }
+    * noise: { volume: number }
 
 ## Directories
 * /ESP: ESP8266 API server
