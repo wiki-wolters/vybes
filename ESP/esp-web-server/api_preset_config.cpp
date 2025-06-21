@@ -175,14 +175,6 @@ void handlePutPresetCrossoverEnabled(AsyncWebServerRequest *request) {
 }
 
 void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
-    if (index == 0) {
-        // This is the first chunk of data, you might want to allocate memory here
-        // and store the request pointer if you need it across multiple chunks.
-    }
-
-    // For this implementation, we assume the data fits in a single chunk.
-    // For larger data, you would need to buffer it.
-
     String presetName = request->pathArg(0);
     String eqType = request->pathArg(1);
     String splStr = request->pathArg(2);
@@ -195,7 +187,7 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size
     }
 
     Preset* preset = &current_config.presets[presetIndex];
-    PEQSet* sets = (eqType == "roomCorrection") ? preset->room_correction : preset->preference_curve;
+    PEQSet* sets = (eqType == "pref") ? preset->preference_curve : preset->room_correction;
 
     int set_index = -1;
     for (int i = 0; i < MAX_PEQ_SETS; i++) {
@@ -226,41 +218,28 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size
         return;
     }
 
+    /* Identify which points have changed so we only send those to Teensy */
     target_set->num_points = pointsArray.size();
     int i = 0;
     for (JsonObject point : pointsArray) {
-        target_set->points[i].freq = point["freq"].as<float>();
-        target_set->points[i].gain = point["gain"].as<float>();
-        target_set->points[i].q = point["q"].as<float>();
+        if (point["freq"] != target_set->points[i].freq ||
+            point["gain"] != target_set->points[i].gain ||
+            point["q"] != target_set->points[i].q
+        ) {
+            target_set->points[i].freq = point["freq"].as<float>();
+            target_set->points[i].gain = point["gain"].as<float>();
+            target_set->points[i].q    = point["q"].as<float>();
+            String pointData = String(target_set->points[i].freq, 1) + " " +
+                             String(target_set->points[i].q, 2) + " " +
+                             String(target_set->points[i].gain, 2);
+            sendToTeensy(CMD_SET_EQ_FILTER, String(i), pointData);
+        }
         i++;
     }
 
     scheduleConfigWrite();
-    request->send(200, "application/json", "{}");
-    
-    // Send updated PEQ points to Teensy
-    if (eqType == "roomCorrection") {
-        sendToTeensy(CMD_SET_EQ_FILTER, "room", String(spl), String(target_set->num_points));
-        // Send each PEQ point
-        for (int i = 0; i < target_set->num_points; i++) {
-            String pointData = String(target_set->points[i].freq, 1) + "," +
-                             String(target_set->points[i].gain, 2) + "," +
-                             String(target_set->points[i].q, 2);
-            sendToTeensy(CMD_SET_EQ_FILTER, "room_point", String(spl) + " " + pointData, String(i));
-        }
-    } else {
-        sendToTeensy(CMD_SET_EQ_FILTER, "preference", String(spl), String(target_set->num_points));
-        // Send each PEQ point
-        for (int i = 0; i < target_set->num_points; i++) {
-            String pointData = String(target_set->points[i].freq, 1) + "," +
-                             String(target_set->points[i].gain, 2) + "," +
-                             String(target_set->points[i].q, 2);
-            sendToTeensy(CMD_SET_EQ_FILTER, "preference_point", String(spl) + " " + pointData, String(i));
-        }
-    }
     
     // Prepare and send response
-    DynamicJsonDocument doc(128);
     doc["status"] = "ok";
     doc["eqType"] = eqType;
     doc["spl"] = spl;
@@ -292,18 +271,14 @@ void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
     
     bool enabled = (state == "on");
     
-    // Update the config
-    if (eqType == "room" || eqType == "both") {
-        current_config.presets[presetIndex].roomCorrectionEnabled = enabled;
-    }
-    if (eqType == "preference" || eqType == "both") {
-        current_config.presets[presetIndex].preferenceEQEnabled = enabled;
+    if (eqType == "pref") {
+        current_config.presets[presetIndex].EQEnabled = enabled;
     }
     
     scheduleConfigWrite();
     
     // Send command to Teensy
-    if (eqType == "room" || eqType == "both") {
+    if (eqType == "pref") {
         sendOnOffToTeensy(CMD_SET_EQ_ENABLED, enabled);
     }
     

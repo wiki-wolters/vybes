@@ -7,64 +7,32 @@
 
 void handleGetStatus(AsyncWebServerRequest *request) {
     DynamicJsonDocument doc(1024);
-    doc["subwooferState"] = current_config.subwooferState;
-    doc["bypassState"] = current_config.bypassState;
-    doc["muteState"] = current_config.muteState;
-    doc["mutePercent"] = current_config.mutePercent;
-    doc["toneFrequency"] = current_config.toneFrequency;
-    doc["toneVolume"] = current_config.toneVolume;
-    doc["noiseVolume"] = current_config.noiseVolume;
-    doc["currentPreset"] = current_config.currentPresetName;
+
+    JsonObject speakerGains = doc.createNestedObject("speakerGains");
+    speakerGains["left"] = current_config.speakerGains.left;
+    speakerGains["right"] = current_config.speakerGains.right;
+    speakerGains["sub"] = current_config.speakerGains.sub;
+    
+    JsonObject inputGains = doc.createNestedObject("inputGains");
+    inputGains["spdif"] = current_config.inputGains.spdif;
+    inputGains["bluetooth"] = current_config.inputGains.bluetooth;
+    
+    JsonObject mute = doc.createNestedObject("mute");
+    mute["state"] = current_config.muteState;
+    mute["percent"] = current_config.mutePercent;
+    
+    JsonObject tone = doc.createNestedObject("tone");
+    tone["frequency"] = current_config.toneFrequency;
+    tone["volume"] = current_config.toneVolume;
+    
+    JsonObject noise = doc.createNestedObject("noise");
+    noise["volume"] = current_config.noiseVolume;
+    
+    doc["currentPreset"] = current_config.presets[current_config.active_preset_index].name;
 
     String response;
     serializeJson(doc, response);
     request->send(200, "application/json", response);
-}
-
-void handlePutSub(AsyncWebServerRequest *request) {
-    String state = request->pathArg(0);
-    if (state != "on" && state != "off") {
-        request->send(400, "text/plain", "Invalid state");
-        return;
-    }
-
-    strncpy(current_config.subwooferState, state.c_str(), sizeof(current_config.subwooferState) - 1);
-    current_config.subwooferState[sizeof(current_config.subwooferState) - 1] = '\0'; // Ensure null termination
-    scheduleConfigWrite();
-
-    sendOnOffToTeensy(CMD_SET_SUBWOOFER, state == "on");
-
-    DynamicJsonDocument doc(256);
-    doc["subwooferState"] = current_config.subwooferState;
-
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
-
-    broadcastWebSocket(response);
-}
-
-void handlePutBypass(AsyncWebServerRequest *request) {
-    String state = request->pathArg(0);
-    if (state != "on" && state != "off") {
-        request->send(400, "text/plain", "Invalid state");
-        return;
-    }
-
-    strncpy(current_config.bypassState, state.c_str(), sizeof(current_config.bypassState) - 1);
-    current_config.bypassState[sizeof(current_config.bypassState) - 1] = '\0'; // Ensure null termination
-    scheduleConfigWrite();
-
-    sendOnOffToTeensy(CMD_SET_BYPASS, state == "on");
-
-    DynamicJsonDocument doc(256);
-    doc["bypassState"] = current_config.bypassState;
-
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
-
-    broadcastWebSocket(response);
 }
 
 void handlePutMute(AsyncWebServerRequest *request) {

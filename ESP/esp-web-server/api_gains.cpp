@@ -27,7 +27,10 @@ void handlePutSpeakerGain(AsyncWebServerRequest *request) {
     scheduleConfigWrite();
     
     // Send command to Teensy using the new command structure
-    sendToTeensy(CMD_SET_SPEAKER_GAINS, speaker, String(gain, 2));
+    sendToTeensy(CMD_SET_SPEAKER_GAINS, 
+        String(current_config.speakerGains.left, 2),
+        String(current_config.speakerGains.right, 2), 
+        String(current_config.speakerGains.sub, 2));
     
     // Prepare and send response
     DynamicJsonDocument doc(256);
@@ -61,7 +64,9 @@ void handlePutInputGain(AsyncWebServerRequest *request) {
     scheduleConfigWrite();
     
     // Send command to Teensy using the new command structure
-    sendToTeensy(CMD_SET_INPUT_GAINS, input, String(gain, 2));
+    sendToTeensy(CMD_SET_INPUT_GAINS, 
+        String(current_config.inputGains.spdif, 2),
+        String(current_config.inputGains.bluetooth, 2));
     
     // Prepare and send response
     DynamicJsonDocument doc(256);

@@ -12,6 +12,6 @@ void handlePostPresetEQCopy(AsyncWebServerRequest *request);
 
 // Crossover and equal loudness endpoints
 void handlePutPresetCrossover(AsyncWebServerRequest *request);
-void handlePutPresetEqualLoudness(AsyncWebServerRequest *request);
+void handlePutPresetCrossoverEnabled(AsyncWebServerRequest *request);
 
 #endif // API_PRESET_CONFIG_H

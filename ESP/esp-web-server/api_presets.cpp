@@ -51,10 +51,6 @@ void handleGetPreset(AsyncWebServerRequest *request) {
 
     // Add EQ and FIR filter states
     doc["isFIREnabled"] = preset.FIRFiltersEnabled;
-
-    //Fir filenames
-    JsonArray firFiles = doc.createNestedArray("firFiles");
-    // TODO: load fir files from Teensy and populate
     
     // Add FIR filter filenames
     doc["firLeft"] = preset.FIRFilters.left;
@@ -69,11 +65,10 @@ void handleGetPreset(AsyncWebServerRequest *request) {
             peqSet["spl"] = preset.preference_curve[i].spl;
             JsonArray peqs = peqSet.createNestedArray("peqs");
             for(int j=0; j < preset.preference_curve[i].num_points; j++) {
-                    JsonObject peq = peqs.createNestedObject();
-                    peq["freq"] = preset.preference_curve[i].points[j].freq;
-                    peq["gain"] = preset.preference_curve[i].points[j].gain;
-                    peq["q"] = preset.preference_curve[i].points[j].q;
-                }
+                JsonObject peq = peqs.createNestedObject();
+                peq["freq"] = preset.preference_curve[i].points[j].freq;
+                peq["gain"] = preset.preference_curve[i].points[j].gain;
+                peq["q"] = preset.preference_curve[i].points[j].q;
             }
         }
     }

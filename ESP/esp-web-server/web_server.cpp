@@ -4,11 +4,12 @@
 #include "file_system.h"
 #include "api_system.h"
 #include "api_signal_generator.h"
-#include "api_speaker.h"
+#include "api_gains.h"
 #include "api_fir.h"
 #include "api_presets.h"
 #include "api_preset_config.h"
 #include "api_delay.h"
+#include "teensy_comm.h"
 
 AsyncWebServer server(80);
 
@@ -83,40 +84,9 @@ void setupWebServer() {
     // API Routes - Speaker Configuration
     server.on("/preset/:name/delay/:speaker/:delay", HTTP_PUT, handlePutPresetDelay);
     server.on("/preset/:name/delay/enabled/:state", HTTP_PUT, handlePutPresetDelayEnabled);
-    server.on("/preset/:name/delays", HTTP_GET, handleGetDelays);
     
     // API Routes - Input Gains
-    server.on("/input/gains", HTTP_PUT, [](AsyncWebServerRequest *request) {
-        if (request->hasParam("left", true) && request->hasParam("right", true)) {
-            float leftGain = request->getParam("left", true)->value().toFloat();
-            float rightGain = request->getParam("right", true)->value().toFloat();
-            
-            // Update config
-            current_config.inputLeftGain = leftGain;
-            current_config.inputRightGain = rightGain;
-            scheduleConfigWrite();
-            
-            // Send to Teensy
-            sendToTeensy(CMD_SET_INPUT_GAINS, 
-                        String(leftGain, 2), 
-                        String(rightGain, 2));
-            
-            // Prepare response
-            DynamicJsonDocument doc(128);
-            doc["status"] = "ok";
-            doc["leftGain"] = leftGain;
-            doc["rightGain"] = rightGain;
-            
-            String response;
-            serializeJson(doc, response);
-            request->send(200, "application/json", response);
-            
-            // Broadcast update
-            broadcastWebSocket(response);
-        } else {
-            request->send(400, "text/plain", "Missing left or right gain parameter");
-        }
-    });
+    server.on("/input/:input/gain/:gain", HTTP_PUT, handlePutInputGain);
 
     // API Routes - EQ Management
     server.on("/preset/:name/eq/:type/:spl", HTTP_POST, handlePostPresetEQ);

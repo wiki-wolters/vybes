@@ -55,7 +55,7 @@ struct SpeakerGains {
 struct InputGains {
     float spdif = 1.0f;
     float bluetooth = 1.0f;
-}
+};
 
 // Represents a single preset
 struct Preset {

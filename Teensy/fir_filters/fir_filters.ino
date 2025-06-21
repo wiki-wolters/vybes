@@ -696,13 +696,13 @@ void handleResetEQFilters(const String& command, String* args, int argCount, Out
 }
 
 void handleSetEQFilter(const String& command, String* args, int argCount, OutputStream& stream) {
-  if (argCount == 5) {
+  if (argCount == 4) {
     int index = args[0].toInt();
     if (index >= 0 && index < MAX_PEQ_BANDS) {
       state.filters[index].enabled = true;
-      state.filters[index].frequency = args[2].toFloat();
-      state.filters[index].q = args[3].toFloat();
-      state.filters[index].gain = args[4].toFloat();
+      state.filters[index].frequency = args[1].toFloat();
+      state.filters[index].q = args[2].toFloat();
+      state.filters[index].gain = args[3].toFloat();
       state.isDirty = true;
       setEQFilters(state.filters, getConsecutiveActiveFilterCount());
     }

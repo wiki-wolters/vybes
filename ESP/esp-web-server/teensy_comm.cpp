@@ -54,7 +54,7 @@ bool sendToTeensy(const char* command, const String& param1,
     }
     
     // Small delay to allow Teensy to process the command
-    delay(10);
+    delay(2);
     
     // Request response from Teensy
     uint8_t response[256] = {0};
@@ -99,7 +99,7 @@ bool sendToTeensy(const char* command, const String& param1,
 
 // Helper function to send a simple on/off command to Teensy
 void sendOnOffToTeensy(const char* command, bool on) {
-    sendToTeensy(command, on ? "on" : "off");
+    sendToTeensy(command, on ? "1" : "0");  // Send "1"/"0" instead of "on"/"off"
 }
 
 // Helper function to send a command with a single integer parameter to Teensy
