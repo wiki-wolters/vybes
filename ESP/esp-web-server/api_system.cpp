@@ -32,7 +32,7 @@ void handlePutSub(AsyncWebServerRequest *request) {
     current_config.subwooferState[sizeof(current_config.subwooferState) - 1] = '\0'; // Ensure null termination
     scheduleConfigWrite();
 
-    sendToTeensy("sub", state);
+    sendOnOffToTeensy(CMD_SET_SUBWOOFER, state == "on");
 
     DynamicJsonDocument doc(256);
     doc["subwooferState"] = current_config.subwooferState;
@@ -55,7 +55,7 @@ void handlePutBypass(AsyncWebServerRequest *request) {
     current_config.bypassState[sizeof(current_config.bypassState) - 1] = '\0'; // Ensure null termination
     scheduleConfigWrite();
 
-    sendToTeensy("bypass", state);
+    sendOnOffToTeensy(CMD_SET_BYPASS, state == "on");
 
     DynamicJsonDocument doc(256);
     doc["bypassState"] = current_config.bypassState;
@@ -78,7 +78,7 @@ void handlePutMute(AsyncWebServerRequest *request) {
     current_config.muteState[sizeof(current_config.muteState) - 1] = '\0'; // Ensure null termination
     scheduleConfigWrite();
 
-    sendToTeensy("mute", state);
+    sendOnOffToTeensy(CMD_SET_MUTE, state == "on");
 
     DynamicJsonDocument doc(256);
     doc["muteState"] = current_config.muteState;
@@ -102,7 +102,7 @@ void handlePutMutePercent(AsyncWebServerRequest *request) {
     current_config.mutePercent = percent;
     scheduleConfigWrite();
 
-    sendToTeensy("mute_percent", percentStr);
+    sendFloatToTeensy(CMD_SET_MUTE_PERCENT, percent);
 
     DynamicJsonDocument doc(256);
     doc["mutePercent"] = current_config.mutePercent;

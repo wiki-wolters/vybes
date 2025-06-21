@@ -6,21 +6,9 @@
 #include "utilities.h"
 
 void handlePutSpeakerGain(AsyncWebServerRequest *request) {
-    String speaker = "";
-    String path = request->url();
-    
-    // Extract speaker name from URL
-    if (path.startsWith("/speaker/left/" || 
-        path.startsWith("/speaker/right/" || 
-        path.startsWith("/speaker/sub/")) {
-        speaker = path.substring(9, path.indexOf("/", 9));
-    } else {
-        request->send(400, "text/plain", "Invalid speaker");
-        return;
-    }
-    
-    // Get gain value from URL parameter
-    float gain = request->pathArg(0).toFloat();
+    String speaker = request->pathArg(0);
+    float gain = request->pathArg(1).toFloat();
+
     if (gain < 0.0f || gain > 2.0f) {
         request->send(400, "text/plain", "Gain must be between 0.0 and 2.0");
         return;
@@ -28,23 +16,56 @@ void handlePutSpeakerGain(AsyncWebServerRequest *request) {
 
     // Update the appropriate gain value in the config
     if (speaker == "left") {
-        current_config.leftGain = gain;
+        current_config.speakerGains.left = gain;
     } else if (speaker == "right") {
-        current_config.rightGain = gain;
+        current_config.speakerGains.right = gain;
     } else if (speaker == "sub") {
-        current_config.subGain = gain;
+        current_config.speakerGains.sub = gain;
     }
     
     // Save the updated configuration
     scheduleConfigWrite();
     
-    // Send command to Teensy
-    String command = speaker + "_gain " + String(gain, 2);
-    sendToTeensy(command.c_str(), "");
+    // Send command to Teensy using the new command structure
+    sendToTeensy(CMD_SET_SPEAKER_GAINS, speaker, String(gain, 2));
     
     // Prepare and send response
     DynamicJsonDocument doc(256);
     doc[speaker + "Gain"] = gain;
+    
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
+    
+    // Broadcast the update to all WebSocket clients
+    broadcastWebSocket(response);
+}
+
+void handlePutInputGain(AsyncWebServerRequest *request) {
+    String input = request->pathArg(0);
+    float gain = request->pathArg(1).toFloat();
+
+    if (gain < 0.0f || gain > 1.0f) {
+        request->send(400, "text/plain", "Gain must be between 0.0 and 1.0");
+        return;
+    }
+
+    // Update the appropriate gain value in the config
+    if (input == "spdif") {
+        current_config.inputGains.spdif = gain;
+    } else if (input == "bluetooth") {
+        current_config.inputGains.bluetooth = gain;
+    }
+    
+    // Save the updated configuration
+    scheduleConfigWrite();
+    
+    // Send command to Teensy using the new command structure
+    sendToTeensy(CMD_SET_INPUT_GAINS, input, String(gain, 2));
+    
+    // Prepare and send response
+    DynamicJsonDocument doc(256);
+    doc[input + "Gain"] = gain;
     
     String response;
     serializeJson(doc, response);

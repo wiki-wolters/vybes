@@ -9,6 +9,7 @@
 #define I2C_TIMEOUT 1000         // 1 second timeout for I2C operations
 
 bool i2cInitialized = false;
+char teensyResponse[256] = {0};  // Global buffer for storing the last response from Teensy
 
 void initI2C() {
     if (!i2cInitialized) {
@@ -18,19 +19,39 @@ void initI2C() {
     }
 }
 
-String sendToTeensy(const String& command, const String& data) {
+bool sendToTeensy(const char* command, const String& param1, 
+                 const String& param2, const String& param3) {
     initI2C();
     
-    // Combine command and data with space delimiter
-    String message = command;
-    if (data.length() > 0) {
-        message += ' ' + data;
+    // Build the command string with parameters
+    String message = String(command);
+    
+    if (param1.length() > 0) {
+        message += ' ' + param1;
+        
+        if (param2.length() > 0) {
+            message += ' ' + param2;
+            
+            if (param3.length() > 0) {
+                message += ' ' + param3;
+            }
+        }
     }
+    
+    // Debug output
+    Serial.print("Sending to Teensy: ");
+    Serial.println(message);
     
     // Send command to Teensy
     Wire.beginTransmission(TEENSY_I2C_ADDRESS);
     Wire.write(message.c_str(), message.length());
-    Wire.endTransmission();
+    byte error = Wire.endTransmission();
+    
+    if (error != 0) {
+        Serial.print("I2C transmission error: ");
+        Serial.println(error);
+        return false;
+    }
     
     // Small delay to allow Teensy to process the command
     delay(10);
@@ -39,7 +60,7 @@ String sendToTeensy(const String& command, const String& data) {
     uint8_t response[256] = {0};
     uint8_t responseLength = 0;
     
-    // Request data from Teensy
+    // Request data from Teensy with error handling
     Wire.requestFrom(TEENSY_I2C_ADDRESS, (uint8_t)sizeof(response) - 1);
     
     // Read response with timeout
@@ -49,23 +70,52 @@ String sendToTeensy(const String& command, const String& data) {
     }
     
     // Read available bytes
-    while (Wire.available() > 0 && responseLength < sizeof(response) - 1) {
-        response[responseLength++] = Wire.read();
+    while (Wire.available() > 0 && responseLength < sizeof(teensyResponse) - 1) {
+        char c = Wire.read();
+        response[responseLength++] = c;
+        teensyResponse[responseLength-1] = c;  // Store in global buffer
     }
     
-    // Null-terminate the response
+    // Null-terminate the responses
     response[responseLength] = '\0';
-    
-    // Convert to String and trim any whitespace
-    String responseStr = String((char*)response);
-    responseStr.trim();
+    teensyResponse[responseLength] = '\0';
     
     // Debug output
-    Serial.print("Sent to Teensy: ");
-    Serial.println(message);
-    Serial.print("Received from Teensy: \"");
-    Serial.print(responseStr);
-    Serial.println("\"");
+    if (responseLength > 0) {
+        Serial.print("Received from Teensy: \"");
+        Serial.print((char*)response);
+        Serial.println("\"");
+        
+        // Also copy to the global buffer
+        strncpy(teensyResponse, (char*)response, sizeof(teensyResponse) - 1);
+        teensyResponse[sizeof(teensyResponse) - 1] = '\0'; // Ensure null termination
+    } else {
+        Serial.println("No response from Teensy");
+        teensyResponse[0] = '\0';  // Clear the response buffer
+    }
     
-    return responseStr;
+    return true;
+}
+
+// Helper function to send a simple on/off command to Teensy
+void sendOnOffToTeensy(const char* command, bool on) {
+    sendToTeensy(command, on ? "on" : "off");
+}
+
+// Helper function to send a command with a single integer parameter to Teensy
+void sendIntToTeensy(const char* command, int value) {
+    sendToTeensy(command, String(value));
+}
+
+// Helper function to send a command with a single float parameter to Teensy
+void sendFloatToTeensy(const char* command, float value) {
+    // Format float with 2 decimal places
+    char buffer[32];
+    dtostrf(value, 1, 2, buffer);
+    sendToTeensy(command, buffer);
+}
+
+// Helper function to send a command with a string parameter to Teensy
+void sendStringToTeensy(const char* command, const String& value) {
+    sendToTeensy(command, value);
 }

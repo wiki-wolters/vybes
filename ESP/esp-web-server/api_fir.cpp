@@ -1,17 +1,57 @@
+#include <Arduino.h>         // Core Arduino functionality
+#include <ArduinoJson.h>     // JSON parsing and generation
+#include <LittleFS.h>        // File system access
+#include <Wire.h>            // I2C communication
+#include <string.h>          // For strtok, strlen, strncmp
 #include "globals.h"
 #include "config.h"
 #include "web_server.h"
 #include "websocket.h"
 #include "teensy_comm.h"
 #include "utilities.h"
-#include <LittleFS.h>
-#include <ArduinoJson.h>
+
+using namespace ArduinoJson;
 
 void handleGetFirFiles(AsyncWebServerRequest *request) {
-    // TODO: request a list of all files in the root directory of the SD card from Teensy
-    // and return it as a JSON array
-
-    request->send(200, "application/json", "[]");
+    // Request a list of all FIR filter files from the Teensy
+    bool success = sendToTeensy(CMD_GET_FILES, "fir");
+    
+    if (!success) {
+        request->send(500, "application/json", "{\"error\":\"Failed to communicate with Teensy\"}");
+        return;
+    }
+    
+    // Get the response from the global buffer
+    const char* response = teensyResponse;
+    
+    if (strlen(response) == 0) {
+        // If no response, return empty array
+        request->send(200, "application/json", "[]");
+        return;
+    }
+    
+    // The response from Teensy is a newline-separated list of filenames
+    // We need to convert this into a JSON array
+    DynamicJsonDocument doc(1024);
+    JsonArray files = doc.to<JsonArray>();
+    
+    // Parse the newline-separated list
+    char* line = strtok((char*)response, "\n");
+    while (line != NULL) {
+        // Skip empty lines and error messages
+        if (strlen(line) > 0 && strncmp(line, "ERROR:", 6) != 0) {
+            // Add the filename to the array
+            files.add(line);
+        }
+        line = strtok(NULL, "\n");
+    }
+    
+    // Serialize the response
+    String jsonResponse;
+    serializeJson(files, jsonResponse);
+    
+    // Send the response
+    request->send(200, "application/json", jsonResponse);
 }
 
 void handlePutPresetFir(AsyncWebServerRequest *request) {
@@ -43,42 +83,56 @@ void handlePutPresetFir(AsyncWebServerRequest *request) {
     
     scheduleConfigWrite();
     
-    // Send command to Teensy to load the FIR filter
-    String command = "load_fir " + speaker + " " + filename;
-    sendToTeensy(command.c_str(), "");
+    // Send FIR filter command to Teensy
+    sendToTeensy(CMD_SET_FIR, speaker, filename);
     
-    request->send(200, "application/json", "{\"status\":\"ok\"}");
+    // Prepare and send response
+    DynamicJsonDocument doc(128);
+    doc["status"] = "ok";
+    doc["speaker"] = speaker;
+    doc["filename"] = filename;
+    
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
+    
+    // Broadcast update
+    broadcastWebSocket(response);
 }
 
 void handlePutPresetFirEnabled(AsyncWebServerRequest *request) {
     String presetName = request->pathArg(0);
     String state = request->pathArg(1);
+    
+    if (state != "on" && state != "off") {
+        request->send(400, "text/plain", "Invalid state");
+        return;
+    }
+    
     // Find the active preset
     int presetIndex = current_config.active_preset_index;
     if (presetIndex == -1) {
         request->send(404, "text/plain", "Active preset not found");
         return;
     }
-
-    if (state != "on" && state != "off") {
-        request->send(400, "text/plain", "Invalid state");
-        return;
-    }
     
-    // Update the FIR filter filename for the specified speaker
-    Preset* preset = &current_config.presets[presetIndex];
-    if (state == "on") {
-        preset->FIRFiltersEnabled = true;
-    } else {
-        preset->FIRFiltersEnabled = false;
-    }
-    
+    // Update the FIR filter enabled state
+    current_config.presets[presetIndex].FIRFiltersEnabled = (state == "on");
     scheduleConfigWrite();
     
-    // Send command to Teensy to load the FIR filter
-    String command = "fir_enabled " + state;
-    sendToTeensy(command.c_str(), "");
+    // Send FIR enable/disable command to Teensy
+    sendOnOffToTeensy(CMD_SET_FIR_ENABLED, state == "on");
     
-    request->send(200, "application/json", "{\"status\":\"ok\"}");
+    // Prepare and send response
+    DynamicJsonDocument doc(128);
+    doc["status"] = "ok";
+    doc["FIRFiltersEnabled"] = (state == "on");
+    
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
+    
+    // Broadcast update
+    broadcastWebSocket(response);
 }
 

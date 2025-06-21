@@ -46,13 +46,16 @@ struct FIRFilter {
     String sub = "";
 };
 
-struct ChannelGains {
+struct SpeakerGains {
     float left = 1.0f;
     float right = 1.0f;
     float sub = 1.0f;
+};
+
+struct InputGains {
     float spdif = 1.0f;
     float bluetooth = 1.0f;
-};
+}
 
 // Represents a single preset
 struct Preset {
@@ -82,7 +85,8 @@ struct Config {
     // System states from old systemSettings
     char muteState[4] = "off";      // "on" or "off"
     int mutePercent = 0;            // 0-100
-    ChannelGains channelGains;
+    SpeakerGains speakerGains;
+    InputGains inputGains;
 };
 
 // --- Global Configuration Variable ---

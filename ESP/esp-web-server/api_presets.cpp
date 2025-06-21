@@ -241,39 +241,84 @@ void handlePutActivePreset(AsyncWebServerRequest *request) {
 void handlePutPresetDelayEnabled(AsyncWebServerRequest *request) {
     String presetName = request->pathArg(0);
     String state = request->pathArg(1);
-
+    
+    if (state != "on" && state != "off") {
+        request->send(400, "text/plain", "Invalid state. Must be 'on' or 'off'");
+        return;
+    }
+    
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
         request->send(404, "text/plain", "Preset not found");
         return;
     }
-
-    current_config.presets[presetIndex].delayEnabled = (state == "true");
+    
+    bool enabled = (state == "on");
+    current_config.presets[presetIndex].delayEnabled = enabled;
     scheduleConfigWrite();
-
-    request->send(200, "application/json", "{}");
+    
+    // Send command to Teensy
+    sendOnOffToTeensy(CMD_SET_DELAY_ENABLED, enabled);
+    
+    // Prepare response
+    DynamicJsonDocument doc(128);
+    doc["status"] = "ok";
+    doc["enabled"] = enabled;
+    
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
+    
+    // Broadcast update
+    broadcastWebSocket(response);
 }
 
 void handlePutPresetDelayNamed(AsyncWebServerRequest *request) {
     String presetName = request->pathArg(0);
     String speaker = request->pathArg(1);
-    String delay = request->pathArg(2);
-
+    String delayMsStr = request->pathArg(2);
+    
+    if (speaker != "left" && speaker != "right" && speaker != "sub") {
+        request->send(400, "text/plain", "Invalid speaker. Must be 'left', 'right', or 'sub'");
+        return;
+    }
+    
+    float delayMs = delayMsStr.toFloat();
+    if (delayMs < 0 || delayMs > 100.0f) {
+        request->send(400, "text/plain", "Delay must be between 0 and 100 ms");
+        return;
+    }
+    
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
         request->send(404, "text/plain", "Preset not found");
         return;
     }
-
+    
+    // Update the delay in the config
     if (speaker == "left") {
-        current_config.presets[presetIndex].delay.left = delay.toFloat();
+        current_config.presets[presetIndex].delay.left = delayMs;
     } else if (speaker == "right") {
-        current_config.presets[presetIndex].delay.right = delay.toFloat();
+        current_config.presets[presetIndex].delay.right = delayMs;
     } else if (speaker == "sub") {
-        current_config.presets[presetIndex].delay.sub = delay.toFloat();
+        current_config.presets[presetIndex].delay.sub = delayMs;
     }
+    
     scheduleConfigWrite();
-
-    request->send(200, "application/json", "{}");
+    
+    // Send command to Teensy
+    sendToTeensy(CMD_SET_DELAYS, speaker, String(delayMs, 2));
+    
+    // Prepare response
+    DynamicJsonDocument doc(128);
+    doc["status"] = "ok";
+    doc["speaker"] = speaker;
+    doc["delayMs"] = delayMs;
+    
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
+    
+    // Broadcast update
+    broadcastWebSocket(response);
 }
-

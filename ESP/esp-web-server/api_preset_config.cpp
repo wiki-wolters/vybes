@@ -6,6 +6,7 @@
 #include "config.h"
 #include "api_helpers.h"
 #include <string.h>
+#include <ArduinoJson.h>
 
 void handlePostPresetEQ(AsyncWebServerRequest *request) {
     String presetName = request->pathArg(0);
@@ -104,34 +105,48 @@ void handlePutPresetCrossover(AsyncWebServerRequest *request) {
     String freqStr = request->pathArg(2);
     int freq = freqStr.toInt();
 
+    // Validate frequency range (20Hz to 20kHz)
+    if (freq < 20 || freq > 20000) {
+        request->send(400, "text/plain", "Crossover frequency must be between 20 and 20000 Hz");
+        return;
+    }
+
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
         request->send(404, "text/plain", "Preset not found");
         return;
     }
 
-    Preset* preset = &current_config.presets[presetIndex];
-
-    preset->crossoverFreq = freq;
-
+    // Update the preset
+    current_config.presets[presetIndex].crossoverFreq = freq;
     scheduleConfigWrite();
-    sendToTeensy("crossoverFreq", freqStr);
-    request->send(200, "application/json", "{}");
+    
+    // Send crossover frequency to Teensy
+    sendFloatToTeensy(CMD_SET_CROSSOVER_FREQ, freq);
+    
+    // Prepare and send response
+    DynamicJsonDocument doc(128);
+    doc["status"] = "ok";
+    doc["crossoverFreq"] = freq;
+    
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
+    
+    // Broadcast update
+    broadcastWebSocket(response);
 }
 
 void handlePutPresetCrossoverEnabled(AsyncWebServerRequest *request) {
     String presetName = request->pathArg(0);
     String state = request->pathArg(1);
-    bool enabled;
-
-    if (state == "on") {
-        enabled = true;
-    } else if (state == "off") {
-        enabled = false;
-    } else {
+    
+    if (state != "on" && state != "off") {
         request->send(400, "text/plain", "Invalid state");
         return;
     }
+    
+    bool enabled = (state == "on");
 
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
@@ -139,11 +154,24 @@ void handlePutPresetCrossoverEnabled(AsyncWebServerRequest *request) {
         return;
     }
 
+    // Update the preset
     current_config.presets[presetIndex].crossoverEnabled = enabled;
-
     scheduleConfigWrite();
-    sendToTeensy("crossoverEnabled", state);
-    request->send(200, "application/json", "{}");
+    
+    // Send crossover enable/disable to Teensy
+    sendOnOffToTeensy(CMD_SET_CROSSOVER_ENABLED, enabled);
+    
+    // Prepare and send response
+    DynamicJsonDocument doc(128);
+    doc["status"] = "ok";
+    doc["crossoverEnabled"] = enabled;
+    
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
+    
+    // Broadcast update
+    broadcastWebSocket(response);
 }
 
 void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
@@ -211,8 +239,39 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size
     request->send(200, "application/json", "{}");
     
     // Send updated PEQ points to Teensy
-    String command = "update_eq " + eqType + " " + String(spl);
-    sendToTeensy(command.c_str(), "");
+    if (eqType == "roomCorrection") {
+        sendToTeensy(CMD_SET_EQ_FILTER, "room", String(spl), String(target_set->num_points));
+        // Send each PEQ point
+        for (int i = 0; i < target_set->num_points; i++) {
+            String pointData = String(target_set->points[i].freq, 1) + "," +
+                             String(target_set->points[i].gain, 2) + "," +
+                             String(target_set->points[i].q, 2);
+            sendToTeensy(CMD_SET_EQ_FILTER, "room_point", String(spl) + " " + pointData, String(i));
+        }
+    } else {
+        sendToTeensy(CMD_SET_EQ_FILTER, "preference", String(spl), String(target_set->num_points));
+        // Send each PEQ point
+        for (int i = 0; i < target_set->num_points; i++) {
+            String pointData = String(target_set->points[i].freq, 1) + "," +
+                             String(target_set->points[i].gain, 2) + "," +
+                             String(target_set->points[i].q, 2);
+            sendToTeensy(CMD_SET_EQ_FILTER, "preference_point", String(spl) + " " + pointData, String(i));
+        }
+    }
+    
+    // Prepare and send response
+    DynamicJsonDocument doc(128);
+    doc["status"] = "ok";
+    doc["eqType"] = eqType;
+    doc["spl"] = spl;
+    doc["numPoints"] = target_set->num_points;
+    
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
+    
+    // Broadcast update
+    broadcastWebSocket(response);
 }
 
 void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
@@ -231,30 +290,35 @@ void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
         return;
     }
     
-    Preset* preset = &current_config.presets[presetIndex];
     bool enabled = (state == "on");
     
-    // In the new structure, we have a single EQEnabled flag that controls both room correction and preference curve
-    preset->EQEnabled = enabled;
-    
-    // The eqType parameter is kept for backward compatibility but we don't distinguish between room/preference anymore
-    if (eqType != "room" && eqType != "preference") {
-        request->send(400, "text/plain", "Invalid EQ type. Must be 'room' or 'preference'");
-        return;
+    // Update the config
+    if (eqType == "room" || eqType == "both") {
+        current_config.presets[presetIndex].roomCorrectionEnabled = enabled;
+    }
+    if (eqType == "preference" || eqType == "both") {
+        current_config.presets[presetIndex].preferenceEQEnabled = enabled;
     }
     
     scheduleConfigWrite();
     
-    // Send update to Teensy
-    String command = String("eq_") + eqType + "_enabled " + (enabled ? "1" : "0");
-    sendToTeensy(command.c_str(), "");
+    // Send command to Teensy
+    if (eqType == "room" || eqType == "both") {
+        sendOnOffToTeensy(CMD_SET_EQ_ENABLED, enabled);
+    }
     
+    // Prepare and send response
     DynamicJsonDocument doc(128);
+    doc["status"] = "ok";
+    doc["eqType"] = eqType;
     doc["enabled"] = enabled;
     
     String response;
     serializeJson(doc, response);
     request->send(200, "application/json", response);
+    
+    // Broadcast update
+    broadcastWebSocket(response);
 }
 
 void handlePostPresetEQCopy(AsyncWebServerRequest *request) {
@@ -270,7 +334,7 @@ void handlePostPresetEQCopy(AsyncWebServerRequest *request) {
     }
     
     Preset* preset = &current_config.presets[presetIndex];
-    PEQSet* sets = (eqType == "room") ? preset->room_correction : preset->preference_curve;
+    PEQSet* sets = (eqType == "roomCorrection") ? preset->room_correction : preset->preference_curve;
     
     // Find source set
     int sourceIndex = -1;
@@ -292,7 +356,7 @@ void handlePostPresetEQCopy(AsyncWebServerRequest *request) {
         if (sets[i].spl == targetSpl) {
             targetIndex = i;
             break;
-        } else if (sets[i].spl == 0 && targetIndex == -1) {
+        } else if (sets[i].spl == -1 && targetIndex == -1) {
             // Found an empty slot
             targetIndex = i;
         }
@@ -309,10 +373,76 @@ void handlePostPresetEQCopy(AsyncWebServerRequest *request) {
     
     scheduleConfigWrite();
     
-    // Send update to Teensy
-    String command = String("copy_eq_") + eqType + " " + String(sourceSpl) + " " + String(targetSpl);
-    sendToTeensy(command.c_str(), "");
+    // Send command to Teensy to copy the EQ set
+    sendToTeensy(CMD_SET_EQ_FILTER, "copy", 
+                String(sourceSpl) + " " + String(targetSpl), 
+                eqType);
     
-    request->send(200, "application/json", "{}");
+    // Prepare and send response
+    DynamicJsonDocument doc(128);
+    doc["status"] = "ok";
+    doc["eqType"] = eqType;
+    doc["sourceSpl"] = sourceSpl;
+    doc["targetSpl"] = targetSpl;
+    
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
+    
+    // Broadcast update
+    broadcastWebSocket(response);
+}
+
+void handleResetEQFilters(AsyncWebServerRequest *request) {
+    String presetName = request->pathArg(0);
+    String eqType = request->pathArg(1);
+    
+    int presetIndex = find_preset_by_name(presetName.c_str());
+    if (presetIndex == -1) {
+        request->send(404, "text/plain", "Preset not found");
+        return;
+    }
+    
+    Preset* preset = &current_config.presets[presetIndex];
+    
+    // Reset the specified EQ type or both if not specified
+    if (eqType == "room" || eqType == "both") {
+        // Reset room correction
+        for (int i = 0; i < MAX_PEQ_SETS; i++) {
+            preset->room_correction[i].spl = -1;
+            preset->room_correction[i].num_points = 0;
+        }
+        // Add default set at 0dB SPL
+        preset->room_correction[0].spl = 0;
+        preset->room_correction[0].num_points = 0;
+    }
+    
+    if (eqType == "preference" || eqType == "both") {
+        // Reset preference curve
+        for (int i = 0; i < MAX_PEQ_SETS; i++) {
+            preset->preference_curve[i].spl = -1;
+            preset->preference_curve[i].num_points = 0;
+        }
+        // Add default set at 0dB SPL
+        preset->preference_curve[0].spl = 0;
+        preset->preference_curve[0].num_points = 0;
+    }
+    
+    scheduleConfigWrite();
+    
+    // Send command to Teensy to reset EQ filters
+    sendToTeensy(CMD_RESET_EQ_FILTERS, eqType);
+    
+    // Prepare and send response
+    DynamicJsonDocument doc(128);
+    doc["status"] = "ok";
+    doc["eqType"] = eqType;
+    
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
+    
+    // Broadcast update
+    broadcastWebSocket(response);
 }
 
