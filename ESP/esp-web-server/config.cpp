@@ -26,8 +26,12 @@ void reset_config_to_defaults() {
     // Initialize the first preset as 'Default'
     strcpy(defaultConfig.presets[0].name, "Default");
     defaultConfig.presets[0].delay = Delay(); // Initialize with default values
-    defaultConfig.presets[0].crossover = Crossover(); // Initialize with default values
-    defaultConfig.presets[0].equalLoudness = false;
+    defaultConfig.presets[0].delayEnabled = false;
+    defaultConfig.presets[0].crossoverFreq = 80;
+    defaultConfig.presets[0].crossoverEnabled = false;
+    defaultConfig.presets[0].EQEnabled = false;
+    defaultConfig.presets[0].FIRFiltersEnabled = false;
+    defaultConfig.presets[0].FIRFilters = FIRFilter();
     // Initialize PEQ sets for the default preset
     for (int j = 0; j < MAX_PEQ_SETS; j++) {
         defaultConfig.presets[0].room_correction[j] = PEQSet();
@@ -49,14 +53,24 @@ void reset_config_to_defaults() {
 void init_config() {
     EEPROM.begin(EEPROM_SIZE);
     
-    uint32_t magic; 
+    // First check the magic value
+    uint32_t magic;
     EEPROM.get(0, magic);
 
-    if (magic == CONFIG_MAGIC_VALUE) {
-        Serial.println("Found existing configuration in EEPROM. Loading...");
-        load_config();
-    } else {
-        Serial.println("No valid configuration found in EEPROM.");
+    if (magic != CONFIG_MAGIC_VALUE) {
+        Serial.println("No valid configuration found in EEPROM. Creating default config...");
         reset_config_to_defaults();
+        return;
+    }
+
+    // If we get here, magic value is good, now check version
+    load_config();
+    
+    if (current_config.version != CONFIG_CURRENT_VERSION) {
+        Serial.printf("Config version mismatch (found %d, expected %d). Resetting to defaults.\n", 
+                     current_config.version, CONFIG_CURRENT_VERSION);
+        reset_config_to_defaults();
+    } else {
+        Serial.println("Configuration loaded successfully");
     }
 }

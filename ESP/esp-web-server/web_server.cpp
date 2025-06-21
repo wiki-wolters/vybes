@@ -2,9 +2,10 @@
 #include "web_server.h"
 #include "websocket.h"
 #include "file_system.h"
-#include "api_calibration.h"
 #include "api_system.h"
 #include "api_signal_generator.h"
+#include "api_speaker.h"
+#include "api_fir.h"
 #include "api_presets.h"
 #include "api_preset_config.h"
 
@@ -52,22 +53,23 @@ void setupWebServer() {
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
 
-    // API Routes - Calibration
-    server.on("/calibration", HTTP_GET, handleGetCalibration);
-    server.on("/calibrate/:spl", HTTP_PUT, handlePutCalibrate);
-
     // API Routes - System Status
     server.on("/status", HTTP_GET, handleGetStatus);
-    server.on("/sub/:command", HTTP_PUT, handlePutSub);
-    server.on("/bypass/:state", HTTP_PUT, handlePutBypass);
     server.on("/mute/:state", HTTP_PUT, handlePutMute);
     server.on("/mute/percent/:percent", HTTP_PUT, handlePutMutePercent);
 
+    // API Routes - Speaker Controls
+    server.on("/speaker/left/gain/:gain", HTTP_PUT, handlePutSpeakerGain);
+    server.on("/speaker/right/gain/:gain", HTTP_PUT, handlePutSpeakerGain);
+    server.on("/speaker/sub/gain/:gain", HTTP_PUT, handlePutSpeakerGain);
+    
+    // API Routes - FIR Filter Management
+    server.on("/fir/files", HTTP_GET, handleGetFirFiles);
+    server.on("/preset/:name/fir/:speaker/load/:filename", HTTP_PUT, handlePutPresetFir);
+    server.on("/preset/:name/fir/enabled/:state", HTTP_PUT, handlePutPresetFirEnabled);
+
     // API Routes - Tone Generation
-    server.on("/generate/tone/:freq/:amp", HTTP_PUT, handlePutTone);
-    server.on("/generate/tone/stop", HTTP_PUT, handlePutToneStop);
-    server.on("/generate/noise/:volume", HTTP_PUT, handlePutNoise);
-    server.on("/pulse", HTTP_PUT, handlePutPulse);
+    server.on("/noise/:volume", HTTP_PUT, handlePutNoise);
 
     // API Routes - Preset Management
     server.on("/presets", HTTP_GET, handleGetPresets);
@@ -79,17 +81,19 @@ void setupWebServer() {
     server.on("/preset/active/:name", HTTP_PUT, handlePutActivePreset);
 
     // API Routes - Speaker Configuration
-    server.on("/preset/delay/:speaker/:delay", HTTP_PUT, handlePutPresetDelay);
     server.on("/preset/:name/delay/:speaker/:delay", HTTP_PUT, handlePutPresetDelayNamed);
+    server.on("/preset/:name/delay/enabled/:state", HTTP_PUT, handlePutPresetDelayEnabled);
 
     // API Routes - EQ Management
     server.on("/preset/:name/eq/:type/:spl", HTTP_POST, handlePostPresetEQ);
     server.on("/preset/:name/eq/:type/:spl", HTTP_DELETE, handleDeletePresetEQ);
     server.on("/preset/:name/eq/:type/:spl", HTTP_PUT, [](AsyncWebServerRequest *request){}, NULL, handlePutPresetEQPoints);
+    server.on("/preset/:name/eq/:type/enabled/:state", HTTP_PUT, handlePutPresetEQEnabled);
 
     // API Routes - Crossover and Equal Loudness
     server.on("/preset/:name/crossover/:type/:freq", HTTP_PUT, handlePutPresetCrossover);
-    server.on("/preset/:name/equal-loudness/:state", HTTP_PUT, handlePutPresetEqualLoudness);
+    server.on("/preset/:name/crossover/enabled/:state", HTTP_PUT, handlePutPresetCrossoverEnabled);
+
 
     // Static file serving
     server.onNotFound(handleFileServing);

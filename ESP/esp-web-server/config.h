@@ -6,6 +6,11 @@
 // --- Constants ---
 #define EEPROM_SIZE 4096
 #define CONFIG_MAGIC_VALUE 0xDEADBEEF
+#define CONFIG_CURRENT_VERSION 2
+
+// Version history:
+// 1 - Initial version
+// 2 - Added version field and PEQ support
 
 #define MAX_PRESETS 8
 #define MAX_PEQ_SETS 4
@@ -16,7 +21,6 @@
 
 // Represents a single Parametric EQ point
 struct PEQPoint {
-    bool enabled = false;
     float freq = 1000.0f;
     float gain = 0.0f;
     float q = 1.0f;
@@ -24,7 +28,6 @@ struct PEQPoint {
 
 // Represents a set of PEQs for a specific SPL
 struct PEQSet {
-    bool enabled = false;
     int spl = 0;
     PEQPoint points[MAX_PEQ_POINTS];
     int num_points = 0; // Number of active PEQ points in this set
@@ -37,41 +40,49 @@ struct Delay {
     float sub = 0.0f;
 };
 
-// Represents crossover settings
-struct Crossover {
-    int lowPass = 80;
-    int highPass = 80;
+struct FIRFilter {
+    String left = "";
+    String right = "";
+    String sub = "";
+};
+
+struct ChannelGains {
+    float left = 1.0f;
+    float right = 1.0f;
+    float sub = 1.0f;
+    float spdif = 1.0f;
+    float bluetooth = 1.0f;
 };
 
 // Represents a single preset
 struct Preset {
     char name[PRESET_NAME_MAX_LEN] = "Default";
     Delay delay;
-    Crossover crossover;
-    bool equalLoudness = false;
+    bool delayEnabled = false;
+    int8_t crossoverFreq = 80;
+    bool crossoverEnabled = false;
     PEQSet room_correction[MAX_PEQ_SETS];
     PEQSet preference_curve[MAX_PEQ_SETS];
+    bool EQEnabled = false;
+    bool FIRFiltersEnabled = false;
+    FIRFilter FIRFilters;
 };
 
 // Main configuration structure that holds everything
 struct Config {
     uint32_t magic_value = 0; // To check if EEPROM is initialized
+    uint8_t version = CONFIG_CURRENT_VERSION; // Current version of the config structure
     int active_preset_index = 0;
     Preset presets[MAX_PRESETS];
     // Add other global settings here if needed
     int toneFrequency = 0;
     int toneVolume = 0;
     int noiseVolume = 0;
-    // float master_volume = 1.0f;
 
     // System states from old systemSettings
-    char subwooferState[4] = "off"; // "on" or "off"
-    char bypassState[4] = "off";    // "on" or "off"
     char muteState[4] = "off";      // "on" or "off"
     int mutePercent = 0;            // 0-100
-    char currentPresetName[PRESET_NAME_MAX_LEN] = "Default"; // Name of the currently active preset, mirrors presets[active_preset_index].name
-    bool isCalibrated = false;
-    int calibrationSpl = 75; // Default calibration SPL, e.g., for mic calibration
+    ChannelGains channelGains;
 };
 
 // --- Global Configuration Variable ---

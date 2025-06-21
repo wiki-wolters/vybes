@@ -10,5 +10,7 @@ void handlePostPresetCopy(AsyncWebServerRequest *request);
 void handlePutPresetRename(AsyncWebServerRequest *request);
 void handleDeletePreset(AsyncWebServerRequest *request);
 void handlePutActivePreset(AsyncWebServerRequest *request);
+void handlePutPresetDelayEnabled(AsyncWebServerRequest *request);
+void handlePutPresetDelayNamed(AsyncWebServerRequest *request);
 
 #endif // API_PRESETS_H
