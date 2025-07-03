@@ -32,7 +32,7 @@
 #define CMD_SET_MUTE_PERCENT "setMutePercent"
 
 // Global buffer for storing the last response from Teensy
-extern char teensyResponse[256];
+extern char teensyResponse[1024];
 
 // Send a command to the Teensy
 // command: The command name (use the CMD_* constants from this file)
@@ -49,5 +49,7 @@ void sendOnOffToTeensy(const char* command, bool on);
 void sendIntToTeensy(const char* command, int value);
 void sendFloatToTeensy(const char* command, float value);
 void sendStringToTeensy(const char* command, const String& value);
+
+char* requestFromTeensy(const char* command);
 
 #endif // TEENSY_COMM_H

@@ -1,6 +1,7 @@
 #ifndef I2C_COMMAND_ROUTER_H
 #define I2C_COMMAND_ROUTER_H
 #pragma once
+
 #include <Arduino.h>
 #include <Wire.h>
 #include <map>

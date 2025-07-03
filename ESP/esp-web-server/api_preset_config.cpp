@@ -5,6 +5,7 @@
 #include "teensy_comm.h"
 #include "config.h"
 #include "api_helpers.h"
+#include "config.h"
 #include <string.h>
 #include <ArduinoJson.h>
 
@@ -26,7 +27,7 @@ void handlePostPresetEQ(AsyncWebServerRequest *request) {
     }
 
     Preset* preset = &current_config.presets[presetIndex];
-    PEQSet* sets = (eqType == "roomCorrection") ? preset->room_correction : preset->preference_curve;
+    PEQSet* sets = preset->preference_curve;
 
     // Check if SPL already exists
     for (int i = 0; i < MAX_PEQ_SETS; i++) {
@@ -76,7 +77,7 @@ void handleDeletePresetEQ(AsyncWebServerRequest *request) {
     }
 
     Preset* preset = &current_config.presets[presetIndex];
-    PEQSet* sets = (eqType == "roomCorrection") ? preset->room_correction : preset->preference_curve;
+    PEQSet* sets = preset->preference_curve;
 
     // Find the set with the matching SPL
     int found_index = -1;
@@ -187,7 +188,7 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size
     }
 
     Preset* preset = &current_config.presets[presetIndex];
-    PEQSet* sets = (eqType == "pref") ? preset->preference_curve : preset->room_correction;
+    PEQSet* sets = preset->preference_curve;
 
     int set_index = -1;
     for (int i = 0; i < MAX_PEQ_SETS; i++) {
@@ -309,7 +310,7 @@ void handlePostPresetEQCopy(AsyncWebServerRequest *request) {
     }
     
     Preset* preset = &current_config.presets[presetIndex];
-    PEQSet* sets = (eqType == "roomCorrection") ? preset->room_correction : preset->preference_curve;
+    PEQSet* sets = preset->preference_curve;
     
     // Find source set
     int sourceIndex = -1;
@@ -380,28 +381,14 @@ void handleResetEQFilters(AsyncWebServerRequest *request) {
     
     Preset* preset = &current_config.presets[presetIndex];
     
-    // Reset the specified EQ type or both if not specified
-    if (eqType == "room" || eqType == "both") {
-        // Reset room correction
-        for (int i = 0; i < MAX_PEQ_SETS; i++) {
-            preset->room_correction[i].spl = -1;
-            preset->room_correction[i].num_points = 0;
-        }
-        // Add default set at 0dB SPL
-        preset->room_correction[0].spl = 0;
-        preset->room_correction[0].num_points = 0;
+    // Reset preference curve
+    for (int i = 0; i < MAX_PEQ_SETS; i++) {
+        preset->preference_curve[i].spl = -1;
+        preset->preference_curve[i].num_points = 0;
     }
-    
-    if (eqType == "preference" || eqType == "both") {
-        // Reset preference curve
-        for (int i = 0; i < MAX_PEQ_SETS; i++) {
-            preset->preference_curve[i].spl = -1;
-            preset->preference_curve[i].num_points = 0;
-        }
-        // Add default set at 0dB SPL
-        preset->preference_curve[0].spl = 0;
-        preset->preference_curve[0].num_points = 0;
-    }
+    // Add default set at 0dB SPL
+    preset->preference_curve[0].spl = 0;
+    preset->preference_curve[0].num_points = 0;
     
     scheduleConfigWrite();
     

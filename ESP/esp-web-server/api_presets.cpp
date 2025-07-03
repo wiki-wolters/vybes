@@ -4,17 +4,21 @@
 #include "utilities.h"
 #include "config.h"
 #include "api_helpers.h"
+#include "teensy_comm.h"
 #include <ArduinoJson.h>
 #include <string.h>
 
 // --- API Handlers ---
 
 void handleGetPresets(AsyncWebServerRequest *request) {
-    DynamicJsonDocument doc(1024);
+    DynamicJsonDocument doc(2048); // Increased size to accommodate the larger JSON structure
     JsonArray presets = doc.to<JsonArray>();
+    
     for (int i = 0; i < MAX_PRESETS; i++) {
         if (strlen(current_config.presets[i].name) > 0) {
-            presets.add(current_config.presets[i].name);
+            JsonObject preset = presets.createNestedObject();
+            preset["name"] = current_config.presets[i].name;
+            preset["isCurrent"] = (i == current_config.active_preset_index);
         }
     }
 
@@ -91,7 +95,7 @@ void handlePostPresetCreate(AsyncWebServerRequest *request) {
         return;
     }
 
-    int newIndex = find_empty_prese t_slot();
+    int newIndex = find_empty_preset_slot();
     if (newIndex == -1) {
         request->send(507, "text/plain", "Maximum number of presets reached");
         return;
@@ -109,8 +113,6 @@ void handlePostPresetCreate(AsyncWebServerRequest *request) {
     current_config.presets[newIndex].FIRFiltersEnabled = false;
     
     // Initialize the first PEQ set for both curves as this is what the UI expects
-    current_config.presets[newIndex].room_correction[0].spl = 0;
-    current_config.presets[newIndex].room_correction[0].num_points = 0;
     current_config.presets[newIndex].preference_curve[0].spl = 0;
     current_config.presets[newIndex].preference_curve[0].num_points = 0;
 
@@ -203,6 +205,8 @@ void handleDeletePreset(AsyncWebServerRequest *request) {
         current_config.active_preset_index = 0; // Default is always at index 0
     }
 
+    updateTeensyWithActivePresetParameters();
+
     scheduleConfigWrite();
     request->send(200, "application/json", "{}");
 }
@@ -217,6 +221,7 @@ void handlePutActivePreset(AsyncWebServerRequest *request) {
     }
 
     current_config.active_preset_index = presetIndex;
+    updateTeensyWithActivePresetParameters();
     scheduleConfigWrite();
 
     request->send(200, "application/json", "{}"); // HTTP response

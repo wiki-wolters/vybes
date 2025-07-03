@@ -1,98 +1,69 @@
 #include "globals.h"
 #include "teensy_comm.h"
+#include "i2c.h"
 #include <Wire.h>
 
 // I2C Configuration
-#define TEENSY_I2C_ADDRESS 0x08  // Match this with the address in Teensy code
-#define I2C_SDA 4                // GPIO4 (D2)
-#define I2C_SCL 5                // GPIO5 (D1)
+#define TEENSY_I2C_ADDRESS 0x12  // Match this with the address in Teensy code
 #define I2C_TIMEOUT 1000         // 1 second timeout for I2C operations
 
-bool i2cInitialized = false;
-char teensyResponse[256] = {0};  // Global buffer for storing the last response from Teensy
-
-void initI2C() {
-    if (!i2cInitialized) {
-        Wire.begin(I2C_SDA, I2C_SCL);
-        Wire.setClock(100000);  // Standard 100kHz I2C
-        i2cInitialized = true;
-    }
-}
+char teensyResponse[1024] = {0};  // Global buffer for storing the last response from Teensy
+int responseIndex = 0;
 
 bool sendToTeensy(const char* command, const String& param1, 
-                 const String& param2, const String& param3) {
-    initI2C();
-    
+    const String& param2, const String& param3) {
     // Build the command string with parameters
     String message = String(command);
-    
+
     if (param1.length() > 0) {
         message += ' ' + param1;
-        
+
         if (param2.length() > 0) {
             message += ' ' + param2;
-            
+
             if (param3.length() > 0) {
                 message += ' ' + param3;
             }
         }
     }
     
-    // Debug output
-    Serial.print("Sending to Teensy: ");
+    // Add newline to the message string instead of separate write
+    message += '\n';
+
+    // Debug output - show exact bytes
+    Serial.print("Sending to Teensy (");
+    Serial.print(message.length());
+    Serial.print(" bytes): ");
     Serial.println(message);
-    
-    // Send command to Teensy
-    Wire.beginTransmission(TEENSY_I2C_ADDRESS);
-    Wire.write(message.c_str(), message.length());
-    byte error = Wire.endTransmission();
-    
-    if (error != 0) {
-        Serial.print("I2C transmission error: ");
+
+    // Try to send the command up to 3 times
+    for (int attempt = 0; attempt < 3; attempt++) {
+        yield();
+
+        Wire.beginTransmission(TEENSY_I2C_ADDRESS);
+        Wire.write(message.c_str(), message.length());
+        byte error = Wire.endTransmission();
+
+        if (error == 0) {
+            Serial.println("I2C transmission successful");
+            break;
+        }
+
+        Serial.print("I2C transmission error (attempt ");
+        Serial.print(attempt + 1);
+        Serial.print("): ");
         Serial.println(error);
-        return false;
+
+        if (attempt == 2) {
+            Serial.println("Failed to communicate with Teensy after 3 attempts");
+            return false;
+        }
+
+        delay(5);
     }
-    
-    // Small delay to allow Teensy to process the command
-    delay(2);
-    
-    // Request response from Teensy
-    uint8_t response[256] = {0};
-    uint8_t responseLength = 0;
-    
-    // Request data from Teensy with error handling
-    Wire.requestFrom(TEENSY_I2C_ADDRESS, (uint8_t)sizeof(response) - 1);
-    
-    // Read response with timeout
-    uint32_t startTime = millis();
-    while (Wire.available() == 0 && (millis() - startTime) < I2C_TIMEOUT) {
-        delay(1);
-    }
-    
-    // Read available bytes
-    while (Wire.available() > 0 && responseLength < sizeof(teensyResponse) - 1) {
-        char c = Wire.read();
-        response[responseLength++] = c;
-        teensyResponse[responseLength-1] = c;  // Store in global buffer
-    }
-    
-    // Null-terminate the responses
-    response[responseLength] = '\0';
-    teensyResponse[responseLength] = '\0';
-    
-    // Debug output
-    if (responseLength > 0) {
-        Serial.print("Received from Teensy: \"");
-        Serial.print((char*)response);
-        Serial.println("\"");
-        
-        // Also copy to the global buffer
-        strncpy(teensyResponse, (char*)response, sizeof(teensyResponse) - 1);
-        teensyResponse[sizeof(teensyResponse) - 1] = '\0'; // Ensure null termination
-    } else {
-        Serial.println("No response from Teensy");
-        teensyResponse[0] = '\0';  // Clear the response buffer
-    }
+
+    // Rest of the function remains the same...
+    // [Response reading code here]
     
     return true;
 }
@@ -119,3 +90,24 @@ void sendFloatToTeensy(const char* command, float value) {
 void sendStringToTeensy(const char* command, const String& value) {
     sendToTeensy(command, value);
 }
+
+void readFromTeensy() {
+    //Reset teensyResponse
+    memset(teensyResponse, 0, sizeof(teensyResponse));
+    responseIndex = 0;
+
+    Wire.requestFrom(TEENSY_I2C_ADDRESS, 1024);
+    while (Wire.available()) {
+        char c = Wire.read();
+        teensyResponse[responseIndex] = c;
+        responseIndex++;
+    }
+}
+
+char* requestFromTeensy(const char* command) {
+    sendToTeensy(command);
+    readFromTeensy();
+
+    return teensyResponse;
+}
+

@@ -8,7 +8,6 @@
 #include "api_fir.h"
 #include "api_presets.h"
 #include "api_preset_config.h"
-#include "api_delay.h"
 #include "teensy_comm.h"
 
 AsyncWebServer server(80);
@@ -82,7 +81,7 @@ void setupWebServer() {
     server.on("/preset/active/:name", HTTP_PUT, handlePutActivePreset);
 
     // API Routes - Speaker Configuration
-    server.on("/preset/:name/delay/:speaker/:delay", HTTP_PUT, handlePutPresetDelay);
+    server.on("/preset/:name/delay/:speaker/:delay", HTTP_PUT, handlePutPresetDelayNamed);
     server.on("/preset/:name/delay/enabled/:state", HTTP_PUT, handlePutPresetDelayEnabled);
     
     // API Routes - Input Gains

@@ -1,76 +1,97 @@
-#include <EEPROM.h>
 #include "config.h"
+#include "teensy_comm.h"
+#include "screen.h"
 
 // Define the global configuration instance
 Config current_config;
 
 void save_config() {
-    EEPROM.put(0, current_config);
-    EEPROM.commit(); // Write data to flash
-}
-
-void load_config() {
-    EEPROM.get(0, current_config);
+    //TODO: save config to LittleFS
 }
 
 void reset_config_to_defaults() {
     Serial.println("Resetting configuration to defaults...");
     
-    // Create a new default configuration object
-    Config defaultConfig;
-    
-    // Set the magic value to indicate it's initialized
-    defaultConfig.magic_value = CONFIG_MAGIC_VALUE;
-    defaultConfig.active_preset_index = 0;
+    current_config.active_preset_index = 0;
 
     // Initialize the first preset as 'Default'
-    strcpy(defaultConfig.presets[0].name, "Default");
-    defaultConfig.presets[0].delay = Delay(); // Initialize with default values
-    defaultConfig.presets[0].delayEnabled = false;
-    defaultConfig.presets[0].crossoverFreq = 80;
-    defaultConfig.presets[0].crossoverEnabled = false;
-    defaultConfig.presets[0].EQEnabled = false;
-    defaultConfig.presets[0].FIRFiltersEnabled = false;
-    defaultConfig.presets[0].FIRFilters = FIRFilter();
+    strcpy(current_config.presets[0].name, "Default");
+    current_config.presets[0].delay = Delay(); // Initialize with default values
+    current_config.presets[0].delayEnabled = false;
+    current_config.presets[0].crossoverFreq = 80;
+    current_config.presets[0].crossoverEnabled = false;
+    current_config.presets[0].EQEnabled = false;
+    current_config.presets[0].FIRFiltersEnabled = false;
+    current_config.presets[0].FIRFilters = FIRFilter();
     // Initialize PEQ sets for the default preset
     for (int j = 0; j < MAX_PEQ_SETS; j++) {
-        defaultConfig.presets[0].room_correction[j] = PEQSet();
-        defaultConfig.presets[0].preference_curve[j] = PEQSet();
+        current_config.presets[0].preference_curve[j] = PEQSet();
     }
 
     // Initialize remaining presets as unused
     for (int i = 1; i < MAX_PRESETS; i++) {
-        strcpy(defaultConfig.presets[i].name, ""); // Empty name means unused
+        strcpy(current_config.presets[i].name, ""); // Empty name means unused
     }
 
-    // Copy the default config to the global current_config
-    current_config = defaultConfig;
-    
-    // Save this new default configuration to EEPROM
-    save_config();
+    // Save this new default configuration
+    //save_config();
+
+    updateTeensyWithActivePresetParameters();
 }
 
 void init_config() {
-    EEPROM.begin(EEPROM_SIZE);
-    
-    // First check the magic value
-    uint32_t magic;
-    EEPROM.get(0, magic);
+    reset_config_to_defaults();
+}
 
-    if (magic != CONFIG_MAGIC_VALUE) {
-        Serial.println("No valid configuration found in EEPROM. Creating default config...");
-        reset_config_to_defaults();
-        return;
+void nextPreset() {
+    int8_t nextPresetIndex = current_config.active_preset_index + 1;
+    if (nextPresetIndex >= MAX_PRESETS || strlen(current_config.presets[nextPresetIndex].name) == 0) {
+        nextPresetIndex = 0;
     }
+    current_config.active_preset_index = nextPresetIndex;
+    updateTeensyWithActivePresetParameters();
+}
 
-    // If we get here, magic value is good, now check version
-    load_config();
+void updateTeensyWithActivePresetParameters() {
+    Preset* activePreset = &current_config.presets[current_config.active_preset_index];
+
+    //Update displayed preset name
+    Serial.print("Updating screen: ");Serial.print(current_config.active_preset_index);Serial.print(" ");Serial.println(activePreset->name);
+    writeToScreen(activePreset->name);
+
+    // Send delay settings
+    sendToTeensy(CMD_SET_DELAYS, 
+        String((int)activePreset->delay.left),
+        String((int)activePreset->delay.right),
+        String((int)activePreset->delay.sub));
+    sendOnOffToTeensy(CMD_SET_DELAY_ENABLED, activePreset->delayEnabled);
     
-    if (current_config.version != CONFIG_CURRENT_VERSION) {
-        Serial.printf("Config version mismatch (found %d, expected %d). Resetting to defaults.\n", 
-                     current_config.version, CONFIG_CURRENT_VERSION);
-        reset_config_to_defaults();
-    } else {
-        Serial.println("Configuration loaded successfully");
+    // Send crossover settings
+    sendFloatToTeensy(CMD_SET_CROSSOVER_FREQ, activePreset->crossoverFreq);
+    sendOnOffToTeensy(CMD_SET_CROSSOVER_ENABLED, activePreset->crossoverEnabled);
+    
+    // Send EQ settings
+    sendOnOffToTeensy(CMD_SET_EQ_ENABLED, activePreset->EQEnabled);
+    if (activePreset->EQEnabled) {
+        // Send preference curve EQ points for all SPL sets
+        for (int i = 0; i < MAX_PEQ_SETS; i++) {
+            if (activePreset->preference_curve[i].spl != -1) {
+                // Send all EQ points for this SPL set
+                for (int j = 0; j < activePreset->preference_curve[i].num_points; j++) {
+                    String pointData = String(activePreset->preference_curve[i].points[j].freq, 1) + " " +
+                                     String(activePreset->preference_curve[i].points[j].q, 2) + " " +
+                                     String(activePreset->preference_curve[i].points[j].gain, 2);
+                    sendToTeensy(CMD_SET_EQ_FILTER, String(j), pointData);
+                }
+            }
+        }
+    }
+    
+    // Send FIR filter settings
+    sendOnOffToTeensy(CMD_SET_FIR_ENABLED, activePreset->FIRFiltersEnabled);
+    if (activePreset->FIRFiltersEnabled) {
+        sendToTeensy(CMD_SET_FIR, "left", activePreset->FIRFilters.left);
+        sendToTeensy(CMD_SET_FIR, "right", activePreset->FIRFilters.right);
+        sendToTeensy(CMD_SET_FIR, "sub", activePreset->FIRFilters.sub);
     }
 }

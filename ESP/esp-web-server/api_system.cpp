@@ -18,7 +18,7 @@ void handleGetStatus(AsyncWebServerRequest *request) {
     inputGains["bluetooth"] = current_config.inputGains.bluetooth;
     
     JsonObject mute = doc.createNestedObject("mute");
-    mute["state"] = current_config.muteState;
+    mute["muted"] = current_config.muted;
     mute["percent"] = current_config.mutePercent;
     
     JsonObject tone = doc.createNestedObject("tone");
@@ -42,14 +42,13 @@ void handlePutMute(AsyncWebServerRequest *request) {
         return;
     }
 
-    strncpy(current_config.muteState, state.c_str(), sizeof(current_config.muteState) - 1);
-    current_config.muteState[sizeof(current_config.muteState) - 1] = '\0'; // Ensure null termination
+    current_config.muted = (state == "on");
     scheduleConfigWrite();
 
-    sendOnOffToTeensy(CMD_SET_MUTE, state == "on");
+    sendOnOffToTeensy(CMD_SET_MUTE, current_config.muted);
 
     DynamicJsonDocument doc(256);
-    doc["muteState"] = current_config.muteState;
+    doc["muted"] = current_config.muted;
 
     String response;
     serializeJson(doc, response);

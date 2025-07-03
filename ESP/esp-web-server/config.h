@@ -4,8 +4,6 @@
 #include <Arduino.h>
 
 // --- Constants ---
-#define EEPROM_SIZE 4096
-#define CONFIG_MAGIC_VALUE 0xDEADBEEF
 #define CONFIG_CURRENT_VERSION 2
 
 // Version history:
@@ -64,7 +62,6 @@ struct Preset {
     bool delayEnabled = false;
     int8_t crossoverFreq = 80;
     bool crossoverEnabled = false;
-    PEQSet room_correction[MAX_PEQ_SETS];
     PEQSet preference_curve[MAX_PEQ_SETS];
     bool EQEnabled = false;
     bool FIRFiltersEnabled = false;
@@ -73,7 +70,6 @@ struct Preset {
 
 // Main configuration structure that holds everything
 struct Config {
-    uint32_t magic_value = 0; // To check if EEPROM is initialized
     uint8_t version = CONFIG_CURRENT_VERSION; // Current version of the config structure
     int active_preset_index = 0;
     Preset presets[MAX_PRESETS];
@@ -83,7 +79,7 @@ struct Config {
     int noiseVolume = 0;
 
     // System states from old systemSettings
-    char muteState[4] = "off";      // "on" or "off"
+    bool muted = false; 
     int mutePercent = 0;            // 0-100
     SpeakerGains speakerGains;
     InputGains inputGains;
@@ -96,26 +92,25 @@ extern Config current_config;
 
 /**
  * @brief Initializes the configuration system.
- * Call this once in setup(). It will load from EEPROM or create a default config.
+ * Call this once in setup(). It will load from LittleFS or create a default config.
  */
 void init_config();
 
 /**
- * @brief Saves the current_config struct to EEPROM.
+ * @brief Saves the current_config struct.
  * Call this after making any changes to the configuration.
  */
 void save_config();
 
-/**
- * @brief Loads the configuration from EEPROM into the current_config struct.
- * This is called by init_config() automatically.
- */
-void load_config();
+
+void nextPreset();
 
 /**
- * @brief Resets the configuration to its default state and saves to EEPROM.
+ * @brief Resets the configuration to its default state and saves to LittleFS.
  */
 void reset_config_to_defaults();
+
+void updateTeensyWithActivePresetParameters();
 
 
 #endif // CONFIG_H

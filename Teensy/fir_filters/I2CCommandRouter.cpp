@@ -1,4 +1,5 @@
 #include "I2CCommandRouter.h"
+#include <Wire.h>
 
 // Static instance pointer for I2C callback
 I2CCommandRouter* I2CCommandRouter::instance = nullptr;
@@ -11,6 +12,11 @@ I2CCommandRouter::I2CCommandRouter(uint8_t i2cAddress)
 }
 
 void I2CCommandRouter::begin() {
+    pinMode(18, INPUT_PULLUP);
+    pinMode(19, INPUT_PULLUP);
+    Wire.setSCL(19);
+    Wire.setSDA(18);
+    Wire.setClock(100000);
     Wire.begin(address);
     Wire.onReceive(i2cReceiveWrapper);
     Wire.onRequest(i2cRequestWrapper); // Corrected to use the static wrapper
@@ -50,6 +56,8 @@ void I2CCommandRouter::processCommand(const String& rawCommand, OutputStream& ou
     // Find matching command
     for (int i = 0; i < commandCount; i++) {
         if (commands[i].name.equalsIgnoreCase(cmd_str)) {
+            Serial.print("Running command: "); Serial.println(cmd_str);
+            Serial.print("With args:"); Serial.println(argsString);
             int argCount;
             String* args = parseArgs(argsString, argCount);
             
@@ -65,7 +73,7 @@ void I2CCommandRouter::processCommand(const String& rawCommand, OutputStream& ou
     }
     
     // Command not found - could add error handling here if needed
-    // For example, Serial.print("Command not found: "); Serial.println(cmd_str);
+    Serial.print("Command not found: "); Serial.println(cmd_str);
 }
 
 String* I2CCommandRouter::parseArgs(const String& argsString, int& count) {
@@ -97,36 +105,40 @@ String* I2CCommandRouter::parseArgs(const String& argsString, int& count) {
 }
 
 void I2CCommandRouter::handleI2CReceive(int bytes) {
-    buffer = "";
-    responseLength = 0; // Reset response buffer
-    
-    while (Wire.available()) {
+    Serial.print("I2C received ");
+    Serial.print(bytes);
+    Serial.print(" bytes, buffer length before: ");
+    Serial.println(buffer.length());
+
+    //Loop i from 1 to bytes
+    for (int i = 0; i < bytes; i++) {
         char c = Wire.read();
-        if (c == '\n' || c == '\r') {
-            if (buffer.length() > 0) {
-                // Create a buffer stream for the output
-                I2CCommandRouterBufferStream stream(responseBuffer, sizeof(responseBuffer) - 1);
-                processCommand(buffer, stream);
-                responseLength = stream.length;
-                buffer = "";
-            }
-        } else {
-            buffer += c;
-        }
+        buffer += c;
     }
-    
-    // Process command if no newline was sent
-    if (buffer.length() > 0) {
+
+    Serial.print("Buffer value: ");
+    Serial.println(buffer.substring(0, buffer.length() - 1));
+    Serial.print("Buffer length: ");
+    Serial.println(buffer.length());
+
+    if (buffer.endsWith("\n")) {
+        //Process command
         I2CCommandRouterBufferStream stream(responseBuffer, sizeof(responseBuffer) - 1);
-        processCommand(buffer, stream);
+        processCommand(buffer.trim(), stream);
         responseLength = stream.length;
-        buffer = "";
+    } else {
+        Serial.println("Buffer does not end with newline, discarding");
     }
+
+    //Reset buffer
+    buffer = "";
 }
 
 void I2CCommandRouter::i2cReceiveWrapper(int bytes) {
     if (instance) {
         instance->handleI2CReceive(bytes);
+    } else {
+        Serial.println("No command router instance found in i2cReceiveWrapper");
     }
 }
 
@@ -134,6 +146,8 @@ void I2CCommandRouter::i2cReceiveWrapper(int bytes) {
 void I2CCommandRouter::i2cRequestWrapper() {
     if (instance) {
         instance->handleI2CRequest();
+    } else {
+        Serial.println("No command router instance found in i2cRequestWrapper");
     }
 }
 

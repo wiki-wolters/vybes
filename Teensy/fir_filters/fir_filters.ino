@@ -1,17 +1,16 @@
 #include <Audio.h>
-#include <Wire.h>
 #include <SPI.h>
 #include <SD.h>
 #include <SerialFlash.h>
-#include <EEPROM.h> // Added for EEPROM access
 #include "FIRLoader.h"
 #include "PEQProcessor.h"
 #include "I2CCommandRouter.h"
 #include "OutputStream.h"
 #include "AudioFilterFIRFloat.h"
+#include "IntervalTimer.h"
 
 // Create router instance (I2C address 18)
-I2CCommandRouter router(18);
+I2CCommandRouter router(0x12);
 
 #define MAX_FILENAME_LEN 64 // Maximum length for FIR filenames
 
@@ -20,7 +19,7 @@ AudioSynthWaveform       Tone_generator;
 AudioSynthNoisePink      pink1;         
 
 //Audio Inputs (Bluetooth, SPDIF, USB)
-//AudioInputI2S            Bluetooth_in;  
+AudioInputI2S            Bluetooth_in;  
 AsyncAudioInputSPDIF3    Optical_in; 
 //AudioInputUSB            USB_in;   
 
@@ -95,13 +94,17 @@ const size_t generatorConnections_len = sizeof(generatorConnections) / sizeof(ge
 // External input connections
 AudioConnection          patchCord_OpticalLToLeftMixer(Optical_in, 0, Left_mixer, 0);
 AudioConnection          patchCord_OpticalRToRightMixer(Optical_in, 1, Right_mixer, 0);
-// AudioConnection       patchCord_BluetoothLToLeftMixer(Bluetooth_in, 0, Left_mixer, 1); // Uncomment if Bluetooth_in is used
-// AudioConnection       patchCord_BluetoothRToRightMixer(Bluetooth_in, 1, Right_mixer, 1); // Uncomment if Bluetooth_in is used
+AudioConnection          patchCord_BluetoothLToLeftMixer(Bluetooth_in, 0, Left_mixer, 1);
+AudioConnection          patchCord_BluetoothRToRightMixer(Bluetooth_in, 1, Right_mixer, 1);
+//AudioConnection          patchCord_USBLToLeftMixer(USB_in, 0, Left_mixer, 2);
+//AudioConnection          patchCord_USBRToRightMixer(USB_in, 0, Right_mixer, 2);
 AudioConnection* externalInputConnections[] = {
   &patchCord_OpticalLToLeftMixer,
-  &patchCord_OpticalRToRightMixer
-  // &patchCord_BluetoothLToLeftMixer, // Uncomment if Bluetooth_in is used
-  // &patchCord_BluetoothRToRightMixer  // Uncomment if Bluetooth_in is used
+  &patchCord_OpticalRToRightMixer,
+  &patchCord_BluetoothLToLeftMixer,
+  &patchCord_BluetoothRToRightMixer,
+  //&patchCord_USBLToLeftMixer,
+  //&patchCord_USBRToRightMixer
 };
 const size_t externalInputConnections_len = sizeof(externalInputConnections) / sizeof(externalInputConnections[0]);
 
@@ -228,7 +231,8 @@ const size_t outputConnections_len = sizeof(outputConnections) / sizeof(outputCo
 AudioConnection spdifLeftToAnalogOut(Optical_in, 0, L_R_Analog_Out, 0);
 AudioConnection spdifRightToAnalogOut(Optical_in, 1, L_R_Analog_Out, 1);
 
-const int CURRENT_VERSION = 2;
+const int CURRENT_VERSION = 3;
+bool firFilesPending = false;
 
 //Define a structure for holding state
 struct State {
@@ -238,6 +242,7 @@ struct State {
   // Input gains
   float gainBluetooth = 1.0;
   float gainOptical = 1.0;
+  float gainUSB = 1.0;
   float gainGenerator = 1.0;
 
   // Speaker gain
@@ -299,23 +304,6 @@ void setup() {
   Serial.println("Allocating audio memory");
   AudioMemory(30); // Increased from 20 to handle complex audio graph
 
-  Serial.println("Loading state from EEPROM");
-
-  //Load state from EEPROM if it exists, otherwise populate filters with defaults
-  EEPROM.get(0, state);
-  if (state.version != CURRENT_VERSION) {
-    //create new state object and save it
-    state.version = CURRENT_VERSION;
-    state = State();
-    //populate filters array with default values
-    for (int i = 0; i < MAX_PEQ_BANDS; i++) {
-      state.filters[i] = {1000.0f, 0.0f, 1.0f, false};
-    }
-    EEPROM.put(0, state);
-  }
-
-  Serial.println("State loaded from EEPROM");
-
   // Explicitly set all amps to gain=1.0
   Left_Post_EQ_amp.gain(1.0);
   Right_Post_EQ_amp.gain(1.0);
@@ -360,44 +348,34 @@ void setup() {
   router.on("setDelays", handleSetDelays);
   router.on("setEqFilter", handleSetEQFilter);
   router.on("resetEqFilters", handleResetEQFilters);
+  router.begin();
 }
 
 void loop() {
   // Optional: Print some diagnostics every 2 seconds
   static unsigned long lastPrint = 0;
-  static unsigned long lastStateCheck = 0;
 
-  if (millis() - lastPrint > 2000) {
+  if (millis() - lastPrint > 5000) {
     lastPrint = millis();
     
     // Check if we're getting input signal
-    if (Optical_in.isLocked()) {
-      Serial.println("SPDIF Input Locked - Signal detected");
-      Serial.print("Audio memory usage max: ");
-      Serial.println(AudioMemoryUsageMax());
-    } else {
-      Serial.println("No SPDIF input signal detected");
-    }
+    // if (Optical_in.isLocked()) {
+    //   Serial.println("SPDIF Input Locked - Signal detected");
+    //   Serial.print("Audio memory usage max: ");
+    //   Serial.println(AudioMemoryUsageMax());
+    // } else {
+    //   Serial.println("No SPDIF input signal detected");
+    // }
   }
 
-  if (millis() - lastStateCheck > 2000) {
-    lastStateCheck = millis();
-    
-    // If state has changed (is dirty), then save state to EEPROM
-    if (state.isDirty) {
-      state.isDirty = false;
-      save_state();
-    }
+  if (firFilesPending) {
+    loadFirFiles();
+    firFilesPending = false;
   }
-}
-
-void save_state() {
-  // Save state to EEPROM
-  EEPROM.put(0, state);
-  Serial.println("State saved to EEPROM: ");
 }
 
 void setEQEnabled(bool enabled) {
+  Serial.println(String("Set EQ enabled: ") + (enabled ? "yes" : "no"));
   state.eqEnabled = enabled;
   state.isDirty = true;
   peqLeft.setBypass(!enabled);
@@ -405,6 +383,7 @@ void setEQEnabled(bool enabled) {
 }
 
 void setCrossoverEnabled(bool enabled) {
+  Serial.println(String("Set crossover enabled: ") + (enabled ? "yes" : "no"));
   state.crossoverEnabled = enabled;
   state.isDirty = true;
   AudioConnection** disableConnections = enabled ? bypassCrossoverConnections : crossoverConnections;
@@ -426,6 +405,7 @@ void setCrossoverEnabled(bool enabled) {
 }
 
 void setFIREnabled(bool enabled) {
+  Serial.println(String("Set fir enabled: ") + (enabled ? "yes" : "no"));
   state.firEnabled = enabled;
   state.isDirty = true;
   AudioConnection** disableConnections = enabled ? bypassFIRConnections : firConnections;
@@ -447,6 +427,7 @@ void setFIREnabled(bool enabled) {
 }
 
 void setDelayEnabled(bool enabled) {
+  Serial.println(String("Set delay enabled: ") + (enabled ? "yes" : "no"));
   state.delayEnabled = enabled;
   state.isDirty = true;
   AudioConnection** disableConnections = enabled ? bypassDelayConnections : delayConnections;
@@ -468,6 +449,7 @@ void setDelayEnabled(bool enabled) {
 }
 
 void setInputGains(float bluetoothGain, float opticalGain, float generatorGain) {
+  Serial.println("Set input gains: bluetooth " + String(bluetoothGain) + ", optical " + String(opticalGain));
   state.gainBluetooth = bluetoothGain;
   state.gainOptical = opticalGain;
   state.gainGenerator = generatorGain;
@@ -481,11 +463,11 @@ void setInputGains(float bluetoothGain, float opticalGain, float generatorGain) 
 }
 
 void setSpeakerGains(float leftGain, float rightGain, float subGain) {
+  Serial.println("Set gains: Left " + String(leftGain) + ", Right " + String(rightGain) + ", Sub " + String(subGain));
   state.gainLeft = leftGain;
   state.gainRight = rightGain;
   state.gainSub = subGain;
   state.isDirty = true;
-  Serial.println("Set gains: Left " + String(leftGain) + ", Right " + String(rightGain) + ", Sub " + String(subGain));
   Left_Post_Delay_amp.gain(state.gainLeft);
   Right_Post_Delay_amp.gain(state.gainRight);
   Sub_Post_Delay_amp.gain(state.gainSub);
@@ -498,6 +480,7 @@ void setEQFilters(PEQBand filters[], int animationDuration) {
 }
 
 void setCrossoverFrequency(int frequency) {
+  Serial.println("Set crossover freq: " + String(frequency));
   state.crossoverFrequency = frequency;
   state.isDirty = true;
   Left_highpass.setHighpass(0, state.crossoverFrequency, 0.707f); // Stage 1
@@ -509,6 +492,7 @@ void setCrossoverFrequency(int frequency) {
 }
 
 void setFIR(String leftFile, String rightFile, String subFile) {
+  Serial.println("Set fir filters: left " + leftFile + ", right " + rightFile + ", sub " + subFile);
   strncpy(state.firFileLeft, leftFile.c_str(), MAX_FILENAME_LEN - 1);
   state.firFileLeft[MAX_FILENAME_LEN - 1] = '\0';
   strncpy(state.firFileRight, rightFile.c_str(), MAX_FILENAME_LEN - 1);
@@ -516,7 +500,11 @@ void setFIR(String leftFile, String rightFile, String subFile) {
   strncpy(state.firFileSub, subFile.c_str(), MAX_FILENAME_LEN - 1);
   state.firFileSub[MAX_FILENAME_LEN - 1] = '\0';
   state.isDirty = true;
-  
+
+  firFilesPending = true;
+}
+
+void loadFirFiles() {
   if (state.firEnabled) {
     for (size_t i = 0; i < firConnections_len; ++i) {
       firConnections[i]->disconnect();
@@ -526,9 +514,9 @@ void setFIR(String leftFile, String rightFile, String subFile) {
   uint16_t actualTaps = 0;
   
   // Load left channel FIR
-  if (leftFile.length() > 0) {
+  if (strlen(state.firFileLeft) > 0) {
     actualTaps = 0;
-    float* coeffs = FIRLoader::loadCoefficients(leftFile, actualTaps);
+    float* coeffs = FIRLoader::loadCoefficients(state.firFileLeft, actualTaps);
     if (coeffs) {
       Left_FIR_Filter.loadCoefficients(coeffs, actualTaps);
       delete[] coeffs;
@@ -540,9 +528,9 @@ void setFIR(String leftFile, String rightFile, String subFile) {
   }
   
   // Load right channel FIR
-  if (rightFile.length() > 0) {
+  if (strlen(state.firFileRight) > 0) {
     actualTaps = 0;
-    float* coeffs = FIRLoader::loadCoefficients(rightFile, actualTaps);
+    float* coeffs = FIRLoader::loadCoefficients(state.firFileRight, actualTaps);
     if (coeffs) {
       Right_FIR_Filter.loadCoefficients(coeffs, actualTaps);
       delete[] coeffs;
@@ -554,9 +542,9 @@ void setFIR(String leftFile, String rightFile, String subFile) {
   }
   
   // Load subwoofer FIR
-  if (subFile.length() > 0) {
+  if (strlen(state.firFileSub) > 0) {
     actualTaps = 0;
-    float* coeffs = FIRLoader::loadCoefficients(subFile, actualTaps);
+    float* coeffs = FIRLoader::loadCoefficients(state.firFileSub, actualTaps);
     if (coeffs) {
       Sub_FIR_Filter.loadCoefficients(coeffs, actualTaps);
       delete[] coeffs;
@@ -571,7 +559,7 @@ void setFIR(String leftFile, String rightFile, String subFile) {
     for (size_t i = 0; i < firConnections_len; ++i) {
       firConnections[i]->connect();
     }
-  }
+  }  
 }
 
 void setDelays(int delayL_us, int delayR_us, int delayS_us) {
@@ -684,8 +672,21 @@ void handleSetFIR(const String& command, String* args, int argCount, OutputStrea
 }
 
 void handleSetDelays(const String& command, String* args, int argCount, OutputStream& stream) {
+  Serial.print("Received setDelays command with ");
+  Serial.print(argCount);
+  Serial.println(" arguments");
+  
   if (argCount == 3) {
+    Serial.print("Args: ");
+    Serial.print(args[0]); Serial.print(", ");
+    Serial.print(args[1]); Serial.print(", ");
+    Serial.println(args[2]);
+    
     setDelays(args[0].toInt(), args[1].toInt(), args[2].toInt());
+    stream.write("OK", 2);  // Send acknowledgment back
+  } else {
+    Serial.println("Wrong number of arguments for setDelays");
+    stream.write("ERROR", 5);
   }
 }
 

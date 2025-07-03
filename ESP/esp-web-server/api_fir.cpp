@@ -14,15 +14,12 @@ using namespace ArduinoJson;
 
 void handleGetFirFiles(AsyncWebServerRequest *request) {
     // Request a list of all FIR filter files from the Teensy
-    bool success = sendToTeensy(CMD_GET_FILES, "fir");
+    char* response = requestFromTeensy(CMD_GET_FILES);
     
-    if (!success) {
+    if (response == NULL) {
         request->send(500, "application/json", "{\"error\":\"Failed to communicate with Teensy\"}");
         return;
     }
-    
-    // Get the response from the global buffer
-    const char* response = teensyResponse;
     
     if (strlen(response) == 0) {
         // If no response, return empty array
