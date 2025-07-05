@@ -72,5 +72,5 @@ void loop() {
     MDNS.update();
     handleDebounceWrite();
     handleButton();
-    //loopScreen();
+    loopScreen();
 }

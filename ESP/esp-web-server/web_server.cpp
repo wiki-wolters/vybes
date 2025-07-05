@@ -1,5 +1,4 @@
 #include "globals.h"
-#include "web_server.h"
 #include "websocket.h"
 #include "file_system.h"
 #include "api_system.h"
@@ -9,6 +8,7 @@
 #include "api_presets.h"
 #include "api_preset_config.h"
 #include "teensy_comm.h"
+#include <ESPAsyncWebServer.h>
 
 AsyncWebServer server(80);
 
@@ -18,6 +18,9 @@ void handleFileServing(AsyncWebServerRequest *request) {
         return;
     }
     String path = request->url();
+
+    Serial.print("Path: ");Serial.println(path);
+
     if (path.endsWith("/")) {
         path += "index.html";
     }
@@ -45,7 +48,7 @@ void handleFileServing(AsyncWebServerRequest *request) {
     } else if (LittleFS.exists(fsPath)) {
         request->send(LittleFS, fsPath, contentType);
     } else {
-        request->send(404, "text/plain", "Not Found");
+        request->send(404, "text/plain", "File not Found");
     }
 }
 
@@ -88,7 +91,7 @@ void setupWebServer() {
     server.on("^\\/preset\\/([^\\/]+)\\/eq\\/pref\\/(\\d+)$", HTTP_POST, handlePostPresetEQ);
     server.on("^\\/preset\\/([^\\/]+)\\/eq\\/pref\\/(\\d+)$", HTTP_DELETE, handleDeletePresetEQ);
     server.on("^\\/preset\\/([^\\/]+)\\/eq\\/pref\\/(\\d+)$", HTTP_PUT, [](AsyncWebServerRequest *request){}, NULL, handlePutPresetEQPoints);
-    server.on("^\\/preset\\/([^\\/]+)\\/eq\\/pref\\/enabled/(on|off)$", HTTP_PUT, handlePutPresetEQEnabled);
+    server.on("^\\/preset\\/([^\\/]+)\\/eq\\/pref\\/enabled\\/(on|off)$", HTTP_PUT, handlePutPresetEQEnabled);
 
     // API Routes - Crossover and Equal Loudness
     server.on("^\\/preset\\/([^\\/]+)\\/crossover\\/freq\\/(\\d+)$", HTTP_PUT, handlePutPresetCrossover);
