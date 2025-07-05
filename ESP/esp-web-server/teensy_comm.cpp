@@ -38,8 +38,6 @@ bool sendToTeensy(const char* command, const String& param1,
 
     // Try to send the command up to 3 times
     for (int attempt = 0; attempt < 3; attempt++) {
-        yield();
-
         Wire.beginTransmission(TEENSY_I2C_ADDRESS);
         Wire.write(message.c_str(), message.length());
         byte error = Wire.endTransmission();

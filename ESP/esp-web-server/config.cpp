@@ -27,6 +27,12 @@ void reset_config_to_defaults() {
     for (int j = 0; j < MAX_PEQ_SETS; j++) {
         current_config.presets[0].preference_curve[j] = PEQSet();
     }
+    //Set first 3 default points
+    for (int k = 0; k < 3; k++) {
+        current_config.presets[0].preference_curve[0].points[k] = PEQPoint();
+        current_config.presets[0].preference_curve[0].points[k].freq = 100 * pow(10, k);
+    }
+    current_config.presets[0].preference_curve[0].num_points = 3;
 
     // Initialize remaining presets as unused
     for (int i = 1; i < MAX_PRESETS; i++) {

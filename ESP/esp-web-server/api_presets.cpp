@@ -64,7 +64,7 @@ void handleGetPreset(AsyncWebServerRequest *request) {
     doc["isPreferenceEQEnabled"] = preset.EQEnabled;
     JsonArray preferenceCurve = doc.createNestedArray("preferenceEQ");
     for(int i=0; i < MAX_PEQ_SETS; i++) {
-        if(preset.preference_curve[i].spl != -1) {
+        if(preset.preference_curve[i].spl > 0 || i == 0) {
             JsonObject peqSet = preferenceCurve.createNestedObject();
             peqSet["spl"] = preset.preference_curve[i].spl;
             JsonArray peqs = peqSet.createNestedArray("peqs");

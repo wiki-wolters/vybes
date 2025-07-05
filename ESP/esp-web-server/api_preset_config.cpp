@@ -103,7 +103,7 @@ void handleDeletePresetEQ(AsyncWebServerRequest *request) {
 
 void handlePutPresetCrossover(AsyncWebServerRequest *request) {
     String presetName = request->pathArg(0);
-    String freqStr = request->pathArg(2);
+    String freqStr = request->pathArg(1);
     int freq = freqStr.toInt();
 
     // Validate frequency range (20Hz to 20kHz)

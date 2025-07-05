@@ -56,46 +56,43 @@ void setupWebServer() {
 
     // API Routes - System Status
     server.on("/status", HTTP_GET, handleGetStatus);
-    server.on("/mute/:state", HTTP_PUT, handlePutMute);
-    server.on("/mute/percent/:percent", HTTP_PUT, handlePutMutePercent);
+    server.on("^\\/mute\\/(on|off)$", HTTP_PUT, handlePutMute);
+    server.on("^\\/mute\\/percent\\/(\\d+)$", HTTP_PUT, handlePutMutePercent);
 
-    // API Routes - Speaker Controls
-    server.on("/speaker/:speaker/gain/:gain", HTTP_PUT, handlePutSpeakerGain);
-    server.on("/input/:input/gain/:gain", HTTP_PUT, handlePutInputGain);
+    // API Routes - Speaker & Input gains
+    server.on("^\\/speaker\\/(left|right|sub)\\/gain\\/([\\d.]+)$", HTTP_PUT, handlePutSpeakerGain);
+    server.on("^\\/input\\/(bluetooth|spdif)\\/gain\\/([\\d.]+)$", HTTP_PUT, handlePutInputGain);
     
     // API Routes - FIR Filter Management
     server.on("/fir/files", HTTP_GET, handleGetFirFiles);
-    server.on("/preset/:name/fir/:speaker/load/:filename", HTTP_PUT, handlePutPresetFir);
-    server.on("/preset/:name/fir/enabled/:state", HTTP_PUT, handlePutPresetFirEnabled);
+    server.on("^\\/preset\\/([^\\/]+)\\/fir\\/(left|right|sub)\\/load\\/([^\\/]+)$", HTTP_PUT, handlePutPresetFir);
+    server.on("^\\/preset\\/([^\\/]+)\\/fir\\/enabled\\/(on|off)$", HTTP_PUT, handlePutPresetFirEnabled);
 
     // API Routes - Tone Generation
-    server.on("/noise/:volume", HTTP_PUT, handlePutNoise);
+    server.on("^\\/noise\\/([\\d.]+)$", HTTP_PUT, handlePutNoise);
 
     // API Routes - Preset Management
     server.on("/presets", HTTP_GET, handleGetPresets);
-    server.on("/preset/:name", HTTP_GET, handleGetPreset);
-    server.on("/preset/create/:name", HTTP_POST, handlePostPresetCreate);
-    server.on("/preset/copy/:from/:to", HTTP_POST, handlePostPresetCopy);
-    server.on("/preset/rename/:from/:to", HTTP_PUT, handlePutPresetRename);
-    server.on("/preset/:name", HTTP_DELETE, handleDeletePreset);
-    server.on("/preset/active/:name", HTTP_PUT, handlePutActivePreset);
+    server.on("^\\/preset\\/([^\\/]+)$", HTTP_GET, handleGetPreset);
+    server.on("^\\/preset\\/create\\/([^\\/]+)$", HTTP_POST, handlePostPresetCreate);
+    server.on("^\\/preset\\/copy\\/([^\\/]+)\\/([^\\/]+)$", HTTP_POST, handlePostPresetCopy);
+    server.on("^\\/preset\\/rename\\/([^\\/]+)\\/([^\\/]+)$", HTTP_PUT, handlePutPresetRename);
+    server.on("^\\/preset\\/([^\\/]+)$", HTTP_DELETE, handleDeletePreset);
+    server.on("^\\/preset\\/active\\/([^\\/]+)$", HTTP_PUT, handlePutActivePreset);
 
     // API Routes - Speaker Configuration
-    server.on("/preset/:name/delay/:speaker/:delay", HTTP_PUT, handlePutPresetDelayNamed);
-    server.on("/preset/:name/delay/enabled/:state", HTTP_PUT, handlePutPresetDelayEnabled);
-    
-    // API Routes - Input Gains
-    server.on("/input/:input/gain/:gain", HTTP_PUT, handlePutInputGain);
+    server.on("^\\/preset\\/([^\\/]+)\\/delay\\/(left|right|sub)\\/([\\d.]+)$", HTTP_PUT, handlePutPresetDelayNamed);
+    server.on("^\\/preset\\/([^\\/]+)\\/delay\\/enabled\\/(on|off)$", HTTP_PUT, handlePutPresetDelayEnabled);
 
     // API Routes - EQ Management
-    server.on("/preset/:name/eq/:type/:spl", HTTP_POST, handlePostPresetEQ);
-    server.on("/preset/:name/eq/:type/:spl", HTTP_DELETE, handleDeletePresetEQ);
-    server.on("/preset/:name/eq/:type/:spl", HTTP_PUT, [](AsyncWebServerRequest *request){}, NULL, handlePutPresetEQPoints);
-    server.on("/preset/:name/eq/:type/enabled/:state", HTTP_PUT, handlePutPresetEQEnabled);
+    server.on("^\\/preset\\/([^\\/]+)\\/eq\\/pref\\/(\\d+)$", HTTP_POST, handlePostPresetEQ);
+    server.on("^\\/preset\\/([^\\/]+)\\/eq\\/pref\\/(\\d+)$", HTTP_DELETE, handleDeletePresetEQ);
+    server.on("^\\/preset\\/([^\\/]+)\\/eq\\/pref\\/(\\d+)$", HTTP_PUT, [](AsyncWebServerRequest *request){}, NULL, handlePutPresetEQPoints);
+    server.on("^\\/preset\\/([^\\/]+)\\/eq\\/pref\\/enabled/(on|off)$", HTTP_PUT, handlePutPresetEQEnabled);
 
     // API Routes - Crossover and Equal Loudness
-    server.on("/preset/:name/crossover/:type/:freq", HTTP_PUT, handlePutPresetCrossover);
-    server.on("/preset/:name/crossover/enabled/:state", HTTP_PUT, handlePutPresetCrossoverEnabled);
+    server.on("^\\/preset\\/([^\\/]+)\\/crossover\\/freq\\/(\\d+)$", HTTP_PUT, handlePutPresetCrossover);
+    server.on("^\\/preset\\/([^\\/]+)\\/crossover\\/enabled\\/(on|off)$", HTTP_PUT, handlePutPresetCrossoverEnabled);
 
 
     // Static file serving
