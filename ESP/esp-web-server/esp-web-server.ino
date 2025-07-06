@@ -65,6 +65,7 @@ void setup() {
     Serial.println("Vybes DSP ready!");
     Serial.println(WiFi.localIP());
     Serial.printf("Free heap: %d\n", ESP.getFreeHeap());
+    Serial.print("HTTP_PUT: ");Serial.println((int) HTTP_PUT);
 }
 
 void loop() {
