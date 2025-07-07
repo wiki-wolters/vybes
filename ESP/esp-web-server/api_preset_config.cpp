@@ -11,14 +11,8 @@
 
 void handlePostPresetEQ(AsyncWebServerRequest *request) {
     String presetName = request->pathArg(0);
-    String eqType = request->pathArg(1);
-    String splStr = request->pathArg(2);
+    String splStr = request->pathArg(1);
     int spl = splStr.toInt();
-
-    if (eqType != "roomCorrection" && eqType != "preferenceCurve") {
-        request->send(400, "text/plain", "Invalid EQ type");
-        return;
-    }
 
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
@@ -256,8 +250,7 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size
 
 void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
     String presetName = request->pathArg(0);
-    String eqType = request->pathArg(1);
-    String state = request->pathArg(2);
+    String state = request->pathArg(1);
     
     if (state != "on" && state != "off") {
         request->send(400, "text/plain", "Invalid state. Must be 'on' or 'off'");
@@ -272,98 +265,21 @@ void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
     
     bool enabled = (state == "on");
     
-    if (eqType == "pref") {
-        current_config.presets[presetIndex].EQEnabled = enabled;
-    }
+    current_config.presets[presetIndex].EQEnabled = enabled;
     
     scheduleConfigWrite();
-    
-    // Send command to Teensy
-    if (eqType == "pref") {
-        sendOnOffToTeensy(CMD_SET_EQ_ENABLED, enabled);
-    }
     
     // Prepare and send response
     DynamicJsonDocument doc(128);
     doc["status"] = "ok";
-    doc["eqType"] = eqType;
     doc["enabled"] = enabled;
     
     String response;
     serializeJson(doc, response);
     request->send(200, "application/json", response);
     
-    // Broadcast update
-    broadcastWebSocket(response);
-}
-
-void handlePostPresetEQCopy(AsyncWebServerRequest *request) {
-    String presetName = request->pathArg(0);
-    String eqType = request->pathArg(1);
-    int sourceSpl = request->pathArg(2).toInt();
-    int targetSpl = request->pathArg(3).toInt();
-    
-    int presetIndex = find_preset_by_name(presetName.c_str());
-    if (presetIndex == -1) {
-        request->send(404, "text/plain", "Preset not found");
-        return;
-    }
-    
-    Preset* preset = &current_config.presets[presetIndex];
-    PEQSet* sets = preset->preference_curve;
-    
-    // Find source set
-    int sourceIndex = -1;
-    for (int i = 0; i < MAX_PEQ_SETS; i++) {
-        if (sets[i].spl == sourceSpl) {
-            sourceIndex = i;
-            break;
-        }
-    }
-    
-    if (sourceIndex == -1) {
-        request->send(404, "text/plain", "Source SPL not found");
-        return;
-    }
-    
-    // Find or create target set
-    int targetIndex = -1;
-    for (int i = 0; i < MAX_PEQ_SETS; i++) {
-        if (sets[i].spl == targetSpl) {
-            targetIndex = i;
-            break;
-        } else if (sets[i].spl == -1 && targetIndex == -1) {
-            // Found an empty slot
-            targetIndex = i;
-        }
-    }
-    
-    if (targetIndex == -1) {
-        request->send(507, "text/plain", "No space for new EQ set");
-        return;
-    }
-    
-    // Copy the EQ set
-    memcpy(&sets[targetIndex], &sets[sourceIndex], sizeof(PEQSet));
-    sets[targetIndex].spl = targetSpl;
-    
-    scheduleConfigWrite();
-    
-    // Send command to Teensy to copy the EQ set
-    sendToTeensy(CMD_SET_EQ_FILTER, "copy", 
-                String(sourceSpl) + " " + String(targetSpl), 
-                eqType);
-    
-    // Prepare and send response
-    DynamicJsonDocument doc(128);
-    doc["status"] = "ok";
-    doc["eqType"] = eqType;
-    doc["sourceSpl"] = sourceSpl;
-    doc["targetSpl"] = targetSpl;
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
+    // Send command to Teensy
+    sendOnOffToTeensy(CMD_SET_EQ_ENABLED, enabled);
     
     // Broadcast update
     broadcastWebSocket(response);

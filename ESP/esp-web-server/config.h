@@ -11,8 +11,8 @@
 // 2 - Added version field and PEQ support
 
 #define MAX_PRESETS 8
-#define MAX_PEQ_SETS 4
-#define MAX_PEQ_POINTS 8
+#define MAX_PEQ_SETS 3
+#define MAX_PEQ_POINTS 15
 #define PRESET_NAME_MAX_LEN 16
 
 // --- Data Structures ---

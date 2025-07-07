@@ -12,11 +12,8 @@ I2CCommandRouter::I2CCommandRouter(uint8_t i2cAddress)
 }
 
 void I2CCommandRouter::begin() {
-    pinMode(18, INPUT_PULLUP);
-    pinMode(19, INPUT_PULLUP);
     Wire.setSCL(19);
     Wire.setSDA(18);
-    Wire.setClock(100000);
     Wire.begin(address);
     Wire.onReceive(i2cReceiveWrapper);
     Wire.onRequest(i2cRequestWrapper); // Corrected to use the static wrapper

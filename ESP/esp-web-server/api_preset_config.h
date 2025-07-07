@@ -8,7 +8,6 @@ void handlePostPresetEQ(AsyncWebServerRequest *request);
 void handleDeletePresetEQ(AsyncWebServerRequest *request);
 void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total);
 void handlePutPresetEQEnabled(AsyncWebServerRequest *request);
-void handlePostPresetEQCopy(AsyncWebServerRequest *request);
 
 // Crossover and equal loudness endpoints
 void handlePutPresetCrossover(AsyncWebServerRequest *request);

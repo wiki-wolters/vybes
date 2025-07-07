@@ -3,12 +3,8 @@
 #include <Wire.h>
 
 void initI2C() {
-    // Enable internal pull-ups on ESP8266
-    pinMode(I2C_SDA, INPUT_PULLUP);
-    pinMode(I2C_SCL, INPUT_PULLUP);
-
     Wire.begin(I2C_SDA, I2C_SCL);
-    Wire.setClock(100000);  // Standard 100kHz I2C
+    Wire.setClock(20000);  // Slower connection for reliability
 }
 
 void scanI2CBus() {
