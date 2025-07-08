@@ -8,11 +8,11 @@
       <input
         :id="sliderId"
         type="range"
-        :min="min"
-        :max="max"
-        :step="step"
-        :value="modelValue"
-        @input="$emit('update:modelValue', parseFloat($event.target.value))"
+        :min="sliderMin"
+        :max="sliderMax"
+        :step="sliderStep"
+        :value="sliderValue"
+        @input="sliderValue = parseFloat($event.target.value)"
         class="flex-1 h-2 bg-vybes-dark-input rounded-lg appearance-none cursor-pointer
                focus:outline-none focus:ring-2 focus:ring-vybes-blue/50
                [&::-webkit-slider-thumb]:appearance-none
@@ -33,8 +33,8 @@
         :min="min"
         :max="max"
         :step="step"
-        :value="modelValue"
-        @input="$emit('update:modelValue', parseFloat($event.target.value))"
+        :value="roundedModelValue"
+        @input="emitRoundedValue(parseFloat($event.target.value))"
         class="w-20 p-1 text-sm bg-vybes-dark-input border border-vybes-dark-card rounded-md text-vybes-text-primary text-center focus:outline-none focus:ring-1 focus:ring-vybes-blue focus:border-vybes-blue flex-none"
       />
     </div>
@@ -71,22 +71,67 @@ const props = defineProps({
   },
   decimals: { // Number of decimals for displayValue
      type: Number,
-     default: 1
+     default: 2
+  },
+  logarithmic: {
+    type: Boolean,
+    default: false
   }
 });
 
-defineEmits(['update:modelValue']);
+const emit = defineEmits(['update:modelValue']);
+
+function emitRoundedValue(value) {
+  if (typeof value === 'number' && !isNaN(value)) {
+    const rounded = parseFloat(value.toFixed(props.decimals));
+    // Clamp value between min and max
+    const clamped = Math.max(props.min, Math.min(props.max, rounded));
+    if (clamped !== props.modelValue) {
+        emit('update:modelValue', clamped);
+    }
+  }
+}
 
 const sliderId = computed(() => `range-slider-${Math.random().toString(36).substring(2, 9)}`);
 
-const displayValue = computed(() => {
-  let value = props.modelValue;
-  if (typeof value === 'number') {
-     // Handle potential floating point inaccuracies fortoFixed
-     value = parseFloat(value.toFixed(props.decimals + 2)); // Calculate with more precision
-     value = parseFloat(value.toFixed(props.decimals)); // Then fix to desired decimals
+const sliderValue = computed({
+  get() {
+    if (props.logarithmic) {
+      // Handle case where modelValue could be 0 or negative for log scale
+      return Math.log10(Math.max(props.min, props.modelValue));
+    }
+    return props.modelValue;
+  },
+  set(val) {
+    let newValue;
+    if (props.logarithmic) {
+      newValue = Math.pow(10, val);
+    } else {
+      newValue = val;
+    }
+    emitRoundedValue(newValue);
   }
-  return `${value}${props.unit}`;
+});
+
+const sliderMin = computed(() => props.logarithmic ? Math.log10(props.min) : props.min);
+const sliderMax = computed(() => props.logarithmic ? Math.log10(props.max) : props.max);
+const sliderStep = computed(() => {
+    if (props.logarithmic) {
+        // Provide a reasonable number of steps for smoothness
+        return (sliderMax.value - sliderMin.value) / 1000;
+    }
+    return props.step;
+});
+
+const roundedModelValue = computed(() => {
+  if (typeof props.modelValue !== 'number') {
+    return props.modelValue;
+  }
+  return parseFloat(props.modelValue.toFixed(props.decimals));
+});
+
+const displayValue = computed(() => {
+  return `${roundedModelValue.value}${props.unit}`;
 });
 </script>
 

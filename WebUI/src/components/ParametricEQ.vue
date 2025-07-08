@@ -130,6 +130,7 @@
           :step="1"
           unit="Hz"
           :decimals="0"
+          :logarithmic="true"
           v-model="localEqPoints[selectedPoint].freq"
           @update:modelValue="emitChange"
         />
@@ -141,7 +142,7 @@
           :max="15"
           :step="0.1"
           unit="dB"
-          :decimals="1"
+          :decimals="2"
           v-model="localEqPoints[selectedPoint].gain"
           @update:modelValue="emitChange"
         />
@@ -153,7 +154,7 @@
           :max="10"
           :step="0.1"
           unit=""
-          :decimals="1"
+          :decimals="3"
           v-model="localEqPoints[selectedPoint].q"
           @update:modelValue="emitChange"
         />
