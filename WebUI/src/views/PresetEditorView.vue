@@ -235,16 +235,37 @@ const debouncedApiCall = asyncDebounce(async (apiCall, successCallback, failureM
 
 
 // API methods for updating preset settings
+let prevEqPoints = null;
 const handleEQPointsUpdate = async (type, updatedPoints) => {
-  if (!selectedPresetData.value) return;
+  if (!selectedPresetData.value || !prefEQSets.value || prefEQSets.value.length === 0) return;
 
-  await performApiCall(
+  // Based on the logic in EQSection.vue, we can assume we are always editing the first set.
+  const targetSet = prefEQSets.value[0];
+
+  if (prevEqPoints === null) {
+    // Store the original points of the target set for rollback.
+    prevEqPoints = JSON.parse(JSON.stringify(targetSet.peqs));
+  }
+
+  // Update local state for immediate UI response by replacing the points in the target set.
+  // This preserves the overall data structure and prevents the component from re-rendering.
+  targetSet.peqs = updatedPoints;
+
+  await debouncedApiCall(
     () => apiClient.savePrefEqSet(selectedPresetName.value, updatedPoints),
     () => {
       showSuccess('EQ points updated');
-      fetchPresetData(selectedPresetName.value);
+      prevEqPoints = null; // Reset after successful save
     },
-    'Failed to update EQ points'
+    'Failed to update EQ points',
+    () => {
+      showError('Failed to update EQ points');
+      // Rollback on failure
+      if (prevEqPoints !== null) {
+        targetSet.peqs = prevEqPoints;
+        prevEqPoints = null;
+      }
+    }
   );
 };
 
