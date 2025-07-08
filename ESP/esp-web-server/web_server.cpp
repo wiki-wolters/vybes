@@ -88,9 +88,7 @@ void setupWebServer() {
     server.on("^\\/preset\\/([^\\/]+)\\/delay\\/enabled\\/(on|off)$", HTTP_PUT, handlePutPresetDelayEnabled);
 
     // API Routes - EQ Management
-    server.on("^\\/preset\\/([^\\/]+)\\/eq\\/pref\\/(\\d+)$", HTTP_POST, handlePostPresetEQ);
-    server.on("^\\/preset\\/([^\\/]+)\\/eq\\/pref\\/(\\d+)$", HTTP_DELETE, handleDeletePresetEQ);
-    server.on("^\\/preset\\/([^\\/]+)\\/eq\\/pref\\/(\\d+)$", HTTP_PUT, [](AsyncWebServerRequest *request){}, NULL, handlePutPresetEQPoints);
+    server.on("^\\/preset\\/([^\\/]+)\\/eq\\/pref\\/0$", HTTP_PUT, [](AsyncWebServerRequest *request){}, NULL, handlePutPresetEQPoints);
     server.on("^\\/preset\\/([^\\/]+)\\/eq\\/pref\\/enabled\\/(on|off)$", HTTP_PUT, handlePutPresetEQEnabled);
 
     // API Routes - Crossover and Equal Loudness

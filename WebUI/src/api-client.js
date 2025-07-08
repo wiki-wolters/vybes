@@ -249,33 +249,21 @@ class VybesAPI {
   }
 
   /**
-   * Create or update an EQ set
-   * @param {string} presetName - Name of the preset
-   * @param {string} type - EQ type ('room' or 'pref')
-   * @param {number} spl - SPL value for this EQ set
-   * @param {Array} peqPoints - Array of PEQ points
-   */
-  async saveEqSet(presetName, type, spl, peqPoints) {
-    return this.request('POST', `/preset/${encodeURIComponent(presetName)}/eq/${type}/${spl}`, peqPoints);
-  }
-
-  /**
-   * Delete an EQ set
-   * @param {string} presetName - Name of the preset
-   * @param {string} type - EQ type ('room' or 'pref')
-   * @param {number} spl - SPL value of the EQ set to delete
-   */
-  async deleteEqSet(presetName, type, spl) {
-    return this.request('DELETE', `/preset/${encodeURIComponent(presetName)}/eq/${type}/${spl}`);
-  }
-
-  /**
    * Get specific preset data
    * @param {string} name - Preset name
    * @returns {Promise<Object>} Preset configuration
    */
   async getPreset(name) {
     return this.request('GET', `/preset/${encodeURIComponent(name)}`);
+  }
+
+  /**
+   * Create or update the preference EQ set
+   * @param {string} presetName - Name of the preset
+   * @param {Array} peqPoints - Array of PEQ points
+   */
+  async savePrefEqSet(presetName, peqPoints) {
+    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/eq/pref/0`, peqPoints);
   }
 
   /**
@@ -359,42 +347,6 @@ class VybesAPI {
    * @param {number} spl - SPL value (0-120)
    * @param {Array} peqSet - Array of PEQ points with frequency, gain, and Q
    */
-  async setEQ(presetName, type, spl, peqSet) {
-    const validTypes = ['room', 'pref'];
-    if (!validTypes.includes(type)) {
-      throw new Error('EQ type must be "room" or "pref"');
-    }
-    if (spl < 0 || spl > 120) {
-      throw new Error('SPL must be between 0 and 120');
-    }
-
-    // Validate PEQ set structure
-    if (!Array.isArray(peqSet)) {
-      throw new Error('PEQ set must be an array');
-    }
-
-    peqSet.forEach((point, index) => {
-      if (!point.frequency || !point.gain || !point.q) {
-        throw new Error(`PEQ point ${index} must have frequency, gain, and q properties`);
-      }
-    });
-
-    return this.request('POST', `/preset/${encodeURIComponent(presetName)}/eq/${type}/${spl}`, peqSet);
-  }
-
-  /**
-   * Delete EQ configuration
-   * @param {string} presetName - Preset name
-   * @param {string} type - EQ type: "room" or "pref"
-   * @param {number} spl - SPL value to delete
-   */
-  async deleteEQ(presetName, type, spl) {
-    const validTypes = ['room', 'pref'];
-    if (!validTypes.includes(type)) {
-      throw new Error('EQ type must be "room" or "pref"');
-    }
-    return this.request('DELETE', `/preset/${encodeURIComponent(presetName)}/eq/${type}/${spl}`);
-  }
 
   // ===== CROSSOVER =====
 

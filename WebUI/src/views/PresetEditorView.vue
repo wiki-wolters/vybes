@@ -35,7 +35,7 @@
             <EQSection
               :eq-sets="prefEQSets"
               @update-eq-points="handleEQPointsUpdate('pref', $event)"
-              @delete-set="handleDeleteEQSet('pref')"
+              
               @create-new-set="handleCreateNewSet('pref', $event)"
               :is-enabled="selectedPresetData.isPreferenceEQEnabled"
             />
@@ -236,41 +236,16 @@ const debouncedApiCall = asyncDebounce(async (apiCall, successCallback, failureM
 
 // API methods for updating preset settings
 const handleEQPointsUpdate = async (type, updatedPoints) => {
-  console.log('handleEQPointsUpdate called', { type, updatedPoints });
-  if (type === 'pref') {
-    console.log('Current SPL:', currentPrefSPL.value);
-    console.log('All EQ Sets:', JSON.parse(JSON.stringify(prefEQSets.value)));
-    
-    const currentSet = prefEQSets.value.find(set => set.spl === currentPrefSPL.value);
-    console.log('Current set found:', currentSet);
-    
-    if (currentSet) {
-      console.log('Updating EQ points for SPL:', currentPrefSPL.value, 'with:', updatedPoints);
-      currentSet.peqSet = [...updatedPoints]; // Create a new array to ensure reactivity
-      
-      try {
-        await performApiCall(
-          () => apiClient.saveEqSet(
-            selectedPresetName.value,
-            'pref',
-            currentPrefSPL.value,
-            updatedPoints
-          ),
-          () => {
-            console.log('Successfully updated EQ points');
-            showSuccess('EQ points updated');
-          },
-          'Failed to update EQ points',
-          () => {
-            console.error('Failed to update EQ points');
-            showError('Failed to update EQ points');
-          }
-        );
-      } catch (error) {
-        console.error('Error in handleEQPointsUpdate:', error);
-      }
-    }
-  }
+  if (!selectedPresetData.value) return;
+
+  await performApiCall(
+    () => apiClient.savePrefEqSet(selectedPresetName.value, updatedPoints),
+    () => {
+      showSuccess('EQ points updated');
+      fetchPresetData(selectedPresetName.value);
+    },
+    'Failed to update EQ points'
+  );
 };
 
 const updateEQEnabled = async (value) => {

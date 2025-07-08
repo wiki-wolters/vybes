@@ -201,55 +201,47 @@ app.put('/preset/:name/fir/file/:channel/:filter', (req, res) => {
 });
 
 // Create or update an EQ set
-app.post('/preset/:name/eq', (req, res) => {
+app.put('/preset/:name/eq/pref/0', (req, res) => {
   const presetName = decodeURIComponent(req.params.name);
   const type = 'pref';
   const spl = 0;
-  const { peqPoints } = req.body;
-  
-  if (!['room', 'pref'].includes(type)) {
-    return res.status(400).json({ error: 'Type must be either "room" or "pref"' });
-  }
-  
-  if (isNaN(spl) || spl < 0 || spl > 120) {
-    return res.status(400).json({ error: 'SPL must be between 0 and 120' });
-  }
-  
+  const peqPoints = req.body;
+
   if (!Array.isArray(peqPoints)) {
     return res.status(400).json({ error: 'peqPoints must be an array' });
   }
-  
+
   // First, check if the preset exists
   db.get("SELECT name FROM presets WHERE name = ?", [presetName], (err, preset) => {
     if (err) {
       return res.status(500).json({ error: err.message });
     }
-    
+
     if (!preset) {
       return res.status(404).json({ error: 'Preset not found' });
     }
-    
+
     // Check if EQ set already exists for this SPL and type
     db.get(
-      "SELECT id FROM eq_configs WHERE preset_name = ? AND type = ? AND spl = ?",
+      "SELECT * FROM eq_configs WHERE preset_name = ? AND type = ? AND spl = ?",
       [presetName, type, spl],
       (err, existing) => {
         if (err) {
           return res.status(500).json({ error: err.message });
         }
-        
+
         const peqData = JSON.stringify(peqPoints);
-        
+
         if (existing) {
           // Update existing EQ set
           db.run(
-            "UPDATE eq_configs SET peq_data = ? WHERE id = ?",
-            [peqData, existing.id],
+            "UPDATE eq_configs SET peq_data = ? WHERE preset_name = ? AND type = ? AND spl = ?",
+            [peqData, presetName, type, spl],
             function(err) {
               if (err) {
                 return res.status(500).json({ error: err.message });
               }
-              
+
               broadcast({
                 event: 'eq_updated',
                 preset: presetName,
@@ -257,7 +249,7 @@ app.post('/preset/:name/eq', (req, res) => {
                 spl,
                 peqPoints
               });
-              
+
               res.json({ success: true, spl, peqPoints });
             }
           );
@@ -270,7 +262,7 @@ app.post('/preset/:name/eq', (req, res) => {
               if (err) {
                 return res.status(500).json({ error: err.message });
               }
-              
+
               broadcast({
                 event: 'eq_created',
                 preset: presetName,
@@ -278,7 +270,7 @@ app.post('/preset/:name/eq', (req, res) => {
                 spl,
                 peqPoints
               });
-              
+
               res.status(201).json({ success: true, spl, peqPoints });
             }
           );
@@ -661,61 +653,7 @@ app.put('/preset/:name/eq/:type/enabled/:state', (req, res) => {
   });
 });
 
-// EQ management
-app.post('/preset/:name/eq/:type/:spl', (req, res) => {
-  const presetName = decodeURIComponent(req.params.name);
-  const type = req.params.type;
-  const spl = parseInt(req.params.spl);
-  const peqSet = req.body;
-  
-  if (!['room', 'pref'].includes(type)) {
-    return res.status(400).json({ error: 'Type must be "room" or "pref"' });
-  }
-  if (spl < 0 || spl > 120) {
-    return res.status(400).json({ error: 'SPL must be between 0 and 120' });
-  }
-  if (!Array.isArray(peqSet)) {
-    return res.status(400).json({ error: 'Body must be an array of PEQ points' });
-  }
-  
-  // Validate PEQ points
-  for (let i = 0; i < peqSet.length; i++) {
-    const point = peqSet[i];
-    if (point.freq === undefined || point.gain === undefined || point.q === undefined) {
-      return res.status(400).json({ error: `PEQ point ${i} must have freq, gain, and q properties` });
-    }
-  }
-  
-  db.run("INSERT OR REPLACE INTO eq_configs (preset_name, type, spl, peq_data) VALUES (?, ?, ?, ?)", 
-         [presetName, type, spl, JSON.stringify(peqSet)], (err) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    
-    broadcast({ event: 'eq', preset: presetName, type, spl, peqSet });
-    res.json({ success: true, preset: presetName, type, spl });
-  });
-});
 
-app.delete('/preset/:name/eq/:type/:spl', (req, res) => {
-  const presetName = decodeURIComponent(req.params.name);
-  const type = req.params.type;
-  const spl = parseInt(req.params.spl);
-  
-  db.run("DELETE FROM eq_configs WHERE preset_name = ? AND type = ? AND spl = ?", 
-         [presetName, type, spl], function(err) {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    
-    if (this.changes === 0) {
-      return res.status(404).json({ error: 'EQ configuration not found' });
-    }
-    
-    broadcast({ event: 'eq_deleted', preset: presetName, type, spl });
-    res.json({ success: true, preset: presetName, type, spl });
-  });
-});
 
 // Toggle crossover
 app.put('/preset/:name/crossover/enabled/:state', (req, res) => {

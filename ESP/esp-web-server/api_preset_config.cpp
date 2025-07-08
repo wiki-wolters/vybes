@@ -9,92 +9,6 @@
 #include <string.h>
 #include <ArduinoJson.h>
 
-void handlePostPresetEQ(AsyncWebServerRequest *request) {
-    String presetName = request->pathArg(0);
-    String splStr = request->pathArg(1);
-    int spl = splStr.toInt();
-
-    int presetIndex = find_preset_by_name(presetName.c_str());
-    if (presetIndex == -1) {
-        request->send(404, "text/plain", "Preset not found");
-        return;
-    }
-
-    Preset* preset = &current_config.presets[presetIndex];
-    PEQSet* sets = preset->preference_curve;
-
-    // Check if SPL already exists
-    for (int i = 0; i < MAX_PEQ_SETS; i++) {
-        if (sets[i].spl != -1 && sets[i].spl == spl) {
-            request->send(409, "text/plain", "SPL value already exists");
-            return;
-        }
-    }
-
-    // Find an empty slot
-    int empty_slot = -1;
-    for (int i = 0; i < MAX_PEQ_SETS; i++) {
-        if (sets[i].spl == -1) {
-            empty_slot = i;
-            break;
-        }
-    }
-
-    if (empty_slot == -1) {
-        request->send(507, "text/plain", "No available EQ set slots");
-        return;
-    }
-
-    // Add the new set
-    sets[empty_slot].spl = spl;
-    sets[empty_slot].num_points = 0; // Initialize with no points
-
-    scheduleConfigWrite();
-    request->send(201, "application/json", "{}");
-}
-
-void handleDeletePresetEQ(AsyncWebServerRequest *request) {
-    String presetName = request->pathArg(0);
-    String eqType = request->pathArg(1);
-    String splStr = request->pathArg(2);
-    int spl = splStr.toInt();
-
-    if (eqType != "roomCorrection" && eqType != "preferenceCurve") {
-        request->send(400, "text/plain", "Invalid EQ type");
-        return;
-    }
-
-    int presetIndex = find_preset_by_name(presetName.c_str());
-    if (presetIndex == -1) {
-        request->send(404, "text/plain", "Preset not found");
-        return;
-    }
-
-    Preset* preset = &current_config.presets[presetIndex];
-    PEQSet* sets = preset->preference_curve;
-
-    // Find the set with the matching SPL
-    int found_index = -1;
-    for (int i = 0; i < MAX_PEQ_SETS; i++) {
-        if (sets[i].spl == spl) {
-            found_index = i;
-            break;
-        }
-    }
-
-    if (found_index == -1) {
-        request->send(404, "text/plain", "SPL value not found");
-        return;
-    }
-
-    // "Delete" the set by resetting its SPL to -1
-    sets[found_index].spl = -1;
-    sets[found_index].num_points = 0;
-
-    scheduleConfigWrite();
-    request->send(204, "");
-}
-
 void handlePutPresetCrossover(AsyncWebServerRequest *request) {
     String presetName = request->pathArg(0);
     String freqStr = request->pathArg(1);
@@ -171,9 +85,7 @@ void handlePutPresetCrossoverEnabled(AsyncWebServerRequest *request) {
 
 void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
     String presetName = request->pathArg(0);
-    String eqType = request->pathArg(1);
-    String splStr = request->pathArg(2);
-    int spl = splStr.toInt();
+    const int spl = 0; // Hardcoded SPL
 
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
@@ -192,8 +104,20 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size
         }
     }
 
+    // If spl=0 set doesn't exist, create it.
     if (set_index == -1) {
-        request->send(404, "text/plain", "EQ set with specified SPL not found");
+        for (int i = 0; i < MAX_PEQ_SETS; i++) {
+            if (sets[i].spl == -1) { // find empty slot
+                set_index = i;
+                sets[i].spl = spl;
+                sets[i].num_points = 0;
+                break;
+            }
+        }
+    }
+
+    if (set_index == -1) {
+        request->send(507, "text/plain", "No available EQ set slots to create default spl=0 set.");
         return;
     }
 
@@ -236,7 +160,7 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size
     
     // Prepare and send response
     doc["status"] = "ok";
-    doc["eqType"] = eqType;
+    doc["eqType"] = "pref"; // Hardcoded
     doc["spl"] = spl;
     doc["numPoints"] = target_set->num_points;
     
@@ -263,9 +187,40 @@ void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
         return;
     }
     
+    Preset* preset = &current_config.presets[presetIndex];
+    PEQSet* sets = preset->preference_curve;
+
+    // Check if a PEQ set with spl=0 exists.
+    bool spl0_exists = false;
+    for (int i = 0; i < MAX_PEQ_SETS; i++) {
+        if (sets[i].spl == 0) {
+            spl0_exists = true;
+            break;
+        }
+    }
+
+    if (!spl0_exists) {
+        // Find an empty slot to create the spl=0 set.
+        int empty_slot = -1;
+        for (int i = 0; i < MAX_PEQ_SETS; i++) {
+            if (sets[i].spl == -1) {
+                empty_slot = i;
+                break;
+            }
+        }
+
+        if (empty_slot != -1) {
+            sets[empty_slot].spl = 0;
+            sets[empty_slot].num_points = 0;
+        } else {
+            request->send(507, "text/plain", "No available EQ set slots to create default spl=0 set.");
+            return;
+        }
+    }
+
     bool enabled = (state == "on");
     
-    current_config.presets[presetIndex].EQEnabled = enabled;
+    preset->EQEnabled = enabled;
     
     scheduleConfigWrite();
     
@@ -287,7 +242,6 @@ void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
 
 void handleResetEQFilters(AsyncWebServerRequest *request) {
     String presetName = request->pathArg(0);
-    String eqType = request->pathArg(1);
     
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
@@ -309,12 +263,12 @@ void handleResetEQFilters(AsyncWebServerRequest *request) {
     scheduleConfigWrite();
     
     // Send command to Teensy to reset EQ filters
-    sendToTeensy(CMD_RESET_EQ_FILTERS, eqType);
+    sendToTeensy(CMD_RESET_EQ_FILTERS, "pref");
     
     // Prepare and send response
     DynamicJsonDocument doc(128);
     doc["status"] = "ok";
-    doc["eqType"] = eqType;
+    doc["eqType"] = "pref";
     
     String response;
     serializeJson(doc, response);
