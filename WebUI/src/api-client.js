@@ -383,6 +383,22 @@ class VybesAPI {
     return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/equal-loudness/${stateStr}`);
   }
 
+  // ===== CONFIGURATION =====
+
+  /**
+   * Backup configuration
+   */
+  async backup() {
+    return this.request('GET', '/backup');
+  }
+
+  /**
+   * Restore configuration
+   */
+  async restore() {
+    return this.request('POST', '/restore');
+  }
+
   // ===== SPEAKER GAIN ===== //
   async setGlobalSpeakerGain(speaker, gain) {
     return this.request('PUT', `/speaker/${speaker}/gain/${gain}`);

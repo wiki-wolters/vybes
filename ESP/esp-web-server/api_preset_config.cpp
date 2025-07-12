@@ -124,12 +124,6 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size
     PEQSet* target_set = &sets[set_index];
 
     DynamicJsonDocument doc(1024); // Adjust size as needed
-    DeserializationError error = deserializeJson(doc, (const char*)data, len);
-
-    if (error) {
-        request->send(400, "text/plain", "Invalid JSON");
-        return;
-    }
 
     JsonArray pointsArray = doc.as<JsonArray>();
     if (pointsArray.size() > MAX_PEQ_POINTS) {

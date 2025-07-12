@@ -4,6 +4,8 @@
 
 void initI2C() {
     Wire.begin(I2C_SDA, I2C_SCL);
+    Wire.setClockStretchLimit(1000);
+    Wire.setClock(400000); //Fast
 }
 
 void scanI2CBus() {

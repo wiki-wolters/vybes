@@ -90,6 +90,13 @@
         </div>
       </CardSection>
 
+      <CardSection title="Configuration">
+        <div class="flex justify-start gap-3">
+          <button @click="backupConfiguration" class="btn-secondary">Backup</button>
+          <button @click="restoreConfiguration" class="btn-secondary">Restore</button>
+        </div>
+      </CardSection>
+
 
 
 
@@ -256,6 +263,24 @@ function updateMutePercentage(newValue) {
       errorMessage.value = `Failed to update volume: ${error.message}`;
     }
   }, 500);
+}
+
+async function backupConfiguration() {
+  try {
+    await apiClient.backup();
+  } catch (error) {
+    console.error('Failed to backup configuration:', error);
+    errorMessage.value = `Failed to backup configuration: ${error.message}`;
+  }
+}
+
+async function restoreConfiguration() {
+  try {
+    await apiClient.restore();
+  } catch (error) {
+    console.error('Failed to restore configuration:', error);
+    errorMessage.value = `Failed to restore configuration: ${error.message}`;
+  }
 }
 
 // WebSocket live updates

@@ -9,6 +9,7 @@
 #include "api_preset_config.h"
 #include "teensy_comm.h"
 #include <ESPAsyncWebServer.h>
+#include "config.h"
 
 AsyncWebServer server(80);
 
@@ -41,14 +42,61 @@ void handleFileServing(AsyncWebServerRequest *request) {
     }
 
     String gzPath = fsPath + ".gz";
+    AsyncWebServerResponse *response = nullptr;
+    
     if (LittleFS.exists(gzPath)) {
-        AsyncWebServerResponse *response = request->beginResponse(LittleFS, gzPath, contentType);
+        response = request->beginResponse(LittleFS, gzPath, contentType);
         response->addHeader("Content-Encoding", "gzip");
-        request->send(response);
     } else if (LittleFS.exists(fsPath)) {
-        request->send(LittleFS, fsPath, contentType);
+        response = request->beginResponse(LittleFS, fsPath, contentType);
     } else {
         request->send(404, "text/plain", "File not Found");
+        return;
+    }
+
+    // Cache JS, CSS, and HTML files for 1 year
+    if (path.endsWith(".js") || path.endsWith(".css") || path.endsWith(".html")) {
+        response->addHeader("Cache-Control", "public, max-age=31536000");
+    }
+
+    request->send(response);
+}
+
+void handleBackup(AsyncWebServerRequest *request) {
+    AsyncWebServerResponse *response = request->beginResponse(LittleFS, CONFIG_FILE, "application/json", true);
+    response->addHeader("Content-Disposition", "attachment; filename=\"vybes_config.json\"");
+    request->send(response);
+}
+
+void handleRestore(AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final) {
+    if (!index) {
+        // Open the file for writing
+        request->_tempFile = LittleFS.open(CONFIG_FILE, "w");
+        if (!request->_tempFile) {
+            request->send(500, "text/plain", "Error opening file for writing");
+            return;
+        }
+    }
+
+    if (len) {
+        // Write the received chunk to the file
+        if (request->_tempFile.write(data, len) != len) {
+            request->send(500, "text/plain", "Error writing to file");
+            return;
+        }
+    }
+
+    if (final) {
+        // Close the file
+        if (request->_tempFile) {
+            request->_tempFile.close();
+        }
+        
+        // Send a success response
+        request->send(200, "text/plain", "Configuration restored successfully. Restarting device.");
+
+        // Restart the device to apply the new configuration
+        ESP.restart();
     }
 }
 
@@ -95,6 +143,11 @@ void setupWebServer() {
     server.on("^\\/preset\\/([^\\/]+)\\/crossover\\/freq\\/(\\d+)$", HTTP_PUT, handlePutPresetCrossover);
     server.on("^\\/preset\\/([^\\/]+)\\/crossover\\/enabled\\/(on|off)$", HTTP_PUT, handlePutPresetCrossoverEnabled);
 
+    // API Routes - Backup and Restore
+    server.on("/backup", HTTP_GET, handleBackup);
+    server.on("/restore", HTTP_POST, [](AsyncWebServerRequest *request){
+        request->send(200);
+    }, handleRestore);
 
     // Static file serving
     server.onNotFound(handleFileServing);

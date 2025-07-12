@@ -15,6 +15,8 @@
 #define MAX_PEQ_POINTS 15
 #define PRESET_NAME_MAX_LEN 16
 
+extern const char* CONFIG_FILE;
+
 // --- Data Structures ---
 
 // Represents a single Parametric EQ point
