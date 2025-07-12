@@ -372,6 +372,8 @@ void loop() {
     loadFirFiles();
     firFilesPending = false;
   }
+
+  router.loop();
 }
 
 void setEQEnabled(bool enabled) {

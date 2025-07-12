@@ -14,7 +14,8 @@
       <!-- Collapsible Content -->
       <div 
         ref="contentRef"
-        class="overflow-hidden transition-all duration-300 ease-in-out"
+        class="overflow-hidden"
+        :class="{ 'transition-all duration-300 ease-in-out': animate }"
         :style="{
           maxHeight: isExpanded ? contentHeight + 'px' : '0px',
           opacity: isExpanded ? 1 : 0
@@ -49,6 +50,10 @@
       type: Boolean,
       required: true
     },
+    animate: {
+      type: Boolean,
+      default: true
+    }
   })
   
   const emit = defineEmits(['update:modelValue', 'toggle'])

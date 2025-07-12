@@ -1,10 +1,5 @@
 <template>
   <div class="container mx-auto p-6 bg-vybes-dark-element rounded-lg shadow-xl min-h-[calc(100vh-200px)]">
-    
-    <div class="hidden md:block mb-6">
-      <h1 class="text-3xl font-bold mb-4 text-vybes-light-blue text-center">Preset Editor</h1>
-    </div>
-
     <div v-if="editorMessage && messageType === 'error'" class="mb-6 p-4 rounded-md text-sm text-center transition-all duration-300"
       :class="{
         'bg-green-700 text-green-100': messageType === 'success',
@@ -31,7 +26,7 @@
             </div>
           </div>
           
-          <CollapsibleSection title="EQ" :model-value="selectedPresetData.isPreferenceEQEnabled" @update:modelValue="updateEQEnabled($event)">
+          <CollapsibleSection title="EQ" :model-value="selectedPresetData.isPreferenceEQEnabled" @update:modelValue="updateEQEnabled($event)" :animate="animationsEnabled">
             <EQSection
               :eq-sets="prefEQSets"
               @update-eq-points="handleEQPointsUpdate('pref', $event)"
@@ -41,7 +36,7 @@
             />
           </CollapsibleSection>
 
-          <CollapsibleSection title="FIR Filters" :model-value="selectedPresetData.isFIREnabled" @update:modelValue="updateFIREnabled($event)">
+          <CollapsibleSection title="FIR Filters" :model-value="selectedPresetData.isFIREnabled" @update:modelValue="updateFIREnabled($event)" :animate="animationsEnabled">
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6" :class="{ 'opacity-50': !selectedPresetData.isFIREnabled }">
               <SelectGroup 
                 v-model="selectedPresetData.firLeft" 
@@ -73,7 +68,7 @@
             </div>
           </CollapsibleSection>
 
-          <CollapsibleSection title="Subwoofer Crossover" :model-value="selectedPresetData.isCrossoverEnabled" @update:modelValue="updateCrossoverEnabled($event)">
+          <CollapsibleSection title="Subwoofer Crossover" :model-value="selectedPresetData.isCrossoverEnabled" @update:modelValue="updateCrossoverEnabled($event)" :animate="animationsEnabled">
             <div :class="{ 'opacity-50': !selectedPresetData.isCrossoverEnabled }">
               <RangeSlider
                 :model-value="Number(selectedPresetData.crossoverFreq)"
@@ -87,7 +82,7 @@
             </div>
           </CollapsibleSection>
 
-          <CollapsibleSection title="Speaker Delays" :model-value="selectedPresetData.isSpeakerDelayEnabled" @update:modelValue="updateSpeakerDelayEnabled($event)">
+          <CollapsibleSection title="Speaker Delays" :model-value="selectedPresetData.isSpeakerDelayEnabled" @update:modelValue="updateSpeakerDelayEnabled($event)" :animate="animationsEnabled">
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6" :class="{ 'opacity-50': !selectedPresetData.isSpeakerDelayEnabled }">
               <SpeakerDelayInput 
                 title="Left" 
@@ -125,7 +120,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, inject, watch } from 'vue';
+import { ref, reactive, onMounted, inject } from 'vue';
 import SelectGroup from '../components/shared/SelectGroup.vue';
 import { asyncDebounce } from '../utilities.js'; // [cite: 42] Utility for rate limiting function calls
 import RangeSlider from '../components/shared/RangeSlider.vue';
@@ -169,6 +164,7 @@ const apiClient = inject('vybesAPI'); // Injected API client for backend communi
 const prefEQExpanded = ref(false);
 const crossoverExpanded = ref(true);
 const speakerDelayExpanded = ref(false);
+const animationsEnabled = ref(false);
 // General reactive state
 const selectedPresetName = ref(null); // Selected preset name [cite: 45]
 const selectedPresetData = ref(null); // Holds the full preset data object for the selected preset [cite: 45]
@@ -413,7 +409,10 @@ async function fetchPresetData(presetName, isNewOrCopy = false) { // [cite: 72]
       currentPrefSPL.value = 0;
     }
   );
-  isLoadingData.value = false; // [cite: 79]
+  isLoadingData.value = false; 
+  setTimeout(() => {
+    animationsEnabled.value = true;
+  }, 100);
 }
 
 // Selects a preset by name
