@@ -3,5 +3,6 @@
 
 void setupButton();
 void handleButton();
+void nextPreset();
 
 #endif

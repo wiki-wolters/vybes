@@ -47,7 +47,7 @@ void writeToScreen(String message, unsigned long duration) {
     } else {
         currentMessage = message;
     }
-    lcd.setBacklight(255);
+    lcd.setBacklight(1);
     backlightStart = millis();
 }
 
@@ -62,7 +62,7 @@ void loopScreen() {
     }
 
     if (backlightStart > 0 && millis() - backlightStart > MAX_BACKLIGHT_MILLIS) {
-        lcd.setBacklight(40);
+        lcd.setBacklight(0);
         backlightStart = 0;
     }
 }

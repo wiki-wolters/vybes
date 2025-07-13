@@ -297,15 +297,7 @@ void init_config() {
     updateTeensyWithActivePresetParameters();
 }
 
-void nextPreset() {
-    int8_t nextPresetIndex = current_config.active_preset_index + 1;
-    if (nextPresetIndex >= MAX_PRESETS || strlen(current_config.presets[nextPresetIndex].name) == 0) {
-        nextPresetIndex = 0;
-    }
-    current_config.active_preset_index = nextPresetIndex;
-    updateTeensyWithActivePresetParameters();
-    save_config(); // Save the new active preset
-}
+
 
 void updateTeensyWithActivePresetParameters() {
     Preset* activePreset = &current_config.presets[current_config.active_preset_index];

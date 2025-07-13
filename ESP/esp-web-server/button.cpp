@@ -9,32 +9,27 @@ const int BLUETOOTH_PAIRING_PIN = 12; //D6, for output
 
 unsigned long pressStart = 0;
 String lastMessage = "";
+unsigned long lastButtonPressTime = 0;
+int8_t currentPresetIndex = 0;
 
 void setupButton() {
     pinMode(BUTTON_PIN, INPUT_PULLUP);
     pinMode(BLUETOOTH_PAIRING_PIN, OUTPUT);
     digitalWrite(BLUETOOTH_PAIRING_PIN, LOW);
+    currentPresetIndex = current_config.active_preset_index;
+}
+
+void nextPreset() {
+    currentPresetIndex++;
+    if (currentPresetIndex >= MAX_PRESETS || strlen(current_config.presets[currentPresetIndex].name) == 0) {
+        currentPresetIndex = 0;
+    }
+    writeToScreen(current_config.presets[currentPresetIndex].name);
+    lastButtonPressTime = millis();
 }
 
 void handleShortPress() {
     nextPreset();
-
-    // Serial.println("Scanning I2C bus...");
-    // byte error, address;
-    // int nDevices = 0;
-    // for(address = 1; address < 127; address++ ) {
-    //     Wire.beginTransmission(address);
-    //     error = Wire.endTransmission();
-    //     if (error == 0) {
-    //         Serial.print("I2C device found at 0x");
-    //         if (address<16) Serial.print("0");
-    //         Serial.println(address,HEX);
-    //         nDevices++;
-    //     }
-    // }
-    // if (nDevices == 0) {
-    //     Serial.println("No I2C devices found");
-    // }
 }
 
 void handleButton() {
@@ -67,5 +62,14 @@ void handleButton() {
             digitalWrite(BLUETOOTH_PAIRING_PIN, LOW);
             pressStart = 0;
         }
+    }
+
+    if (lastButtonPressTime > 0 && millis() - lastButtonPressTime > 1000) {
+        if (currentPresetIndex != current_config.active_preset_index) {
+            current_config.active_preset_index = currentPresetIndex;
+            updateTeensyWithActivePresetParameters();
+            save_config();
+        }
+        lastButtonPressTime = 0;
     }
 }

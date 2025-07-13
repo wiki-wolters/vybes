@@ -105,7 +105,7 @@ void init_config();
 void save_config();
 
 
-void nextPreset();
+
 
 /**
  * @brief Resets the configuration to its default state and saves to LittleFS.
