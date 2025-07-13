@@ -21,34 +21,30 @@ void handleBackup(AsyncWebServerRequest *request) {
     request->send(response);
 }
 
-void handleRestore(AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final) {
+void handleRestoreUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+    static File restoreFile;
     if (!index) {
-        // Open the file for writing
-        request->_tempFile = LittleFS.open(CONFIG_FILE, "w");
-        if (!request->_tempFile) {
+        Serial.printf("Restore started: %s\n", filename.c_str());
+        restoreFile = LittleFS.open(CONFIG_FILE, "w");
+        if (!restoreFile) {
             request->send(500, "text/plain", "Error opening file for writing");
             return;
         }
     }
 
     if (len) {
-        // Write the received chunk to the file
-        if (request->_tempFile.write(data, len) != len) {
+        if (restoreFile.write(data, len) != len) {
             request->send(500, "text/plain", "Error writing to file");
             return;
         }
     }
 
     if (final) {
-        // Close the file
-        if (request->_tempFile) {
-            request->_tempFile.close();
+        if (restoreFile) {
+            restoreFile.close();
         }
-        
-        // Send a success response
+        Serial.printf("Restore finished: %s, %u B\n", filename.c_str(), index + len);
         request->send(200, "text/plain", "Configuration restored successfully. Restarting device.");
-
-        // Restart the device to apply the new configuration
         ESP.restart();
     }
 }
@@ -77,33 +73,51 @@ void setupWebServer() {
 
     // API Routes - Preset Management
     server.on("/presets", HTTP_GET, handleGetPresets);
-    server.on("^\\/preset\\/([^\\/]+)$", HTTP_GET, handleGetPreset);
-    server.on("^\\/preset\\/create\\/([^\\/]+)$", HTTP_POST, handlePostPresetCreate);
-    server.on("^\\/preset\\/copy\\/([^\\/]+)\\/([^\\/]+)$", HTTP_POST, handlePostPresetCopy);
-    server.on("^\\/preset\\/rename\\/([^\\/]+)\\/([^\\/]+)$", HTTP_PUT, handlePutPresetRename);
-    server.on("^\\/preset\\/([^\\/]+)$", HTTP_DELETE, handleDeletePreset);
-    server.on("^\\/preset\\/active\\/([^\\/]+)$", HTTP_PUT, handlePutActivePreset);
+    server.on("/preset/*", HTTP_DELETE, handleDeletePreset);
+    server.on("/preset/*", HTTP_GET, handleGetPreset);
+    server.on("/preset/create/*", HTTP_POST, handlePostPresetCreate);
+
+    server.on("^\\/preset\\/(copy|rename)\\/([^\\/]+)\\/([^\\/]+)$", HTTP_POST|HTTP_PUT, [](AsyncWebServerRequest *request){
+        if (request->method() == HTTP_POST) {
+            handlePostPresetCopy(request);
+        } else if (request->method() == HTTP_PUT) {
+            handlePutPresetRename(request);
+        }
+    });
+    server.on("/preset/active/*", HTTP_PUT, handlePutActivePreset);
+
+    //Feature enablement
+    server.on("^\\/preset\\/([^\\/]+)\\/(delay|eq\\/pref|crossover)\\/enabled\\/(on|off)$", HTTP_PUT, [](AsyncWebServerRequest *request){
+        String feature = request->pathArg(1);
+        Serial.print("Toggle preset feature: "); Serial.println(feature);
+
+        if (feature == "delay") {
+            handlePutPresetDelayEnabled(request);
+        } else if (feature == "eq/pref") {
+            handlePutPresetEQEnabled(request);
+        } else if (feature == "crossover") {
+            handlePutPresetCrossoverEnabled(request);
+        }
+    });
 
     // API Routes - Speaker Configuration
     server.on("^\\/preset\\/([^\\/]+)\\/delay\\/(left|right|sub)\\/([\\d.]+)$", HTTP_PUT, handlePutPresetDelayNamed);
-    server.on("^\\/preset\\/([^\\/]+)\\/delay\\/enabled\\/(on|off)$", HTTP_PUT, handlePutPresetDelayEnabled);
 
     // API Routes - EQ Management
     server.on("^\\/preset\\/([^\\/]+)\\/eq\\/pref\\/0$", HTTP_PUT, [](AsyncWebServerRequest *request){}, NULL, handlePutPresetEQPoints);
-    server.on("^\\/preset\\/([^\\/]+)\\/eq\\/pref\\/enabled\\/(on|off)$", HTTP_PUT, handlePutPresetEQEnabled);
 
     // API Routes - Crossover and Equal Loudness
     server.on("^\\/preset\\/([^\\/]+)\\/crossover\\/freq\\/(\\d+)$", HTTP_PUT, handlePutPresetCrossover);
-    server.on("^\\/preset\\/([^\\/]+)\\/crossover\\/enabled\\/(on|off)$", HTTP_PUT, handlePutPresetCrossoverEnabled);
 
     // API Routes - Backup and Restore
     server.on("/backup", HTTP_GET, handleBackup);
-    server.on("/restore", HTTP_POST, [](AsyncWebServerRequest *request){
+    server.on("/restore", HTTP_POST, [](AsyncWebServerRequest *request) {
         request->send(200);
-    }, handleRestore);
+    }, handleRestoreUpload);
 
     // Serve static assets
     server.serveStatic("/assets", LittleFS, "/dist/assets");
+    server.serveStatic("/images", LittleFS, "/dist/images");
 
     // Serve index.html for all other routes
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){

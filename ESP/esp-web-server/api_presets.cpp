@@ -28,7 +28,8 @@ void handleGetPresets(AsyncWebServerRequest *request) {
 }
 
 void handleGetPreset(AsyncWebServerRequest *request) {
-    String presetName = request->pathArg(0);
+    String fullPath = request->url(); // This will be "/preset/Default"
+    String presetName = fullPath.substring(8); // Get the part after "/preset/"
     int presetIndex = find_preset_by_name(presetName.c_str());
 
     if (presetIndex == -1) {
@@ -83,7 +84,8 @@ void handleGetPreset(AsyncWebServerRequest *request) {
 }
 
 void handlePostPresetCreate(AsyncWebServerRequest *request) {
-    String presetName = request->pathArg(0);
+    String fullPath = request->url(); // This will be "/preset/create/Default"
+    String presetName = fullPath.substring(15); // Get the part after "/preset/create/"
 
     if (presetName.length() == 0 || presetName.length() >= PRESET_NAME_MAX_LEN) {
         request->send(400, "text/plain", "Preset name must be between 1 and " + String(PRESET_NAME_MAX_LEN) + " characters");
@@ -183,7 +185,8 @@ void handlePutPresetRename(AsyncWebServerRequest *request) {
 }
 
 void handleDeletePreset(AsyncWebServerRequest *request) {
-    String presetName = request->pathArg(0);
+    String fullPath = request->url(); // This will be "/preset/Default"
+    String presetName = fullPath.substring(8); // Get the part after "/preset/"
 
     if (presetName == "Default") {
         request->send(400, "text/plain", "Cannot delete the default preset");
@@ -212,7 +215,8 @@ void handleDeletePreset(AsyncWebServerRequest *request) {
 }
 
 void handlePutActivePreset(AsyncWebServerRequest *request) {
-    String presetName = request->pathArg(0);
+    String fullPath = request->url(); // This will be "/preset/active/Default"
+    String presetName = fullPath.substring(15); // Get the part after "/preset/active/"
     int presetIndex = find_preset_by_name(presetName.c_str());
 
     if (presetIndex == -1) {

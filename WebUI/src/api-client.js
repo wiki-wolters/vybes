@@ -21,7 +21,7 @@ class VybesAPI {
    * @param {Object} body - Request body for POST requests
    * @returns {Promise<Object>} Response data
    */
-  async request(method, endpoint, body = null) {
+  async request(method, endpoint, body = null, isFormData = false) {
     const url = `${this.baseUrl}${endpoint}`;
     const config = {
       method: method.toUpperCase(),
@@ -31,7 +31,12 @@ class VybesAPI {
     };
 
     if (body && (method === 'POST' || method === 'PUT')) {
-      config.body = JSON.stringify(body);
+      if (isFormData) {
+        delete config.headers['Content-Type'];
+        config.body = body;
+      } else {
+        config.body = JSON.stringify(body);
+      }
     }
 
     try {
@@ -395,8 +400,8 @@ class VybesAPI {
   /**
    * Restore configuration
    */
-  async restore() {
-    return this.request('POST', '/restore');
+  async restore(formData) {
+    return this.request('POST', '/restore', formData, true);
   }
 
   // ===== SPEAKER GAIN ===== //

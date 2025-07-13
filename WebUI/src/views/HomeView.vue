@@ -266,21 +266,28 @@ function updateMutePercentage(newValue) {
 }
 
 async function backupConfiguration() {
-  try {
-    await apiClient.backup();
-  } catch (error) {
-    console.error('Failed to backup configuration:', error);
-    errorMessage.value = `Failed to backup configuration: ${error.message}`;
-  }
+  window.location.href = `${apiClient.baseUrl}/backup`;
 }
 
 async function restoreConfiguration() {
-  try {
-    await apiClient.restore();
-  } catch (error) {
-    console.error('Failed to restore configuration:', error);
-    errorMessage.value = `Failed to restore configuration: ${error.message}`;
-  }
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json'; // Assuming backup files are JSON
+  input.onchange = async (event) => {
+    const file = event.target.files[0];
+    if (file) {
+      const formData = new FormData();
+      formData.append('file', file);
+      try {
+        await apiClient.restore(formData);
+        alert('Configuration restored successfully!');
+      } catch (error) {
+        console.error('Failed to restore configuration:', error);
+        errorMessage.value = `Failed to restore configuration: ${error.message}`;
+      }
+    }
+  };
+  input.click();
 }
 
 // WebSocket live updates
