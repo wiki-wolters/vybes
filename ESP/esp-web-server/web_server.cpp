@@ -13,54 +13,7 @@
 
 AsyncWebServer server(80);
 
-void handleFileServing(AsyncWebServerRequest *request) {
-    if (request->method() == HTTP_OPTIONS) {
-        request->send(200);
-        return;
-    }
-    String path = request->url();
 
-    Serial.print("Path: ");Serial.println(path);
-
-    if (path.endsWith("/")) {
-        path += "index.html";
-    }
-
-    String fsPath = "/dist" + path;
-
-    String contentType = "text/html";
-    if (path.endsWith(".css")) {
-        contentType = "text/css";
-    } else if (path.endsWith(".js")) {
-        contentType = "application/javascript";
-    } else if (path.endsWith(".png")) {
-        contentType = "image/png";
-    } else if (path.endsWith(".jpg")) {
-        contentType = "image/jpeg";
-    } else if (path.endsWith(".ico")) {
-        contentType = "image/x-icon";
-    }
-
-    String gzPath = fsPath + ".gz";
-    AsyncWebServerResponse *response = nullptr;
-    
-    if (LittleFS.exists(gzPath)) {
-        response = request->beginResponse(LittleFS, gzPath, contentType);
-        response->addHeader("Content-Encoding", "gzip");
-    } else if (LittleFS.exists(fsPath)) {
-        response = request->beginResponse(LittleFS, fsPath, contentType);
-    } else {
-        request->send(404, "text/plain", "File not Found");
-        return;
-    }
-
-    // Cache JS, CSS, and HTML files for 1 year
-    if (path.endsWith(".js") || path.endsWith(".css") || path.endsWith(".html")) {
-        response->addHeader("Cache-Control", "public, max-age=31536000");
-    }
-
-    request->send(response);
-}
 
 void handleBackup(AsyncWebServerRequest *request) {
     AsyncWebServerResponse *response = request->beginResponse(LittleFS, CONFIG_FILE, "application/json", true);
@@ -149,8 +102,21 @@ void setupWebServer() {
         request->send(200);
     }, handleRestore);
 
-    // Static file serving
-    server.onNotFound(handleFileServing);
+    // Serve static assets
+    server.serveStatic("/assets", LittleFS, "/dist/assets");
+
+    // Serve index.html for all other routes
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+        request->send(LittleFS, "/dist/index.html", "text/html");
+    });
+
+    server.onNotFound([](AsyncWebServerRequest *request){
+        if (request->method() == HTTP_OPTIONS) {
+            request->send(200);
+        } else {
+            request->send(404);
+        }
+    });
 
     server.begin();
     Serial.println("HTTP server started on port 80");
