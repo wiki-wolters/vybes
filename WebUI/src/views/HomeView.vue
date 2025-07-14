@@ -56,6 +56,16 @@
         </div>
       </CardSection>
 
+      <!-- Input Source -->
+      <CardSection title="Input Source">
+        <InputSourceSlider
+          v-model="inputSource"
+          leftLabel="Bluetooth"
+          rightLabel="TV"
+          @update:modelValue="updateInputSource"
+        />
+      </CardSection>
+
       <!-- Speakers -->
       <CardSection title="Speakers">
         <div class="flex justify-between gap-3">
@@ -128,6 +138,7 @@ import InputGroup from '../components/shared/InputGroup.vue';
 import RangeSlider from '../components/shared/RangeSlider.vue';
 import ModalDialog from '../components/shared/ModalDialog.vue';
 import ToggleSwitch from '../components/shared/ToggleSwitch.vue';
+import InputSourceSlider from '../components/shared/InputSourceSlider.vue';
 
 const router = useRouter();
 
@@ -138,7 +149,9 @@ const presets = ref([]);
 const speakersEnabled = ref({sub: true, left: true, right: true});
 const muteEnabled = ref(false);
 const mutePercentage = ref(100);
+const inputSource = ref(0.5); // 0 for Bluetooth, 1 for TV
 let muteUpdateTimeout = null;
+let inputSourceUpdateTimeout = null;
 const calibrationValue = ref(null);
 const showNewPresetDialog = ref(false);
 const newPresetName = ref('');
@@ -164,6 +177,9 @@ async function loadSystemData() {
       };
       muteEnabled.value = status.muteState === 'on';
       mutePercentage.value = status.mutePercent || 100;
+      if (status.inputGains) {
+        inputSource.value = status.inputGains.spdif;
+      }
     } catch (statusError) {
       console.warn('Could not load system status:', statusError);
     }
@@ -183,6 +199,26 @@ async function loadSystemData() {
     isLoading.value = false;
   }
 }
+
+function updateInputSource(newValue) {
+  if (inputSourceUpdateTimeout) {
+    clearTimeout(inputSourceUpdateTimeout);
+  }
+
+  inputSource.value = newValue;
+
+  inputSourceUpdateTimeout = setTimeout(async () => {
+    try {
+      const bluetoothGain = 1 - inputSource.value;
+      const tvGain = inputSource.value;
+      await apiClient.setInputGains(bluetoothGain, tvGain, 0.0);
+    } catch (error) {
+      console.error('Failed to update input source:', error);
+      errorMessage.value = `Failed to update input source: ${error.message}`;
+    }
+  }, 250);
+}
+
 
 // Preset management
 async function setActivePreset(presetName) {

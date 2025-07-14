@@ -60,8 +60,8 @@ void setupWebServer() {
     server.on("^\\/mute\\/percent\\/(\\d+)$", HTTP_PUT, handlePutMutePercent);
 
     // API Routes - Speaker & Input gains
-    server.on("^\\/speaker\\/(left|right|sub)\\/gain\\/([\\d.]+)$", HTTP_PUT, handlePutSpeakerGain);
-    server.on("^\\/input\\/(bluetooth|spdif)\\/gain\\/([\\d.]+)$", HTTP_PUT, handlePutInputGain);
+    server.on("^\/speaker\/(left|right|sub)\/gain\/([\d.]+)$", HTTP_PUT, handlePutSpeakerGain);
+    server.on("/gains/input", HTTP_PUT, [](AsyncWebServerRequest *request){}, NULL, handlePutInputGains);
     
     // API Routes - FIR Filter Management
     server.on("/fir/files", HTTP_GET, handleGetFirFiles);

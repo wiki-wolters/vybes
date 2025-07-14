@@ -61,7 +61,10 @@ db.serialize(() => {
         ['mute_percent', '0'],
         ['tone_frequency', '1000'],
         ['tone_volume', '50'],
-        ['noise_volume', '0']
+        ['noise_volume', '0'],
+        ['bluetooth_gain', '1.0'],
+        ['spdif_gain', '0.0'],
+        ['tone_gain', '0.0']
       ];
       
       const stmt = db.prepare("INSERT OR IGNORE INTO system_settings (key, value) VALUES (?, ?)");
@@ -324,6 +327,25 @@ app.put('/mute/percent/:percent', async (req, res) => {
     await setSetting('mute_percent', percent.toString());
     broadcast({ event: 'mute_percent', percent });
     res.json({ success: true, percent });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/gains/input', async (req, res) => {
+  const { bluetooth, spdif, tone } = req.body;
+
+  if (bluetooth === undefined || spdif === undefined || tone === undefined) {
+    return res.status(400).json({ error: 'Missing gain values' });
+  }
+
+  try {
+    await setSetting('bluetooth_gain', bluetooth.toString());
+    await setSetting('spdif_gain', spdif.toString());
+    await setSetting('tone_gain', tone.toString());
+
+    broadcast({ event: 'input_gains', gains: { bluetooth, spdif, tone } });
+    res.json({ success: true, gains: { bluetooth, spdif, tone } });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -720,7 +742,10 @@ app.get('/status', async (req, res) => {
       mutePercent,
       toneFrequency,
       toneVolume,
-      noiseVolume
+      noiseVolume,
+      bluetoothGain,
+      spdifGain,
+      toneGain
     ] = await Promise.all([
       getSetting('sub_gain'),
       getSetting('left_gain'),
@@ -729,7 +754,10 @@ app.get('/status', async (req, res) => {
       getSetting('mute_percent'),
       getSetting('tone_frequency'),
       getSetting('tone_volume'),
-      getSetting('noise_volume')
+      getSetting('noise_volume'),
+      getSetting('bluetooth_gain'),
+      getSetting('spdif_gain'),
+      getSetting('tone_gain')
     ]);
 
     // Get current preset
@@ -756,6 +784,11 @@ app.get('/status', async (req, res) => {
       },
       noise: {
         volume: noiseVolume ? parseInt(noiseVolume) : 0
+      },
+      inputGains: {
+        bluetooth: bluetoothGain ? parseFloat(bluetoothGain) : 0,
+        spdif: spdifGain ? parseFloat(spdifGain) : 0,
+        tone: toneGain ? parseFloat(toneGain) : 0
       },
       currentPreset
     });

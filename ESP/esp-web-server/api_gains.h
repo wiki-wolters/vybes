@@ -4,6 +4,6 @@
 #include <ESPAsyncWebServer.h>
 
 void handlePutSpeakerGain(AsyncWebServerRequest *request);
-void handlePutInputGain(AsyncWebServerRequest *request);
+void handlePutInputGains(AsyncWebServerRequest *request, JsonVariant &json);
 
 #endif // API_SPEAKER_H

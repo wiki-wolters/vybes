@@ -12,6 +12,14 @@ String lastMessage = "";
 unsigned long lastButtonPressTime = 0;
 int8_t currentPresetIndex = 0;
 
+// Add function to check if backlight is on
+extern unsigned long backlightStart; // Need to access this from screen.cpp
+extern LiquidCrystal_PCF8574 lcd;    // Need to access LCD object
+
+bool isBacklightOn() {
+    return backlightStart > 0;
+}
+
 void setupButton() {
     pinMode(BUTTON_PIN, INPUT_PULLUP);
     pinMode(BLUETOOTH_PAIRING_PIN, OUTPUT);
@@ -29,7 +37,16 @@ void nextPreset() {
 }
 
 void handleShortPress() {
-    nextPreset();
+    // Check if backlight is off
+    if (!isBacklightOn()) {
+        // Just turn on backlight and show current preset
+        lcd.setBacklight(1);
+        backlightStart = millis();
+        writeToScreen(current_config.presets[currentPresetIndex].name);
+    } else {
+        // Backlight is on, so cycle to next preset
+        nextPreset();
+    }
 }
 
 void handleButton() {

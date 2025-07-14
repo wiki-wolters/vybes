@@ -44,38 +44,28 @@ void handlePutSpeakerGain(AsyncWebServerRequest *request) {
     broadcastWebSocket(response);
 }
 
-void handlePutInputGain(AsyncWebServerRequest *request) {
-    String input = request->pathArg(0);
-    float gain = request->pathArg(1).toFloat();
+void handlePutInputGains(AsyncWebServerRequest *request, JsonVariant &json) {
+    JsonObject jsonObj = json.as<JsonObject>();
 
-    if (gain < 0.0f || gain > 1.0f) {
-        request->send(400, "text/plain", "Gain must be between 0.0 and 1.0");
+    float bluetooth = jsonObj["bluetooth"];
+    float spdif = jsonObj["spdif"];
+    float tone = jsonObj["tone"];
+
+    if (bluetooth < 0.0f || bluetooth > 1.0f || spdif < 0.0f || spdif > 1.0f || tone < 0.0f || tone > 1.0f) {
+        request->send(400, "text/plain", "Gains must be between 0.0 and 1.0");
         return;
     }
 
-    // Update the appropriate gain value in the config
-    if (input == "spdif") {
-        current_config.inputGains.spdif = gain;
-    } else if (input == "bluetooth") {
-        current_config.inputGains.bluetooth = gain;
-    }
-    
-    // Save the updated configuration
+    current_config.inputGains.bluetooth = bluetooth;
+    current_config.inputGains.spdif = spdif;
+    current_config.inputGains.tone = tone;
+
     scheduleConfigWrite();
-    
-    // Send command to Teensy using the new command structure
+
     sendToTeensy(CMD_SET_INPUT_GAINS, 
+        String(current_config.inputGains.bluetooth, 2),
         String(current_config.inputGains.spdif, 2),
-        String(current_config.inputGains.bluetooth, 2));
-    
-    // Prepare and send response
-    DynamicJsonDocument doc(256);
-    doc[input + "Gain"] = gain;
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
-    
-    // Broadcast the update to all WebSocket clients
-    broadcastWebSocket(response);
+        String(current_config.inputGains.tone, 2));
+
+    request->send(200, "application/json", "{\"status\": \"ok\"}");
 }
