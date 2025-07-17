@@ -118,7 +118,8 @@ void setupWebServer() {
     }, handleRestoreUpload);
 
     // Serve static assets
-    server.serveStatic("/assets", LittleFS, "/dist/assets");
+    server.serveStatic("/assets", LittleFS, "/dist/assets")
+        ->setCacheControl("public, max-age=31536000, immutable");
     server.serveStatic("/images", LittleFS, "/dist/images");
 
     // Serve index.html for all other routes

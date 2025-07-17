@@ -85,51 +85,56 @@ bool load_config() {
             if (name) {
                 strncpy(current_config.presets[i].name, name, PRESET_NAME_MAX_LEN - 1);
                 current_config.presets[i].name[PRESET_NAME_MAX_LEN - 1] = '\0';
+            } else {
+                strcpy(current_config.presets[i].name, "");
             }
 
-            // Load delay settings
-            if (preset.containsKey("delay")) {
-                JsonObject delay = preset["delay"];
-                current_config.presets[i].delay.left = delay["left"] | 0.0f;
-                current_config.presets[i].delay.right = delay["right"] | 0.0f;
-                current_config.presets[i].delay.sub = delay["sub"] | 0.0f;
-            }
-            current_config.presets[i].delayEnabled = preset["delayEnabled"] | false;
+            // Load other preset data only if the preset is in use
+            if (strlen(current_config.presets[i].name) > 0) {
+                // Load delay settings
+                if (preset.containsKey("delay")) {
+                    JsonObject delay = preset["delay"];
+                    current_config.presets[i].delay.left = delay["left"] | 0.0f;
+                    current_config.presets[i].delay.right = delay["right"] | 0.0f;
+                    current_config.presets[i].delay.sub = delay["sub"] | 0.0f;
+                }
+                current_config.presets[i].delayEnabled = preset["delayEnabled"] | false;
 
-            // Load crossover settings
-            current_config.presets[i].crossoverFreq = preset["crossoverFreq"] | 80;
-            current_config.presets[i].crossoverEnabled = preset["crossoverEnabled"] | false;
+                // Load crossover settings
+                current_config.presets[i].crossoverFreq = preset["crossoverFreq"] | 80;
+                current_config.presets[i].crossoverEnabled = preset["crossoverEnabled"] | false;
 
-            // Load EQ settings
-            current_config.presets[i].EQEnabled = preset["EQEnabled"] | false;
-            
-            // Load preference curve (PEQ sets)
-            if (preset.containsKey("preference_curve")) {
-                JsonArray peqSets = preset["preference_curve"];
-                for (int j = 0; j < MAX_PEQ_SETS && j < peqSets.size(); j++) {
-                    JsonObject peqSet = peqSets[j];
-                    current_config.presets[i].preference_curve[j].spl = peqSet["spl"] | 0;
-                    current_config.presets[i].preference_curve[j].num_points = peqSet["num_points"] | 0;
-                    
-                    if (peqSet.containsKey("points")) {
-                        JsonArray points = peqSet["points"];
-                        for (int k = 0; k < MAX_PEQ_POINTS && k < points.size(); k++) {
-                            JsonObject point = points[k];
-                            current_config.presets[i].preference_curve[j].points[k].freq = point["freq"] | 1000.0f;
-                            current_config.presets[i].preference_curve[j].points[k].gain = point["gain"] | 0.0f;
-                            current_config.presets[i].preference_curve[j].points[k].q = point["q"] | 1.0f;
+                // Load EQ settings
+                current_config.presets[i].EQEnabled = preset["EQEnabled"] | false;
+                
+                // Load preference curve (PEQ sets)
+                if (preset.containsKey("preference_curve")) {
+                    JsonArray peqSets = preset["preference_curve"];
+                    for (int j = 0; j < MAX_PEQ_SETS && j < peqSets.size(); j++) {
+                        JsonObject peqSet = peqSets[j];
+                        current_config.presets[i].preference_curve[j].spl = peqSet["spl"] | 0;
+                        current_config.presets[i].preference_curve[j].num_points = peqSet["num_points"] | 0;
+                        
+                        if (peqSet.containsKey("points")) {
+                            JsonArray points = peqSet["points"];
+                            for (int k = 0; k < MAX_PEQ_POINTS && k < points.size(); k++) {
+                                JsonObject point = points[k];
+                                current_config.presets[i].preference_curve[j].points[k].freq = point["freq"] | 1000.0f;
+                                current_config.presets[i].preference_curve[j].points[k].gain = point["gain"] | 0.0f;
+                                current_config.presets[i].preference_curve[j].points[k].q = point["q"] | 1.0f;
+                            }
                         }
                     }
                 }
-            }
 
-            // Load FIR filter settings
-            current_config.presets[i].FIRFiltersEnabled = preset["FIRFiltersEnabled"] | false;
-            if (preset.containsKey("FIRFilters")) {
-                JsonObject firFilters = preset["FIRFilters"];
-                current_config.presets[i].FIRFilters.left = firFilters["left"] | "";
-                current_config.presets[i].FIRFilters.right = firFilters["right"] | "";
-                current_config.presets[i].FIRFilters.sub = firFilters["sub"] | "";
+                // Load FIR filter settings
+                current_config.presets[i].FIRFiltersEnabled = preset["FIRFiltersEnabled"] | false;
+                if (preset.containsKey("FIRFilters")) {
+                    JsonObject firFilters = preset["FIRFilters"];
+                    current_config.presets[i].FIRFilters.left = firFilters["left"] | "";
+                    current_config.presets[i].FIRFilters.right = firFilters["right"] | "";
+                    current_config.presets[i].FIRFilters.sub = firFilters["sub"] | "";
+                }
             }
         }
     }
@@ -167,12 +172,11 @@ void save_config() {
     // Save presets
     JsonArray presets = doc.createNestedArray("presets");
     for (int i = 0; i < MAX_PRESETS; i++) {
-        // Only save presets that have names (are in use)
+        JsonObject preset = presets.createNestedObject();
+        preset["name"] = current_config.presets[i].name;
+
+        // Only save the rest of the data if the preset is in use
         if (strlen(current_config.presets[i].name) > 0) {
-            JsonObject preset = presets.createNestedObject();
-            
-            preset["name"] = current_config.presets[i].name;
-            
             // Save delay settings
             JsonObject delay = preset.createNestedObject("delay");
             delay["left"] = current_config.presets[i].delay.left;
