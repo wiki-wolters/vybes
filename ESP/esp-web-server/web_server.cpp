@@ -105,8 +105,30 @@ void setupWebServer() {
     // API Routes - Speaker Configuration
     server.on("^\\/preset\\/([^\\/]+)\\/delay\\/(left|right|sub)\\/([\\d.]+)$", HTTP_PUT, handlePutPresetDelayNamed);
 
-    // API Routes - EQ Management
-    server.on("^\\/preset\\/([^\\/]+)\\/eq\\/pref\\/0$", HTTP_PUT, [](AsyncWebServerRequest *request){}, NULL, handlePutPresetEQPoints);
+    server.on("^\\/preset\\/([^\\/]+)\\/eq\\/pref\\/0$", HTTP_PUT, 
+        [](AsyncWebServerRequest *request){}, 
+        NULL, 
+        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            // Buffer the body
+            if (index == 0) {
+                request->_tempObject = malloc(total + 1);
+                if (request->_tempObject == NULL) {
+                    // Failed to allocate memory
+                    request->send(500, "text/plain", "Internal Server Error");
+                    return;
+                }
+            }
+            memcpy((uint8_t*)request->_tempObject + index, data, len);
+
+            // When the body is completely received, process it
+            if (index + len == total) {
+                ((uint8_t*)request->_tempObject)[total] = '\0'; // Null-terminate the buffer
+                handlePutPresetEQPoints(request, (uint8_t*)request->_tempObject, total);
+                free(request->_tempObject);
+                request->_tempObject = NULL;
+            }
+        }
+    );
 
     // API Routes - Crossover and Equal Loudness
     server.on("^\\/preset\\/([^\\/]+)\\/crossover\\/freq\\/(\\d+)$", HTTP_PUT, handlePutPresetCrossover);
@@ -119,7 +141,7 @@ void setupWebServer() {
 
     // Serve static assets
     server.serveStatic("/assets", LittleFS, "/dist/assets")
-        ->setCacheControl("public, max-age=31536000, immutable");
+        .setCacheControl("public, max-age=31536000, immutable");
     server.serveStatic("/images", LittleFS, "/dist/images");
 
     // Serve index.html for all other routes

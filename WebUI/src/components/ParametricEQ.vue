@@ -78,7 +78,7 @@
       <!-- EQ Points -->
       <div
         v-for="(point, index) in localEqPoints"
-        :key="point.id"
+        :key="index"
         class="eq-point"
         :class="{ active: selectedPoint === index }"
         :style="{
@@ -110,7 +110,7 @@
     <div class="point-selection">
       <button
         v-for="(point, index) in localEqPoints"
-        :key="`select-${point.id}`"
+        :key="`select-${index}`"
         class="point-btn"
         :class="{ active: selectedPoint === index }"
         @click="selectedPoint = index"
@@ -198,29 +198,23 @@ const updateDimensions = () => {
 
 // Local copy of EQ points
 const localEqPoints = reactive([]);
-let nextId = 1;
 
 // Initialize local points from props
 function initializePoints() {
-  console.log('ParametricEQ - initializePoints called with:', props.peqPoints);
   localEqPoints.length = 0; // Clear existing points
   if (props.peqPoints && props.peqPoints.length > 0) {
-    console.log('ParametricEQ - Initializing with', props.peqPoints.length, 'points');
-    props.peqPoints.forEach((point, index) => {
-      console.log(`ParametricEQ - Adding point ${index + 1}:`, point);
+    props.peqPoints.forEach(point => {
       localEqPoints.push({
-        id: nextId++,
         freq: point.freq,
         gain: point.gain,
         q: point.q || 1.0
       });
     });
-  } else {
-    console.log('ParametricEQ - No points to initialize');
   }
+
   // Ensure we have at least one point
   if (localEqPoints.length === 0) {
-    localEqPoints.push({ id: nextId++, freq: 1000, gain: 0, q: 1 });
+    localEqPoints.push({ freq: 1000, gain: 0, q: 1 });
   }
 };
 
@@ -251,8 +245,8 @@ const emitChange = () => {
   
   emitTimeout = setTimeout(() => {
     // Create a clean copy of the points for emission
-    const pointsToEmit = localEqPoints.map(point => ({
-      id: point.id,
+    const pointsToEmit = localEqPoints.map((point, index) => ({
+      id: index,
       freq: point.freq,
       gain: point.gain,
       q: point.q

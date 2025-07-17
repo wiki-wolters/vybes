@@ -6,7 +6,7 @@
 // EQ management endpoints
 void handlePostPresetEQ(AsyncWebServerRequest *request);
 void handleDeletePresetEQ(AsyncWebServerRequest *request);
-void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total);
+void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size_t len);
 void handlePutPresetEQEnabled(AsyncWebServerRequest *request);
 
 // Crossover and equal loudness endpoints

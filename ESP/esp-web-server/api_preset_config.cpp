@@ -83,7 +83,7 @@ void handlePutPresetCrossoverEnabled(AsyncWebServerRequest *request) {
     broadcastWebSocket(response);
 }
 
-void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size_t len) {
     String presetName = request->pathArg(0);
     const int spl = 0; // Hardcoded SPL
 
@@ -123,7 +123,14 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size
 
     PEQSet* target_set = &sets[set_index];
 
+    Serial.printf("Updating EQ points for preset '%s' at SPL %d with body %s\n", presetName.c_str(), spl, (const char*)data);
     DynamicJsonDocument doc(1024); // Adjust size as needed
+    DeserializationError error = deserializeJson(doc, (const char*)data);
+
+    if (error) {
+        request->send(400, "text/plain", "Invalid JSON");
+        return;
+    }
 
     JsonArray pointsArray = doc.as<JsonArray>();
     if (pointsArray.size() > MAX_PEQ_POINTS) {
@@ -131,23 +138,30 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size
         return;
     }
 
-    /* Identify which points have changed so we only send those to Teensy */
-    target_set->num_points = pointsArray.size();
-    int i = 0;
     for (JsonObject point : pointsArray) {
-        if (point["freq"] != target_set->points[i].freq ||
-            point["gain"] != target_set->points[i].gain ||
-            point["q"] != target_set->points[i].q
-        ) {
-            target_set->points[i].freq = point["freq"].as<float>();
-            target_set->points[i].gain = point["gain"].as<float>();
-            target_set->points[i].q    = point["q"].as<float>();
-            String pointData = String(target_set->points[i].freq, 1) + " " +
-                             String(target_set->points[i].q, 2) + " " +
-                             String(target_set->points[i].gain, 2);
-            sendToTeensy(CMD_SET_EQ_FILTER, String(i), pointData);
+        int id = point["id"].as<int>();
+        if (id >= MAX_PEQ_POINTS) {
+            Serial.printf("Error: PEQ point ID %d is out of bounds. Max is %d.\n", id, MAX_PEQ_POINTS - 1);
+            continue; 
         }
-        i++;
+
+        float new_freq = point["freq"].as<float>();
+        float new_gain = point["gain"].as<float>();
+        float new_q = point["q"].as<float>();
+
+        if (new_freq != target_set->points[id].freq ||
+            new_gain != target_set->points[id].gain ||
+            new_q != target_set->points[id].q
+        ) {
+            target_set->points[id].freq = new_freq;
+            target_set->points[id].gain = new_gain;
+            target_set->points[id].q    = new_q;
+            
+            String pointData = String(new_freq, 1) + " " +
+                             String(new_q, 2) + " " +
+                             String(new_gain, 2);
+            sendToTeensy(CMD_SET_EQ_FILTER, String(id), pointData);
+        }
     }
 
     scheduleConfigWrite();
@@ -229,6 +243,20 @@ void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
     
     // Send command to Teensy
     sendOnOffToTeensy(CMD_SET_EQ_ENABLED, enabled);
+
+    if (enabled) {
+        // Re-apply the EQ points
+        for (int i = 0; i < MAX_PEQ_SETS; i++) {
+            if (sets[i].spl != -1) {
+                for (int j = 0; j < sets[i].num_points; j++) {
+                    String pointData = String(sets[i].points[j].freq, 1) + " " +
+                                     String(sets[i].points[j].q, 2) + " " +
+                                     String(sets[i].points[j].gain, 2);
+                    sendToTeensy(CMD_SET_EQ_FILTER, String(j), pointData);
+                }
+            }
+        }
+    }
     
     // Broadcast update
     broadcastWebSocket(response);

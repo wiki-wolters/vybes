@@ -346,7 +346,7 @@ void setup() {
   router.on("setDelayEnabled", handleSetDelayEnabled);
   router.on("setFir", handleSetFIR);
   router.on("setDelays", handleSetDelays);
-  router.on("setEqFilter", handleSetEQFilter);
+  router.on("setEq", handleSetEQFilter);
   router.on("resetEqFilters", handleResetEQFilters);
   router.begin();
 }

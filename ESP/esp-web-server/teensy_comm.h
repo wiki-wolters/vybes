@@ -13,7 +13,7 @@
 
 // EQ Commands
 #define CMD_SET_EQ_ENABLED "setEqEnabled"
-#define CMD_SET_EQ_FILTER "setEqFilter"
+#define CMD_SET_EQ_FILTER "setEq"
 #define CMD_RESET_EQ_FILTERS "resetEqFilters"
 
 // FIR Filter Commands

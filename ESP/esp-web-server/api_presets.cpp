@@ -116,7 +116,13 @@ void handlePostPresetCreate(AsyncWebServerRequest *request) {
     
     // Initialize the first PEQ set for both curves as this is what the UI expects
     current_config.presets[newIndex].preference_curve[0].spl = 0;
-    current_config.presets[newIndex].preference_curve[0].num_points = 0;
+    current_config.presets[newIndex].preference_curve[0].num_points = 3;
+
+    // Set first 3 default points
+    for (int k = 0; k < 3; k++) {
+        current_config.presets[newIndex].preference_curve[0].points[k] = PEQPoint();
+        current_config.presets[newIndex].preference_curve[0].points[k].freq = 100 * pow(10, k);
+    }
 
     scheduleConfigWrite();
     request->send(201, "application/json", "{}");
