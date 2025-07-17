@@ -48,7 +48,7 @@ void handlePutPresetCrossover(AsyncWebServerRequest *request) {
 
 void handlePutPresetCrossoverEnabled(AsyncWebServerRequest *request) {
     String presetName = request->pathArg(0);
-    String state = request->pathArg(1);
+    String state = request->pathArg(2);
     
     if (state != "on" && state != "off") {
         request->send(400, "text/plain", "Invalid state");
@@ -168,7 +168,7 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size
 
 void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
     String presetName = request->pathArg(0);
-    String state = request->pathArg(1);
+    String state = request->pathArg(2);
     
     if (state != "on" && state != "off") {
         request->send(400, "text/plain", "Invalid state. Must be 'on' or 'off'");

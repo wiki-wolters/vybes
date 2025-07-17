@@ -9,6 +9,8 @@
 #include "api_preset_config.h"
 #include "teensy_comm.h"
 #include <ESPAsyncWebServer.h>
+#include <ArduinoJson.h>
+#include <AsyncJson.h>
 #include "config.h"
 
 AsyncWebServer server(80);
@@ -60,8 +62,8 @@ void setupWebServer() {
     server.on("^\\/mute\\/percent\\/(\\d+)$", HTTP_PUT, handlePutMutePercent);
 
     // API Routes - Speaker & Input gains
-    server.on("^\/speaker\/(left|right|sub)\/gain\/([\d.]+)$", HTTP_PUT, handlePutSpeakerGain);
-    server.on("/gains/input", HTTP_PUT, [](AsyncWebServerRequest *request){}, NULL, handlePutInputGains);
+    server.on("^\\/speaker\\/(left|right|sub)\\/gain\\/([\\d.]+)$", HTTP_PUT, handlePutSpeakerGain);
+    server.addHandler(new AsyncCallbackJsonWebHandler("/gains/input", handlePutInputGains));
     
     // API Routes - FIR Filter Management
     server.on("/fir/files", HTTP_GET, handleGetFirFiles);

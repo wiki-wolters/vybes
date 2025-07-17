@@ -58,12 +58,35 @@
 
       <!-- Input Source -->
       <CardSection title="Input Source">
-        <InputSourceSlider
-          v-model="inputSource"
-          leftLabel="Bluetooth"
-          rightLabel="TV"
-          @update:modelValue="updateInputSource"
-        />
+        <div class="space-y-4">
+          <RangeSlider
+            :model-value="inputGainsDB.bluetooth"
+            label="Bluetooth"
+            :min="-40"
+            :max="3.5"
+            :step="0.1"
+            unit="dB"
+            @update:modelValue="updateInputGain('bluetooth', $event)"
+          />
+          <RangeSlider
+            :model-value="inputGainsDB.spdif"
+            label="TV"
+            :min="-40"
+            :max="3.5"
+            :step="0.1"
+            unit="dB"
+            @update:modelValue="updateInputGain('spdif', $event)"
+          />
+          <RangeSlider
+            :model-value="inputGainsDB.tone"
+            label="Tone"
+            :min="-40"
+            :max="3.5"
+            :step="0.1"
+            unit="dB"
+            @update:modelValue="updateInputGain('tone', $event)"
+          />
+        </div>
       </CardSection>
 
       <!-- Speakers -->
@@ -138,7 +161,6 @@ import InputGroup from '../components/shared/InputGroup.vue';
 import RangeSlider from '../components/shared/RangeSlider.vue';
 import ModalDialog from '../components/shared/ModalDialog.vue';
 import ToggleSwitch from '../components/shared/ToggleSwitch.vue';
-import InputSourceSlider from '../components/shared/InputSourceSlider.vue';
 
 const router = useRouter();
 
@@ -149,13 +171,28 @@ const presets = ref([]);
 const speakersEnabled = ref({sub: true, left: true, right: true});
 const muteEnabled = ref(false);
 const mutePercentage = ref(100);
-const inputSource = ref(0.5); // 0 for Bluetooth, 1 for TV
+const inputGainsDB = ref({ bluetooth: -40, spdif: -40, tone: -40 });
+const inputGainsLinear = ref({ bluetooth: 0, spdif: 0, tone: 0 });
 let muteUpdateTimeout = null;
-let inputSourceUpdateTimeout = null;
+let inputGainsUpdateTimeout = null;
 const calibrationValue = ref(null);
 const showNewPresetDialog = ref(false);
 const newPresetName = ref('');
 const newPresetNameInput = ref(null);
+
+const MIN_DB = -40;
+const MAX_DB = 3.5;
+
+function dbToLinear(db) {
+  if (db <= MIN_DB) return 0;
+  return 10 ** (db / 20);
+}
+
+function linearToDb(linear) {
+  if (linear <= 0) return MIN_DB;
+  const db = 20 * Math.log10(linear);
+  return Math.max(MIN_DB, Math.min(MAX_DB, db));
+}
 
 // Load initial data
 async function loadSystemData() {
@@ -167,7 +204,7 @@ async function loadSystemData() {
     const presetsData = await apiClient.getPresets();
     presets.value = presetsData || [];
 
-    // Load system status (you'll need to add this endpoint)
+    // Load system status
     try {
       const status = await apiClient.getStatus();
       speakersEnabled.value = {
@@ -178,7 +215,10 @@ async function loadSystemData() {
       muteEnabled.value = status.muteState === 'on';
       mutePercentage.value = status.mutePercent || 100;
       if (status.inputGains) {
-        inputSource.value = status.inputGains.spdif;
+        inputGainsLinear.value = { ...status.inputGains };
+        inputGainsDB.value.bluetooth = linearToDb(status.inputGains.bluetooth);
+        inputGainsDB.value.spdif = linearToDb(status.inputGains.spdif);
+        inputGainsDB.value.tone = linearToDb(status.inputGains.tone);
       }
     } catch (statusError) {
       console.warn('Could not load system status:', statusError);
@@ -200,21 +240,24 @@ async function loadSystemData() {
   }
 }
 
-function updateInputSource(newValue) {
-  if (inputSourceUpdateTimeout) {
-    clearTimeout(inputSourceUpdateTimeout);
+function updateInputGain(source, dbValue) {
+  if (inputGainsUpdateTimeout) {
+    clearTimeout(inputGainsUpdateTimeout);
   }
 
-  inputSource.value = newValue;
+  inputGainsDB.value[source] = dbValue;
+  inputGainsLinear.value[source] = dbToLinear(dbValue);
 
-  inputSourceUpdateTimeout = setTimeout(async () => {
+  inputGainsUpdateTimeout = setTimeout(async () => {
     try {
-      const bluetoothGain = 1 - inputSource.value;
-      const tvGain = inputSource.value;
-      await apiClient.setInputGains(bluetoothGain, tvGain, 0.0);
+      await apiClient.setInputGains(
+        inputGainsLinear.value.bluetooth,
+        inputGainsLinear.value.spdif,
+        inputGainsLinear.value.tone
+      );
     } catch (error) {
-      console.error('Failed to update input source:', error);
-      errorMessage.value = `Failed to update input source: ${error.message}`;
+      console.error('Failed to update input gains:', error);
+      errorMessage.value = `Failed to update input gains: ${error.message}`;
     }
   }, 250);
 }

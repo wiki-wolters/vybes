@@ -244,7 +244,7 @@ void handlePutActivePreset(AsyncWebServerRequest *request) {
 
 void handlePutPresetDelayEnabled(AsyncWebServerRequest *request) {
     String presetName = request->pathArg(0);
-    String state = request->pathArg(1);
+    String state = request->pathArg(2);
     
     if (state != "on" && state != "off") {
         request->send(400, "text/plain", "Invalid state. Must be 'on' or 'off'");
@@ -280,16 +280,16 @@ void handlePutPresetDelayEnabled(AsyncWebServerRequest *request) {
 void handlePutPresetDelayNamed(AsyncWebServerRequest *request) {
     String presetName = request->pathArg(0);
     String speaker = request->pathArg(1);
-    String delayMsStr = request->pathArg(2);
+    String delayUsStr = request->pathArg(2);
     
     if (speaker != "left" && speaker != "right" && speaker != "sub") {
         request->send(400, "text/plain", "Invalid speaker. Must be 'left', 'right', or 'sub'");
         return;
     }
     
-    float delayMs = delayMsStr.toFloat();
-    if (delayMs < 0 || delayMs > 100.0f) {
-        request->send(400, "text/plain", "Delay must be between 0 and 100 ms");
+    float delayUs = delayUsStr.toFloat();
+    if (delayUs < 0 || delayUs > 10000.0f) {
+        request->send(400, "text/plain", "Delay must be between 0 and 10,000 microseconds");
         return;
     }
     
@@ -301,23 +301,26 @@ void handlePutPresetDelayNamed(AsyncWebServerRequest *request) {
     
     // Update the delay in the config
     if (speaker == "left") {
-        current_config.presets[presetIndex].delay.left = delayMs;
+        current_config.presets[presetIndex].delay.left = delayUs;
     } else if (speaker == "right") {
-        current_config.presets[presetIndex].delay.right = delayMs;
+        current_config.presets[presetIndex].delay.right = delayUs;
     } else if (speaker == "sub") {
-        current_config.presets[presetIndex].delay.sub = delayMs;
+        current_config.presets[presetIndex].delay.sub = delayUs;
     }
     
     scheduleConfigWrite();
     
     // Send command to Teensy
-    sendToTeensy(CMD_SET_DELAYS, speaker, String(delayMs, 2));
+    sendToTeensy(CMD_SET_DELAYS,
+        String(current_config.presets[presetIndex].delay.left, 2),
+        String(current_config.presets[presetIndex].delay.right, 2),
+        String(current_config.presets[presetIndex].delay.sub, 2));
     
     // Prepare response
     DynamicJsonDocument doc(128);
     doc["status"] = "ok";
     doc["speaker"] = speaker;
-    doc["delayMs"] = delayMs;
+    doc["delayUs"] = delayUs;
     
     String response;
     serializeJson(doc, response);
