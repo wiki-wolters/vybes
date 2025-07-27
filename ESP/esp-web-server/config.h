@@ -63,7 +63,7 @@ struct Preset {
     char name[PRESET_NAME_MAX_LEN] = "Default";
     Delay delay;
     bool delayEnabled = false;
-    int8_t crossoverFreq = 80;
+    uint16_t crossoverFreq = 80;
     bool crossoverEnabled = false;
     PEQSet preference_curve[MAX_PEQ_SETS];
     bool EQEnabled = false;
@@ -104,6 +104,12 @@ void init_config();
  * Call this after making any changes to the configuration.
  */
 void save_config();
+
+/**
+ * @brief Loads the configuration from LittleFS.
+ * @return true if successful, false if there was an error.
+ */
+bool load_config();
 
 
 

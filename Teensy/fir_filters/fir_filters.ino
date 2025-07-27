@@ -251,7 +251,7 @@ struct State {
   float gainSub = 1.0;
 
   // Crossover
-  int crossoverFrequency = 50;
+  uint16_t crossoverFrequency = 50;
 
   // Bypass options
   bool eqEnabled = true;
@@ -303,6 +303,10 @@ void setup() {
   // Audio connections require memory to work
   Serial.println("Allocating audio memory");
   AudioMemory(30); // Increased from 20 to handle complex audio graph
+
+  // Initialize PEQ processors
+  peqLeft.begin(AUDIO_SAMPLE_RATE);
+  peqRight.begin(AUDIO_SAMPLE_RATE);
 
   // Explicitly set all amps to gain=1.0
   Left_Post_EQ_amp.gain(1.0);
@@ -481,7 +485,7 @@ void setEQFilters(PEQBand filters[], int animationDuration) {
   peqRight.animateToBands(filters, nBands, animationDuration);
 }
 
-void setCrossoverFrequency(int frequency) {
+void setCrossoverFrequency(uint16_t frequency) {
   Serial.println("Set crossover freq: " + String(frequency));
   state.crossoverFrequency = frequency;
   state.isDirty = true;
@@ -639,7 +643,7 @@ void handleSetInputGains(const String& command, String* args, int argCount, Outp
 
 void handleSetCrossoverFrequency(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 1) {
-    setCrossoverFrequency(args[0].toInt());
+    setCrossoverFrequency(strtoul(args[0].c_str(), NULL, 10));
   }
 }
 
@@ -701,13 +705,21 @@ void handleResetEQFilters(const String& command, String* args, int argCount, Out
 void handleSetEQFilter(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 4) {
     int index = args[0].toInt();
+    float frequency = args[1].toFloat();
+    float q = args[2].toFloat();
+    float gain = args[3].toFloat();
+
     if (index >= 0 && index < MAX_PEQ_BANDS) {
+      // Update the central state
       state.filters[index].enabled = true;
-      state.filters[index].frequency = args[1].toFloat();
-      state.filters[index].q = args[2].toFloat();
-      state.filters[index].gain = args[3].toFloat();
+      state.filters[index].frequency = frequency;
+      state.filters[index].q = q;
+      state.filters[index].gain = gain;
       state.isDirty = true;
-      setEQFilters(state.filters, getConsecutiveActiveFilterCount());
+
+      // Directly apply the change to the PEQ processors
+      peqLeft.setBand(index, frequency, gain, q, true);
+      peqRight.setBand(index, frequency, gain, q, true);
     }
   }
 }

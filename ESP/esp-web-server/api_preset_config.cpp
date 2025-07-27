@@ -12,7 +12,7 @@
 void handlePutPresetCrossover(AsyncWebServerRequest *request) {
     String presetName = request->pathArg(0);
     String freqStr = request->pathArg(1);
-    int freq = freqStr.toInt();
+    unsigned int freq = freqStr.toInt();
 
     // Validate frequency range (20Hz to 20kHz)
     if (freq < 20 || freq > 20000) {
@@ -137,6 +137,8 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size
         request->send(400, "text/plain", "Too many PEQ points");
         return;
     }
+    
+    target_set->num_points = pointsArray.size();
 
     for (JsonObject point : pointsArray) {
         int id = point["id"].as<int>();

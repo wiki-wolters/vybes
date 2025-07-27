@@ -38,33 +38,24 @@
 
           <CollapsibleSection title="FIR Filters" :model-value="selectedPresetData.isFIREnabled" @update:modelValue="updateFIREnabled($event)" :animate="animationsEnabled">
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6" :class="{ 'opacity-50': !selectedPresetData.isFIREnabled }">
-              <SelectGroup 
+              <InputGroup 
                 v-model="selectedPresetData.firLeft" 
                 :label="'Left'"
                 :disabled="!selectedPresetData.isFIREnabled"
                 @update:modelValue="updateFIRFilter('left', $event)"
-              >
-                <option key="" value="">None</option>
-                <option v-for="file in selectedPresetData.firFiles" :key="`left-${file}`" :value="file">{{ file }}</option>
-              </SelectGroup>
-              <SelectGroup 
+              />
+              <InputGroup 
                 v-model="selectedPresetData.firRight" 
                 :label="'Right'"
                 :disabled="!selectedPresetData.isFIREnabled"
                 @update:modelValue="updateFIRFilter('right', $event)"
-              >
-                <option key="" value="">None</option>
-                <option v-for="file in selectedPresetData.firFiles" :key="`right-${file}`" :value="file">{{ file }}</option>
-              </SelectGroup>
-              <SelectGroup 
+              />
+              <InputGroup 
                 v-model="selectedPresetData.firSub" 
                 :label="'Sub'"
                 :disabled="!selectedPresetData.isFIREnabled"
                 @update:modelValue="updateFIRFilter('sub', $event)"
-              >
-                <option key="" value="">None</option>
-                <option v-for="file in selectedPresetData.firFiles" :key="`sub-${file}`" :value="file">{{ file }}</option>
-              </SelectGroup>
+              />
             </div>
           </CollapsibleSection>
 
@@ -121,7 +112,6 @@
 
 <script setup>
 import { ref, reactive, onMounted, inject } from 'vue';
-import SelectGroup from '../components/shared/SelectGroup.vue';
 import { asyncDebounce } from '../utilities.js'; // [cite: 42] Utility for rate limiting function calls
 import RangeSlider from '../components/shared/RangeSlider.vue';
 import InputGroup from '../components/shared/InputGroup.vue';

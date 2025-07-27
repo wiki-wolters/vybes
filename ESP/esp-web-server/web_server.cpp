@@ -8,6 +8,7 @@
 #include "api_presets.h"
 #include "api_preset_config.h"
 #include "teensy_comm.h"
+#include "config.h"
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
 #include <AsyncJson.h>
@@ -18,8 +19,8 @@ AsyncWebServer server(80);
 
 
 void handleBackup(AsyncWebServerRequest *request) {
-    AsyncWebServerResponse *response = request->beginResponse(LittleFS, CONFIG_FILE, "application/json", true);
-    response->addHeader("Content-Disposition", "attachment; filename=\"vybes_config.json\"");
+    AsyncWebServerResponse *response = request->beginResponse(LittleFS, CONFIG_FILE, "application/msgpack", true);
+    response->addHeader("Content-Disposition", "attachment; filename=\"vybes_config.msgpack\"");
     request->send(response);
 }
 
@@ -46,8 +47,8 @@ void handleRestoreUpload(AsyncWebServerRequest *request, String filename, size_t
             restoreFile.close();
         }
         Serial.printf("Restore finished: %s, %u B\n", filename.c_str(), index + len);
-        request->send(200, "text/plain", "Configuration restored successfully. Restarting device.");
-        ESP.restart();
+        request->send(200, "text/plain", "Configuration restored successfully.");
+        load_config();
     }
 }
 
@@ -136,7 +137,7 @@ void setupWebServer() {
     // API Routes - Backup and Restore
     server.on("/backup", HTTP_GET, handleBackup);
     server.on("/restore", HTTP_POST, [](AsyncWebServerRequest *request) {
-        request->send(200);
+        // On request, do nothing. The response will be sent by the upload handler.
     }, handleRestoreUpload);
 
     // Serve static assets

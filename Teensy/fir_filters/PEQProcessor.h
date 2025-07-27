@@ -56,12 +56,6 @@ public:
   // Get number of active bands
   int getActiveBandCount() const;
   
-  // Connect audio routing (call this in your audio setup)
-  void connectAudio(AudioStream& input, AudioStream& output, int inputChannel = 0, int outputChannel = 0);
-  
-  // Get reference to a specific biquad filter (for manual audio routing)
-  AudioFilterBiquad& getBiquadFilter(int index);
-  
   // Animation methods
   void animateToBands(const PEQBand* targetBands, int numBands, unsigned long durationMs = 1000);
   void setAnimationSpeed(unsigned long durationMs);
@@ -77,20 +71,17 @@ public:
 
 private:
   audio_block_t *inputQueue[1];
-  AudioFilterBiquad biquadFilters[MAX_PEQ_BANDS];
-  // AudioConnection* connections[MAX_PEQ_BANDS + 1];  // +1 for input connection. Will be handled by AudioStream inheritance.
-  // AudioConnection* bypassConnection; // Will be handled by AudioStream inheritance.
   PEQBand bands[MAX_PEQ_BANDS];
+
+  // ARM DSP Biquad filter instances and state
+  arm_biquad_casd_df1_inst_f32 biquad_insts[MAX_PEQ_BANDS];
+  float32_t biquad_states[MAX_PEQ_BANDS][4];
+  float32_t biquad_coeffs[MAX_PEQ_BANDS][5];
 
   AnimationState animation;
   float sampleRate;
   bool initialized;
   bool bypassed;
-  int connectionCount;
-  // AudioStream* inputStream; // Will be handled by AudioStream inheritance.
-  // AudioStream* outputStream; // Will be handled by AudioStream inheritance.
-  int inputChannel;
-  int outputChannel;
   
   // Internal methods
   void calculateCoefficients(const PEQBand& band, double coeffs[5]);
@@ -98,8 +89,6 @@ private:
   void setUnityGain(int bandIndex);
   void processAnimation(); // Renamed from updateAnimation to avoid confusion
   float interpolate(float start, float end, float progress);
-  void setupBypass();
-  void setupEQChain();
 };
 
 #endif

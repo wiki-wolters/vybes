@@ -185,14 +185,6 @@ class VybesAPI {
   }
 
   /**
-   * Get all FIR filter files
-   * @returns {Promise<Array>} Array of FIR filter filenames
-   */
-  async getFirFiles() {
-    return this.request('GET', '/fir/files');
-  }
-
-  /**
    * Get speaker delays for a preset
    * @param {string} presetName - Name of the preset
    * @returns {Promise<Object>} Object containing delays for left, right, and sub

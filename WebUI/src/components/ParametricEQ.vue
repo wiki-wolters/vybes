@@ -87,8 +87,8 @@
         }"
         @mousedown="startDrag(index, $event)"
         @touchstart="startDrag(index, $event)"
+        @touchend="handleTouchEnd(index, $event)"
         @dblclick="removePoint(index)"
-        @click="selectedPoint = index"
       >
         <div class="point-circle"></div>
         <div class="point-label">
@@ -333,11 +333,11 @@ const calculateBellFilter = (freq, centerFreq, gain, q) => {
 };
 
 // Point management
-const addPoint = () => {
-  if (localEqPoints.length >= 10) return;
+  const addPoint = () => {
+    if (localEqPoints.length >= 15) return;
 
   const newPoint = {
-    id: nextId++,
+    id: localEqPoints.length,
     freq: 1000,
     gain: 0,
     q: 1
@@ -360,6 +360,25 @@ const removePoint = (index) => {
 };
 
 // Drag functionality
+const lastTouch = { time: 0, index: null };
+
+const handleTouchEnd = (index, event) => {
+  const now = new Date().getTime();
+  const timeSinceLastTouch = now - lastTouch.time;
+
+  if (timeSinceLastTouch < 300 && timeSinceLastTouch > 0 && lastTouch.index === index) {
+    // Double tap
+    removePoint(index);
+    event.preventDefault();
+  } else {
+    // Single tap
+    selectedPoint.value = index;
+  }
+
+  lastTouch.time = now;
+  lastTouch.index = index;
+};
+
 const startDrag = (index, event) => {
   event.preventDefault();
   selectedPoint.value = index;
