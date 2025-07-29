@@ -172,7 +172,8 @@ void handlePutPresetRename(AsyncWebServerRequest *request) {
         return;
     }
 
-    if (find_preset_by_name(newName.c_str()) != -1) {
+    int existing_preset_index = find_preset_by_name(newName.c_str());
+    if (existing_preset_index != -1 && existing_preset_index != find_preset_by_name(oldName.c_str())) {
         request->send(409, "text/plain", "New preset name already exists");
         return;
     }

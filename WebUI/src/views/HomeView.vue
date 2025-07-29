@@ -374,11 +374,11 @@ function setupLiveUpdates() {
   apiClient.connectLiveUpdates(
     (data) => {
       // Handle live updates
-      if (data.event === 'preset' && data.name) {
+      if (data.messageType === 'activePresetChanged' && data.activePresetName) {
         // Update active preset
         presets.value = presets.value.map(p => ({
           ...p,
-          isCurrent: p.name === data.name
+          isCurrent: p.name === data.activePresetName
         }));
       }
       // Add more event handlers as needed

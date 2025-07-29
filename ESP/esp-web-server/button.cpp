@@ -1,7 +1,9 @@
 #include "button.h"
 #include "config.h"
 #include "screen.h"
+#include "websocket.h"
 #include <Wire.h>
+#include <ArduinoJson.h>
 #include <string.h>
 
 const int BUTTON_PIN = 13; //D7
@@ -86,6 +88,16 @@ void handleButton() {
             current_config.active_preset_index = currentPresetIndex;
             updateTeensyWithActivePresetParameters();
             save_config();
+
+            // Prepare data for WebSocket broadcast
+            DynamicJsonDocument doc(256);
+            doc["messageType"] = "activePresetChanged";
+            doc["activePresetName"] = current_config.presets[current_config.active_preset_index].name;
+            doc["activePresetIndex"] = current_config.active_preset_index;
+            
+            String ws_response;
+            serializeJson(doc, ws_response);
+            broadcastWebSocket(ws_response);
         }
         lastButtonPressTime = 0;
     }

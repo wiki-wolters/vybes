@@ -425,7 +425,9 @@ class VybesAPI {
     }
 
     const wsUrl = this.baseUrl.replace('http://', 'ws://').replace('https://', 'wss://');
-    this.socket = new WebSocket(`${wsUrl}/live-updates`);
+    const url = new URL(wsUrl);
+    
+    this.socket = new WebSocket(`${url.toString().replace(/\/$/, '')}/live-updates`);
 
     this.socket.onmessage = (event) => {
       try {

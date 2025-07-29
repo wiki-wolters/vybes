@@ -1,9 +1,9 @@
 #ifndef WEBSOCKET_H
 #define WEBSOCKET_H
 
-#include <Arduino.h>
+#include <ESPAsyncWebServer.h>
 
-extern WebSocketsServer webSocket;
+extern AsyncWebSocket ws;
 
 void setupWebSocket();
 void broadcastWebSocket(String message);

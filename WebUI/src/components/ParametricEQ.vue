@@ -1,5 +1,6 @@
 <template>
-  <div class="eq-container" ref="eqContainer">
+  <div class="parametric-eq">
+    <div class="eq-container" ref="eqContainer">
       <!-- Background grid -->
       <svg class="eq-grid" :width="width" :height="height">
         <!-- Frequency grid lines -->
@@ -160,6 +161,7 @@
         />
       </div>
     </div>
+  </div>
 </template>
 
 <script setup>
@@ -236,22 +238,31 @@ const dragState = reactive({
   startGain: 0
 });
 
-// Debounced emit function
-let emitTimeout = null;
+// Throttled emit function
+let throttleTimeout = null;
+let trailingCall = false;
 const emitChange = () => {
-  if (emitTimeout) {
-    clearTimeout(emitTimeout);
+  if (throttleTimeout) {
+    trailingCall = true;
+    return;
   }
+
+  trailingCall = false;
   
-  emitTimeout = setTimeout(() => {
-    // Create a clean copy of the points for emission
-    const pointsToEmit = localEqPoints.map((point, index) => ({
-      id: index,
-      freq: point.freq,
-      gain: point.gain,
-      q: point.q
-    }));
-    emit('change', pointsToEmit);
+  // Create a clean copy of the points for emission
+  const pointsToEmit = localEqPoints.map((point, index) => ({
+    id: index,
+    freq: point.freq,
+    gain: point.gain,
+    q: point.q
+  }));
+  emit('change', pointsToEmit);
+
+  throttleTimeout = setTimeout(() => {
+    throttleTimeout = null;
+    if (trailingCall) {
+      emitChange();
+    }
   }, 100);
 };
 
@@ -452,8 +463,8 @@ onUnmounted(() => {
     resizeObserver.disconnect();
   }
   
-  if (emitTimeout) {
-    clearTimeout(emitTimeout);
+  if (throttleTimeout) {
+    clearTimeout(throttleTimeout);
   }
 });
 </script>
@@ -499,10 +510,9 @@ onUnmounted(() => {
 }
 
 .point-circle {
-  width: 12px;
-  height: 12px;
+  width: 16px;
+  height: 16px;
   background: #0088ff;
-  border: 2px solid #fff;
   border-radius: 50%;
   box-shadow: 0 2px 8px rgba(0, 136, 255, 0.4);
   transition: all 0.2s ease;

@@ -80,7 +80,7 @@ void setupWebServer() {
     server.on("/preset/*", HTTP_GET, handleGetPreset);
     server.on("/preset/create/*", HTTP_POST, handlePostPresetCreate);
 
-    server.on("^\\/preset\\/(copy|rename)\\/([^\\/]+)\\/([^\\/]+)$", HTTP_POST|HTTP_PUT, [](AsyncWebServerRequest *request){
+    server.on("^\\/preset\\/(?:copy|rename)\\/([^\\/]+)\\/([^\\/]+)$", HTTP_POST|HTTP_PUT, [](AsyncWebServerRequest *request){
         if (request->method() == HTTP_POST) {
             handlePostPresetCopy(request);
         } else if (request->method() == HTTP_PUT) {

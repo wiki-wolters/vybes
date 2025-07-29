@@ -6,7 +6,7 @@
       :id="inputId"
       :type="type"
       :value="modelValue"
-      @input="handleInput"
+      @change="handleChange"
       :min="min"
       :max="max"
       :step="step"
@@ -69,7 +69,7 @@ defineExpose({ focus });
 
 const inputId = computed(() => `input-${Math.random().toString(36).substring(2, 9)}`);
 
-const handleInput = (event) => {
+const handleChange = (event) => {
   const value = props.type === 'number' 
     ? parseFloat(event.target.value) 
     : event.target.value;

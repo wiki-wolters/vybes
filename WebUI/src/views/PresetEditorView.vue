@@ -111,7 +111,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, inject } from 'vue';
+import { ref, reactive, onMounted, inject, onUnmounted } from 'vue';
 import { asyncDebounce } from '../utilities.js'; // [cite: 42] Utility for rate limiting function calls
 import RangeSlider from '../components/shared/RangeSlider.vue';
 import InputGroup from '../components/shared/InputGroup.vue';
@@ -221,36 +221,24 @@ const debouncedApiCall = asyncDebounce(async (apiCall, successCallback, failureM
 
 
 // API methods for updating preset settings
-let prevEqPoints = null;
 const handleEQPointsUpdate = async (type, updatedPoints) => {
   if (!selectedPresetData.value || !prefEQSets.value || prefEQSets.value.length === 0) return;
 
   // Based on the logic in EQSection.vue, we can assume we are always editing the first set.
   const targetSet = prefEQSets.value[0];
 
-  if (prevEqPoints === null) {
-    // Store the original points of the target set for rollback.
-    prevEqPoints = JSON.parse(JSON.stringify(targetSet.peqs));
-  }
-
   // Update local state for immediate UI response by replacing the points in the target set.
   // This preserves the overall data structure and prevents the component from re-rendering.
   targetSet.peqs = updatedPoints;
 
-  await debouncedApiCall(
+  await performApiCall(
     () => apiClient.savePrefEqSet(selectedPresetName.value, updatedPoints),
     () => {
       showSuccess('EQ points updated');
-      prevEqPoints = null; // Reset after successful save
     },
     'Failed to update EQ points',
     () => {
       showError('Failed to update EQ points');
-      // Rollback on failure
-      if (prevEqPoints !== null) {
-        targetSet.peqs = prevEqPoints;
-        prevEqPoints = null;
-      }
     }
   );
 };
@@ -418,6 +406,27 @@ onMounted(async () => { // [cite: 156]
   console.log('PresetEditorView mounted', { props });
 
   await selectPreset(props.name);
+
+  // Setup WebSocket listener for active preset changes
+  console.log('PresetEditorView: apiClient defined?', !!apiClient);
+  apiClient.connectLiveUpdates(
+    (data) => {
+      if (data.messageType === 'activePresetChanged') {
+        console.log('Active preset changed, redirecting to home:', data.activePresetName);
+        router.push('/');
+      }
+    },
+    (error) => {
+      console.error('WebSocket error in PresetEditorView:', error);
+    },
+    () => {
+      console.log('WebSocket disconnected in PresetEditorView');
+    }
+  );
+});
+
+onUnmounted(() => {
+  apiClient.disconnectLiveUpdates();
 });
 
 async function openPresetModal(type, name) {

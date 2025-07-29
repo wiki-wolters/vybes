@@ -1,42 +1,43 @@
 #include "globals.h"
 #include "websocket.h"
+#include "web_server.h" // Include web_server.h to access the 'server' instance
 
-void handleWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
+AsyncWebSocket ws("/live-updates"); // Create the WebSocket instance
+
+void handleWebSocketEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
     switch (type) {
-        case WStype_DISCONNECTED:
-            Serial.printf("[%u] Disconnected!\n", num);
+        case WS_EVT_CONNECT:
+            Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
+            client->text("Connected to Vybes");
             break;
-        case WStype_CONNECTED: {
-            IPAddress ip = webSocket.remoteIP(num);
-            Serial.printf("[%u] Connected from %d.%d.%d.%d url: %s\n", num, ip[0], ip[1], ip[2], ip[3], payload);
-            // send message to client
-            webSocket.sendTXT(num, "Connected to Vybes");
+        case WS_EVT_DISCONNECT:
+            Serial.printf("WebSocket client #%u disconnected\n", client->id());
             break;
-        }
-        case WStype_TEXT:
-            Serial.printf("[%u] get Text: %s\n", num, payload);
-            // send message to client
-            // webSocket.sendTXT(num, "message here");
-            // send data to all connected clients
-            // webSocket.broadcastTXT("message here");
+        case WS_EVT_DATA:
+            // data packet
+            if (len > 0) {
+                if (type == WS_EVT_DATA) {
+                    AwsFrameInfo *info = (AwsFrameInfo*)arg;
+                    if (info->final && info->index == 0 && info->len == len) {
+                        //the whole message is in a single frame and we got all of it
+                        Serial.printf("WebSocket client #%u received: %s\n", client->id(), (char*)data);
+                    }
+                }
+            }
             break;
-        case WStype_BIN:
-        case WStype_ERROR:
-        case WStype_FRAGMENT_TEXT_START:
-        case WStype_FRAGMENT_BIN_START:
-        case WStype_FRAGMENT:
-        case WStype_FRAGMENT_FIN:
+        case WS_EVT_PONG:
+        case WS_EVT_ERROR:
             break;
     }
 }
 
 void setupWebSocket() {
-    webSocket.begin();
-    webSocket.onEvent(handleWebSocketEvent);
-    Serial.println("WebSocket server started on port 8080");
+    ws.onEvent(handleWebSocketEvent);
+    server.addHandler(&ws); // Attach the WebSocket to the AsyncWebServer
+    Serial.println("WebSocket server started on /live-updates");
 }
 
 void broadcastWebSocket(String message) {
-    webSocket.broadcastTXT(message);
+    ws.textAll(message);
     Serial.println("WebSocket broadcast: " + message);
 }
