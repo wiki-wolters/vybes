@@ -29,6 +29,8 @@ AudioMixer4              Right_mixer;
 AudioMixer4              Generator_mixer;   
 
 // Parametric EQ processors (multi-band)
+AudioAmplifier           Left_Pre_EQ_amp;
+AudioAmplifier           Right_Pre_EQ_amp;
 PEQProcessor peqLeft;
 PEQProcessor peqRight;
 
@@ -109,16 +111,20 @@ AudioConnection* externalInputConnections[] = {
 const size_t externalInputConnections_len = sizeof(externalInputConnections) / sizeof(externalInputConnections[0]);
 
 // Patchcords for PEQ processors
-AudioConnection patchCord_LeftMixerToPEQ(Left_mixer, 0, peqLeft, 0);
-AudioConnection patchCord_RightMixerToPEQ(Right_mixer, 0, peqRight, 0);
+AudioConnection patchCord_LeftMixerToPreEQ(Left_mixer, 0, Left_Pre_EQ_amp, 0);
+AudioConnection patchCord_RightMixerToPreEQ(Right_mixer, 0, Right_Pre_EQ_amp, 0);
+AudioConnection patchCord_LeftPreEQToPEQ(Left_Pre_EQ_amp, 0, peqLeft, 0);
+AudioConnection patchCord_RightPreEQToPEQ(Right_Pre_EQ_amp, 0, peqRight, 0);
 AudioConnection patchCord_PEQLeftToPostEQ(peqLeft, 0, Left_Post_EQ_amp, 0);
 AudioConnection patchCord_PEQRightToPostEQ(peqRight, 0, Right_Post_EQ_amp, 0);
 AudioConnection patchCord_PEQLeftToMonoMixer(peqLeft, 0, Mono_mixer, 0);
 AudioConnection patchCord_PEQRightToMonoMixer(peqRight, 0, Mono_mixer, 1);
 AudioConnection patchCord_PEQMonoToMonoPostEQ(Mono_mixer, 0, Mono_Post_EQ_amp, 0); // Added source port 0 for Mono_mixer
 AudioConnection* peqConnections[] = {
-  &patchCord_LeftMixerToPEQ,
-  &patchCord_RightMixerToPEQ,
+  &patchCord_LeftMixerToPreEQ,
+  &patchCord_RightMixerToPreEQ,
+  &patchCord_LeftPreEQToPEQ,
+  &patchCord_RightPreEQToPEQ,
   &patchCord_PEQLeftToPostEQ,
   &patchCord_PEQRightToPostEQ,
   &patchCord_PEQLeftToMonoMixer,
@@ -215,21 +221,20 @@ const size_t bypassDelayConnections_len = sizeof(bypassDelayConnections) / sizeo
 //Analog outs
 AudioConnection          patchCord_LeftPostDelayAmpToAnalogOut(Left_Post_Delay_amp, 0, L_R_Analog_Out, 0);
 AudioConnection          patchCord_RightPostDelayAmpToAnalogOut(Right_Post_Delay_amp, 0, L_R_Analog_Out, 1);
-AudioConnection          patchCord_SubPostDelayAmpToAnalogOut(Sub_Post_Delay_amp, 0, Sub_Analog_Out, 0);
+AudioConnection          patchCord_SubPostDelayAmpToAnalogOutL(Sub_Post_Delay_amp, 0, Sub_Analog_Out, 0);
+AudioConnection          patchCord_SubPostDelayAmpToAnalogOutR(Sub_Post_Delay_amp, 0, Sub_Analog_Out, 1);
 // Digital outs
 AudioConnection          patchCord_LeftPostDelayAmpToSpdifOut(Left_Post_Delay_amp, 0, L_R_Spdif_Out, 0);
 AudioConnection          patchCord_RightPostDelayAmpToSpdifOut(Right_Post_Delay_amp, 0, L_R_Spdif_Out, 1);
 AudioConnection* outputConnections[] = {
   &patchCord_LeftPostDelayAmpToAnalogOut,
   &patchCord_RightPostDelayAmpToAnalogOut,
-  &patchCord_SubPostDelayAmpToAnalogOut,
+  &patchCord_SubPostDelayAmpToAnalogOutL,
+  &patchCord_SubPostDelayAmpToAnalogOutR,
   &patchCord_LeftPostDelayAmpToSpdifOut,
   &patchCord_RightPostDelayAmpToSpdifOut
 };
 const size_t outputConnections_len = sizeof(outputConnections) / sizeof(outputConnections[0]);
-
-AudioConnection spdifLeftToAnalogOut(Optical_in, 0, L_R_Analog_Out, 0);
-AudioConnection spdifRightToAnalogOut(Optical_in, 1, L_R_Analog_Out, 1);
 
 const int CURRENT_VERSION = 3;
 bool firFilesPending = false;
@@ -307,6 +312,10 @@ void setup() {
   // Initialize PEQ processors
   peqLeft.begin(AUDIO_SAMPLE_RATE);
   peqRight.begin(AUDIO_SAMPLE_RATE);
+
+  // Set pre-EQ gain to provide headroom for EQ boosts
+  Left_Pre_EQ_amp.gain(0.5);
+  Right_Pre_EQ_amp.gain(0.5);
 
   // Explicitly set all amps to gain=1.0
   Left_Post_EQ_amp.gain(1.0);
@@ -489,12 +498,21 @@ void setCrossoverFrequency(uint16_t frequency) {
   Serial.println("Set crossover freq: " + String(frequency));
   state.crossoverFrequency = frequency;
   state.isDirty = true;
-  Left_highpass.setHighpass(0, state.crossoverFrequency, 0.707f); // Stage 1
-  Left_highpass.setHighpass(1, state.crossoverFrequency, 0.707f); // Stage 2
-  Right_highpass.setHighpass(0, state.crossoverFrequency, 0.707f); // Stage 1
-  Right_highpass.setHighpass(1, state.crossoverFrequency, 0.707f); // Stage 2
-  Sub_lowpass.setLowpass(0, state.crossoverFrequency, 0.707f); // Stage 1
-  Sub_lowpass.setLowpass(1, state.crossoverFrequency, 0.707f); // Stage 2
+
+  // Use a 4th-order Linkwitz-Riley filter for a steeper cutoff
+  float q = 0.707f; // Q value for a 2nd-order Butterworth filter
+
+  // Calculate coefficients for a 2nd-order Butterworth filter
+  float a[3], b[3];
+  // High-pass for left and right channels
+  Left_highpass.setHighpass(0, state.crossoverFrequency, q);
+  Left_highpass.setHighpass(1, state.crossoverFrequency, q);
+  Right_highpass.setHighpass(0, state.crossoverFrequency, q);
+  Right_highpass.setHighpass(1, state.crossoverFrequency, q);
+
+  // Low-pass for the subwoofer
+  Sub_lowpass.setLowpass(0, state.crossoverFrequency, q);
+  Sub_lowpass.setLowpass(1, state.crossoverFrequency, q);
 }
 
 void setFIR(String leftFile, String rightFile, String subFile) {
