@@ -263,7 +263,7 @@ const emitChange = () => {
     if (trailingCall) {
       emitChange();
     }
-  }, 100);
+  }, 250);
 };
 
 // Frequency conversion (logarithmic scale)

@@ -502,8 +502,6 @@ void setCrossoverFrequency(uint16_t frequency) {
   // Use a 4th-order Linkwitz-Riley filter for a steeper cutoff
   float q = 0.707f; // Q value for a 2nd-order Butterworth filter
 
-  // Calculate coefficients for a 2nd-order Butterworth filter
-  float a[3], b[3];
   // High-pass for left and right channels
   Left_highpass.setHighpass(0, state.crossoverFrequency, q);
   Left_highpass.setHighpass(1, state.crossoverFrequency, q);
