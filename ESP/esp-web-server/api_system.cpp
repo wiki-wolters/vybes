@@ -36,7 +36,14 @@ void handleGetStatus(AsyncWebServerRequest *request) {
 }
 
 void handlePutMute(AsyncWebServerRequest *request) {
-    String state = request->pathArg(0);
+    if (!request->hasParam("state")) {
+        request->send(400, "text/plain", "Missing required parameters");
+        return;
+    }
+    String state = request->getParam("state")->value();
+    
+    Serial.print("Put Mute: ");Serial.println(state);
+
     if (state != "on" && state != "off") {
         request->send(400, "text/plain", "Invalid state");
         return;
@@ -47,7 +54,7 @@ void handlePutMute(AsyncWebServerRequest *request) {
 
     sendOnOffToTeensy(CMD_SET_MUTE, current_config.muted);
 
-    DynamicJsonDocument doc(256);
+        DynamicJsonDocument doc(1024);
     doc["muted"] = current_config.muted;
 
     String response;
@@ -58,7 +65,11 @@ void handlePutMute(AsyncWebServerRequest *request) {
 }
 
 void handlePutMutePercent(AsyncWebServerRequest *request) {
-    String percentStr = request->pathArg(0);
+    if (!request->hasParam("percent")) {
+        request->send(400, "text/plain", "Missing required parameters");
+        return;
+    }
+    String percentStr = request->getParam("percent")->value();
     int percent = percentStr.toInt();
 
     if (percent < 0 || percent > 100) {
@@ -71,7 +82,7 @@ void handlePutMutePercent(AsyncWebServerRequest *request) {
 
     sendFloatToTeensy(CMD_SET_MUTE_PERCENT, percent);
 
-    DynamicJsonDocument doc(256);
+        DynamicJsonDocument doc(1024);
     doc["mutePercent"] = current_config.mutePercent;
 
     String response;

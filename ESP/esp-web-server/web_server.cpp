@@ -16,8 +16,6 @@
 
 AsyncWebServer server(80);
 
-
-
 void handleBackup(AsyncWebServerRequest *request) {
     AsyncWebServerResponse *response = request->beginResponse(LittleFS, CONFIG_FILE, "application/msgpack", true);
     response->addHeader("Content-Disposition", "attachment; filename=\"vybes_config.msgpack\"");
@@ -59,80 +57,57 @@ void setupWebServer() {
 
     // API Routes - System Status
     server.on("/status", HTTP_GET, handleGetStatus);
-    server.on("^\\/mute\\/(on|off)$", HTTP_PUT, handlePutMute);
-    server.on("^\\/mute\\/percent\\/(\\d+)$", HTTP_PUT, handlePutMutePercent);
+    server.on("/mute/percent", HTTP_PUT, handlePutMutePercent);
+    server.on("/mute", HTTP_PUT, handlePutMute);
 
     // API Routes - Speaker & Input gains
-    server.on("^\\/speaker\\/(left|right|sub)\\/gain\\/([\\d.]+)$", HTTP_PUT, handlePutSpeakerGain);
+    server.on("/gains/speaker", HTTP_PUT, handlePutSpeakerGain);
     server.addHandler(new AsyncCallbackJsonWebHandler("/gains/input", handlePutInputGains));
     
     // API Routes - FIR Filter Management
     server.on("/fir/files", HTTP_GET, handleGetFirFiles);
-    server.on("^\\/preset\\/([^\\/]+)\\/fir\\/(left|right|sub)\\/load\\/([^\\/]+)$", HTTP_PUT, handlePutPresetFir);
-    server.on("^\\/preset\\/([^\\/]+)\\/fir\\/enabled\\/(on|off)$", HTTP_PUT, handlePutPresetFirEnabled);
+    server.on("/preset/fir/enabled", HTTP_PUT, handlePutPresetFirEnabled);
+    server.on("/preset/fir", HTTP_PUT, handlePutPresetFir);
 
-    // API Routes - Tone Generation
-    server.on("^\\/noise\\/([\\d.]+)$", HTTP_PUT, handlePutNoise);
+    server.on("/preset/active", HTTP_PUT, handlePutActivePreset);
+
+    //Feature enablement
+    server.on("/preset/delay/enabled", HTTP_PUT, handlePutPresetDelayEnabled);
+    server.on("/preset/eq/enabled", HTTP_PUT, handlePutPresetEQEnabled);
+    server.on("/preset/crossover/enabled", HTTP_PUT, handlePutPresetCrossoverEnabled);
+
+    // API Routes - Speaker Configuration
+    server.on("/preset/delay", HTTP_PUT, handlePutPresetDelayNamed);
+
+    server.addHandler(new AsyncCallbackJsonWebHandler("/preset/eq", handlePutPresetEQPoints));
+
+    // API Routes - Crossover and Equal Loudness
+    server.on("/preset/crossover", HTTP_PUT, handlePutPresetCrossover);
 
     // API Routes - Preset Management
     server.on("/presets", HTTP_GET, handleGetPresets);
-    server.on("/preset/*", HTTP_DELETE, handleDeletePreset);
-    server.on("/preset/*", HTTP_GET, handleGetPreset);
-    server.on("/preset/create/*", HTTP_POST, handlePostPresetCreate);
-
-    server.on("^\\/preset\\/(?:copy|rename)\\/([^\\/]+)\\/([^\\/]+)$", HTTP_POST|HTTP_PUT, [](AsyncWebServerRequest *request){
-        if (request->method() == HTTP_POST) {
-            handlePostPresetCopy(request);
-        } else if (request->method() == HTTP_PUT) {
-            handlePutPresetRename(request);
-        }
-    });
-    server.on("/preset/active/*", HTTP_PUT, handlePutActivePreset);
-
-    //Feature enablement
-    server.on("^\\/preset\\/([^\\/]+)\\/(delay|eq\\/pref|crossover)\\/enabled\\/(on|off)$", HTTP_PUT, [](AsyncWebServerRequest *request){
-        String feature = request->pathArg(1);
-        Serial.print("Toggle preset feature: "); Serial.println(feature);
-
-        if (feature == "delay") {
-            handlePutPresetDelayEnabled(request);
-        } else if (feature == "eq/pref") {
-            handlePutPresetEQEnabled(request);
-        } else if (feature == "crossover") {
-            handlePutPresetCrossoverEnabled(request);
+    server.on("/preset", HTTP_DELETE, handleDeletePreset);
+    server.on("/preset", HTTP_GET, handleGetPreset);
+    
+    server.on("/preset", HTTP_POST, [](AsyncWebServerRequest *request){
+        if (request->hasParam("action")) {
+            String action = request->getParam("action")->value();
+            if (action == "create") {
+                handlePostPresetCreate(request);
+            } else if (action == "copy") {
+                handlePostPresetCopy(request);
+            }
         }
     });
 
-    // API Routes - Speaker Configuration
-    server.on("^\\/preset\\/([^\\/]+)\\/delay\\/(left|right|sub)\\/([\\d.]+)$", HTTP_PUT, handlePutPresetDelayNamed);
-
-    server.on("^\\/preset\\/([^\\/]+)\\/eq\\/pref\\/0$", HTTP_PUT, 
-        [](AsyncWebServerRequest *request){}, 
-        NULL, 
-        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
-            // Buffer the body
-            if (index == 0) {
-                request->_tempObject = malloc(total + 1);
-                if (request->_tempObject == NULL) {
-                    // Failed to allocate memory
-                    request->send(500, "text/plain", "Internal Server Error");
-                    return;
-                }
-            }
-            memcpy((uint8_t*)request->_tempObject + index, data, len);
-
-            // When the body is completely received, process it
-            if (index + len == total) {
-                ((uint8_t*)request->_tempObject)[total] = '\0'; // Null-terminate the buffer
-                handlePutPresetEQPoints(request, (uint8_t*)request->_tempObject, total);
-                free(request->_tempObject);
-                request->_tempObject = NULL;
+    server.on("/preset", HTTP_PUT, [](AsyncWebServerRequest *request) {
+        if (request->hasParam("action")) {
+            String action = request->getParam("action")->value();
+            if (action == "rename") {
+                handlePutPresetRename(request);
             }
         }
-    );
-
-    // API Routes - Crossover and Equal Loudness
-    server.on("^\\/preset\\/([^\\/]+)\\/crossover\\/freq\\/(\\d+)$", HTTP_PUT, handlePutPresetCrossover);
+    });
 
     // API Routes - Backup and Restore
     server.on("/backup", HTTP_GET, handleBackup);

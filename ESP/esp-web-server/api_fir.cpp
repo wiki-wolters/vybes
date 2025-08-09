@@ -52,9 +52,13 @@ void handleGetFirFiles(AsyncWebServerRequest *request) {
 }
 
 void handlePutPresetFir(AsyncWebServerRequest *request) {
-    String presetName = request->pathArg(0);
-    String speaker = request->pathArg(1);
-    String filename = request->pathArg(2);
+    if (!request->hasParam("preset_name") || !request->hasParam("speaker") || !request->hasParam("file")) {
+        request->send(400, "text/plain", "Missing required parameters");
+        return;
+    }
+    String presetName = request->getParam("preset_name")->value();
+    String speaker = request->getParam("speaker")->value();
+    String filename = request->getParam("file")->value();
     
     if (speaker != "left" && speaker != "right" && speaker != "sub") {
         request->send(400, "text/plain", "Invalid speaker");
@@ -84,7 +88,7 @@ void handlePutPresetFir(AsyncWebServerRequest *request) {
     sendToTeensy(CMD_SET_FIR, speaker, filename);
     
     // Prepare and send response
-    DynamicJsonDocument doc(128);
+        DynamicJsonDocument doc(1024);
     doc["status"] = "ok";
     doc["speaker"] = speaker;
     doc["filename"] = filename;
@@ -98,8 +102,16 @@ void handlePutPresetFir(AsyncWebServerRequest *request) {
 }
 
 void handlePutPresetFirEnabled(AsyncWebServerRequest *request) {
-    String presetName = request->pathArg(0);
-    String state = request->pathArg(1);
+    if (!request->hasParam("preset_name")) {
+        request->send(400, "text/plain", "Missing preset_name parameter");
+        return;
+    }
+    if (!request->hasParam("state")) {
+        request->send(400, "text/plain", "Missing state parameter");
+        return;
+    }
+    String presetName = request->getParam("preset_name")->value();
+    String state = request->getParam("state")->value();
     
     if (state != "on" && state != "off") {
         request->send(400, "text/plain", "Invalid state");
@@ -121,7 +133,7 @@ void handlePutPresetFirEnabled(AsyncWebServerRequest *request) {
     sendOnOffToTeensy(CMD_SET_FIR_ENABLED, state == "on");
     
     // Prepare and send response
-    DynamicJsonDocument doc(128);
+        DynamicJsonDocument doc(1024);
     doc["status"] = "ok";
     doc["FIRFiltersEnabled"] = (state == "on");
     
@@ -132,4 +144,3 @@ void handlePutPresetFirEnabled(AsyncWebServerRequest *request) {
     // Broadcast update
     broadcastWebSocket(response);
 }
-

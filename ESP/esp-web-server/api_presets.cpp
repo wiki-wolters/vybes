@@ -28,8 +28,11 @@ void handleGetPresets(AsyncWebServerRequest *request) {
 }
 
 void handleGetPreset(AsyncWebServerRequest *request) {
-    String fullPath = request->url(); // This will be "/preset/Default"
-    String presetName = fullPath.substring(8); // Get the part after "/preset/"
+    if (!request->hasParam("name")) {
+        request->send(400, "text/plain", "Missing required parameters");
+        return;
+    }
+    String presetName = request->getParam("name")->value();
     int presetIndex = find_preset_by_name(presetName.c_str());
 
     if (presetIndex == -1) {
@@ -84,8 +87,11 @@ void handleGetPreset(AsyncWebServerRequest *request) {
 }
 
 void handlePostPresetCreate(AsyncWebServerRequest *request) {
-    String fullPath = request->url(); // This will be "/preset/create/Default"
-    String presetName = fullPath.substring(15); // Get the part after "/preset/create/"
+    if (!request->hasParam("name")) {
+        request->send(400, "text/plain", "Missing required parameters");
+        return;
+    }
+    String presetName = request->getParam("name")->value();
 
     if (presetName.length() == 0 || presetName.length() >= PRESET_NAME_MAX_LEN) {
         request->send(400, "text/plain", "Preset name must be between 1 and " + String(PRESET_NAME_MAX_LEN) + " characters");
@@ -129,8 +135,12 @@ void handlePostPresetCreate(AsyncWebServerRequest *request) {
 }
 
 void handlePostPresetCopy(AsyncWebServerRequest *request) {
-    String sourceName = request->pathArg(0);
-    String destName = request->pathArg(1);
+    if (!request->hasParam("source") || !request->hasParam("destination")) {
+        request->send(400, "text/plain", "Missing required parameters");
+        return;
+    }
+    String sourceName = request->getParam("source")->value();
+    String destName = request->getParam("destination")->value();
 
     if (destName.length() == 0 || destName.length() >= PRESET_NAME_MAX_LEN) {
         request->send(400, "text/plain", "Destination preset name must be between 1 and " + String(PRESET_NAME_MAX_LEN) + " characters");
@@ -164,8 +174,12 @@ void handlePostPresetCopy(AsyncWebServerRequest *request) {
 }
 
 void handlePutPresetRename(AsyncWebServerRequest *request) {
-    String oldName = request->pathArg(0);
-    String newName = request->pathArg(1);
+    if (!request->hasParam("old_name") || !request->hasParam("new_name")) {
+        request->send(400, "text/plain", "Missing required parameters");
+        return;
+    }
+    String oldName = request->getParam("old_name")->value();
+    String newName = request->getParam("new_name")->value();
 
     if (newName.length() == 0 || newName.length() >= PRESET_NAME_MAX_LEN) {
         request->send(400, "text/plain", "Invalid new preset name");
@@ -192,8 +206,11 @@ void handlePutPresetRename(AsyncWebServerRequest *request) {
 }
 
 void handleDeletePreset(AsyncWebServerRequest *request) {
-    String fullPath = request->url(); // This will be "/preset/Default"
-    String presetName = fullPath.substring(8); // Get the part after "/preset/"
+    if (!request->hasParam("name")) {
+        request->send(400, "text/plain", "Missing required parameters");
+        return;
+    }
+    String presetName = request->getParam("name")->value();
 
     if (presetName == "Default") {
         request->send(400, "text/plain", "Cannot delete the default preset");
@@ -222,8 +239,11 @@ void handleDeletePreset(AsyncWebServerRequest *request) {
 }
 
 void handlePutActivePreset(AsyncWebServerRequest *request) {
-    String fullPath = request->url(); // This will be "/preset/active/Default"
-    String presetName = fullPath.substring(15); // Get the part after "/preset/active/"
+    if (!request->hasParam("name")) {
+        request->send(400, "text/plain", "Missing required parameters");
+        return;
+    }
+    String presetName = request->getParam("name")->value();
     int presetIndex = find_preset_by_name(presetName.c_str());
 
     if (presetIndex == -1) {
@@ -238,7 +258,7 @@ void handlePutActivePreset(AsyncWebServerRequest *request) {
     request->send(200, "application/json", "{}"); // HTTP response
 
     // Prepare data for WebSocket broadcast
-    DynamicJsonDocument doc(256);
+        DynamicJsonDocument doc(1024);
     doc["messageType"] = "activePresetChanged";
     doc["activePresetName"] = current_config.presets[current_config.active_preset_index].name;
     doc["activePresetIndex"] = current_config.active_preset_index;
@@ -250,8 +270,12 @@ void handlePutActivePreset(AsyncWebServerRequest *request) {
 }
 
 void handlePutPresetDelayEnabled(AsyncWebServerRequest *request) {
-    String presetName = request->pathArg(0);
-    String state = request->pathArg(2);
+    if (!request->hasParam("preset_name") || !request->hasParam("enabled")) {
+        request->send(400, "text/plain", "Missing required parameters");
+        return;
+    }
+    String presetName = request->getParam("preset_name")->value();
+    String state = request->getParam("enabled")->value();
     
     if (state != "on" && state != "off") {
         request->send(400, "text/plain", "Invalid state. Must be 'on' or 'off'");
@@ -272,7 +296,7 @@ void handlePutPresetDelayEnabled(AsyncWebServerRequest *request) {
     sendOnOffToTeensy(CMD_SET_DELAY_ENABLED, enabled);
     
     // Prepare response
-    DynamicJsonDocument doc(128);
+        DynamicJsonDocument doc(1024);
     doc["status"] = "ok";
     doc["enabled"] = enabled;
     
@@ -285,9 +309,13 @@ void handlePutPresetDelayEnabled(AsyncWebServerRequest *request) {
 }
 
 void handlePutPresetDelayNamed(AsyncWebServerRequest *request) {
-    String presetName = request->pathArg(0);
-    String speaker = request->pathArg(1);
-    String delayUsStr = request->pathArg(2);
+    if (!request->hasParam("preset_name") || !request->hasParam("speaker") || !request->hasParam("value")) {
+        request->send(400, "text/plain", "Missing required parameters");
+        return;
+    }
+    String presetName = request->getParam("preset_name")->value();
+    String speaker = request->getParam("speaker")->value();
+    String delayUsStr = request->getParam("value")->value();
     
     if (speaker != "left" && speaker != "right" && speaker != "sub") {
         request->send(400, "text/plain", "Invalid speaker. Must be 'left', 'right', or 'sub'");
@@ -324,7 +352,7 @@ void handlePutPresetDelayNamed(AsyncWebServerRequest *request) {
         String(current_config.presets[presetIndex].delay.sub, 2));
     
     // Prepare response
-    DynamicJsonDocument doc(128);
+        DynamicJsonDocument doc(1024);
     doc["status"] = "ok";
     doc["speaker"] = speaker;
     doc["delayUs"] = delayUs;

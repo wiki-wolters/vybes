@@ -90,7 +90,7 @@ void handleButton() {
             save_config();
 
             // Prepare data for WebSocket broadcast
-            DynamicJsonDocument doc(256);
+                        DynamicJsonDocument doc(1024);
             doc["messageType"] = "activePresetChanged";
             doc["activePresetName"] = current_config.presets[current_config.active_preset_index].name;
             doc["activePresetIndex"] = current_config.active_preset_index;

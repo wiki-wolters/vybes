@@ -25,16 +25,14 @@ class VybesAPI {
     const url = `${this.baseUrl}${endpoint}`;
     const config = {
       method: method.toUpperCase(),
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: {},
     };
 
-    if (body && (method === 'POST' || method === 'PUT')) {
+    if (body) {
       if (isFormData) {
-        delete config.headers['Content-Type'];
         config.body = body;
       } else {
+        config.headers['Content-Type'] = 'application/json';
         config.body = JSON.stringify(body);
       }
     }
@@ -65,7 +63,7 @@ class VybesAPI {
     if (spl < 40 || spl > 120) {
       throw new Error('SPL must be between 40 and 120');
     }
-    return this.request('PUT', `/calibrate/${spl}`);
+    return this.request('PUT', `/calibrate?spl=${spl}`);
   }
 
   /**
@@ -84,7 +82,7 @@ class VybesAPI {
    */
   async setSubwoofer(state) {
     const stateStr = state ? 'on' : 'off';
-    return this.request('PUT', `/sub/${stateStr}`);
+    return this.request('PUT', `/sub?state=${stateStr}`);
   }
 
   /**
@@ -93,7 +91,7 @@ class VybesAPI {
    */
   async setBypass(state) {
     const stateStr = state ? 'on' : 'off';
-    return this.request('PUT', `/bypass/${stateStr}`);
+    return this.request('PUT', `/bypass?state=${stateStr}`);
   }
 
   /**
@@ -102,7 +100,7 @@ class VybesAPI {
    */
   async setMute(state) {
     const stateStr = state ? 'on' : 'off';
-    return this.request('PUT', `/mute/${stateStr}`);
+    return this.request('PUT', `/mute?state=${stateStr}`);
   }
 
   /**
@@ -113,7 +111,7 @@ class VybesAPI {
     if (percent < 1 || percent > 100) {
       throw new Error('Mute percent must be between 1 and 100');
     }
-    return this.request('PUT', `/mute/percent/${percent}`);
+    return this.request('PUT', `/mute/percent?percent=${percent}`);
   }
 
   /**
@@ -121,7 +119,7 @@ class VybesAPI {
    * @param {string} name - Preset name to activate
    */
   async setActivePreset(name) {
-    return this.request('PUT', `/preset/active/${encodeURIComponent(name)}`);
+    return this.request('PUT', `/preset/active?name=${encodeURIComponent(name)}`);
   }
 
   /**
@@ -146,7 +144,7 @@ class VybesAPI {
     if (volume < 1 || volume > 100) {
       throw new Error('Volume must be between 1 and 100');
     }
-    return this.request('PUT', `/generate/tone/${frequency}/${volume}`);
+    return this.request('PUT', `/generate/tone?frequency=${frequency}&volume=${volume}`);
   }
 
   /**
@@ -164,7 +162,7 @@ class VybesAPI {
     if (volume < 0 || volume > 100) {
       throw new Error('Volume must be between 0 and 100');
     }
-    return this.request('PUT', `/generate/noise/${volume}`);
+    return this.request('PUT', `/noise?level=${volume}`);
   }
 
   /**
@@ -190,7 +188,7 @@ class VybesAPI {
    * @returns {Promise<Object>} Object containing delays for left, right, and sub
    */
   async getSpeakerDelays(presetName) {
-    return this.request('GET', `/preset/${encodeURIComponent(presetName)}/delays`);
+    return this.request('GET', `/preset/delays?preset_name=${encodeURIComponent(presetName)}`);
   }
 
   /**
@@ -200,7 +198,7 @@ class VybesAPI {
    * @param {number} delayMs - Delay in milliseconds
    */
   async setSpeakerDelay(presetName, speaker, delayMs) {
-    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/delay/${speaker}/${delayMs}`);
+    return this.request('PUT', `/preset/delay?preset_name=${encodeURIComponent(presetName)}&speaker=${speaker}&value=${delayMs}`);
   }
 
   /**
@@ -209,7 +207,7 @@ class VybesAPI {
    * @returns {Promise<Object>} Crossover settings
    */
   async getCrossover(presetName) {
-    return this.request('GET', `/preset/${encodeURIComponent(presetName)}/crossover`);
+    return this.request('GET', `/preset/crossover?preset_name=${encodeURIComponent(presetName)}`);
   }
 
   /**
@@ -218,11 +216,11 @@ class VybesAPI {
    * @param {number} frequency - Crossover frequency in Hz
    */
   async setCrossoverFreq(presetName, frequency) {
-    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/crossover/freq/${frequency}`);
+    return this.request('PUT', `/preset/crossover?preset_name=${encodeURIComponent(presetName)}&frequency=${frequency}`);
   }
 
   async updateFIREnabled(presetName, value) {
-    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/fir/enabled/${value ? 'on' : 'off'}`);
+    return this.request('PUT', `/preset/fir/enabled?preset_name=${encodeURIComponent(presetName)}&state=${value ? 'on' : 'off'}`);
   }
 
   /**
@@ -232,7 +230,7 @@ class VybesAPI {
    * @param {string} filterName - Name of the FIR filter file (empty string to clear)
    */
   async setFirFilter(presetName, channel, filterName) {
-    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/fir/file/${channel}/${encodeURIComponent(filterName)}`);
+    return this.request('PUT', `/preset/fir?preset_name=${encodeURIComponent(presetName)}&speaker=${channel}&file=${encodeURIComponent(filterName)}`);
   }
 
   /**
@@ -242,7 +240,7 @@ class VybesAPI {
    * @returns {Promise<Array>} Array of EQ sets with SPL and PEQ data
    */
   async getEqSets(presetName, type) {
-    return this.request('GET', `/preset/${encodeURIComponent(presetName)}/eq/${type}`);
+    return this.request('GET', `/preset/eq?preset_name=${encodeURIComponent(presetName)}&type=${type}`);
   }
 
   /**
@@ -251,7 +249,7 @@ class VybesAPI {
    * @returns {Promise<Object>} Preset configuration
    */
   async getPreset(name) {
-    return this.request('GET', `/preset/${encodeURIComponent(name)}`);
+    return this.request('GET', `/preset?name=${encodeURIComponent(name)}`);
   }
 
   /**
@@ -260,7 +258,7 @@ class VybesAPI {
    * @param {Array} peqPoints - Array of PEQ points
    */
   async savePrefEqSet(presetName, peqPoints) {
-    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/eq/pref/0`, peqPoints);
+    return this.request('PUT', `/preset/eq?preset_name=${encodeURIComponent(presetName)}`, peqPoints);
   }
 
   /**
@@ -268,7 +266,7 @@ class VybesAPI {
    * @param {string} name - Preset name (must be unique)
    */
   async createPreset(name) {
-    return this.request('POST', `/preset/create/${encodeURIComponent(name)}`);
+    return this.request('POST', `/preset?action=create&name=${encodeURIComponent(name)}`);
   }
 
   /**
@@ -277,7 +275,7 @@ class VybesAPI {
    * @param {string} newName - New preset name
    */
   async copyPreset(sourceName, newName) {
-    return this.request('POST', `/preset/copy/${encodeURIComponent(sourceName)}/${encodeURIComponent(newName)}`);
+    return this.request('POST', `/preset?action=copy&source=${encodeURIComponent(sourceName)}&destination=${encodeURIComponent(newName)}`);
   }
 
   /**
@@ -286,7 +284,7 @@ class VybesAPI {
    * @param {string} newName - New preset name
    */
   async renamePreset(oldName, newName) {
-    return this.request('PUT', `/preset/rename/${encodeURIComponent(oldName)}/${encodeURIComponent(newName)}`);
+    return this.request('PUT', `/preset?action=rename&old_name=${encodeURIComponent(oldName)}&new_name=${encodeURIComponent(newName)}`);
   }
 
   /**
@@ -294,7 +292,7 @@ class VybesAPI {
    * @param {string} name - Preset name
    */
   async deletePreset(name) {
-    return this.request('DELETE', `/preset/${encodeURIComponent(name)}`);
+    return this.request('DELETE', `/preset?name=${encodeURIComponent(name)}`);
   }
 
   // ===== SPEAKER DELAYS =====
@@ -310,11 +308,11 @@ class VybesAPI {
     if (!validSpeakers.includes(speaker)) {
       throw new Error('Speaker must be "left", "right", or "sub"');
     }
-    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/delay/${speaker}/${delayUs}`);
+    return this.request('PUT', `/preset/delay?preset_name=${encodeURIComponent(presetName)}&speaker=${speaker}&value=${delayUs}`);
   }
 
   async setSpeakerDelayEnabled(presetName, enabled) {
-    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/delay/enabled/${enabled ? 'on' : 'off'}`);
+    return this.request('PUT', `/preset/delay/enabled?preset_name=${encodeURIComponent(presetName)}&enabled=${enabled ? 'on' : 'off'}`);
   }
 
   // ===== EQ MANAGEMENT =====
@@ -334,7 +332,7 @@ class VybesAPI {
       throw new Error('Enabled must be a boolean');
     }
 
-    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/eq/${type}/enabled/${enabled ? 'on' : 'off'}`);
+    return this.request('PUT', `/preset/eq/enabled?preset_name=${encodeURIComponent(presetName)}&type=${type}&enabled=${enabled ? 'on' : 'off'}`);
   }
 
   /**
@@ -353,7 +351,7 @@ class VybesAPI {
    * @param {boolean} enabled - Whether crossover is enabled
    */
   async updateCrossoverEnabled(presetName, enabled) {
-    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/crossover/enabled/${enabled ? 'on' : 'off'}`);
+    return this.request('PUT', `/preset/crossover/enabled?preset_name=${encodeURIComponent(presetName)}&enabled=${enabled ? 'on' : 'off'}`);
   }
 
   /**
@@ -365,7 +363,7 @@ class VybesAPI {
     if (frequency < 40 || frequency > 500) {
       throw new Error('Crossover frequency must be between 40 and 500 Hz');
     }
-    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/crossover/freq/${frequency}`);
+    return this.request('PUT', `/preset/crossover?preset_name=${encodeURIComponent(presetName)}&frequency=${frequency}`);
   }
 
   // ===== EQUAL LOUDNESS =====
@@ -377,7 +375,7 @@ class VybesAPI {
    */
   async setEqualLoudness(presetName, state) {
     const stateStr = state ? 'on' : 'off';
-    return this.request('PUT', `/preset/${encodeURIComponent(presetName)}/equal-loudness/${stateStr}`);
+    return this.request('PUT', `/preset/equal-loudness?preset_name=${encodeURIComponent(presetName)}&state=${stateStr}`);
   }
 
   // ===== CONFIGURATION =====
@@ -398,7 +396,7 @@ class VybesAPI {
 
   // ===== SPEAKER GAIN ===== //
   async setGlobalSpeakerGain(speaker, gain) {
-    return this.request('PUT', `/speaker/${speaker}/gain/${gain}`);
+    return this.request('PUT', `/gains/speaker?speaker=${speaker}&value=${gain}`);
   }
 
   /**
@@ -503,3 +501,6 @@ if (typeof module !== 'undefined' && module.exports) {
 
 // ES6 default export
 export default new VybesAPI();
+
+// Named export for class definition
+export { VybesAPI };

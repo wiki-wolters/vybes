@@ -10,8 +10,12 @@
 #include <ArduinoJson.h>
 
 void handlePutPresetCrossover(AsyncWebServerRequest *request) {
-    String presetName = request->pathArg(0);
-    String freqStr = request->pathArg(1);
+    if (!request->hasParam("preset_name") || !request->hasParam("frequency")) {
+        request->send(400, "text/plain", "Missing required parameters");
+        return;
+    }
+    String presetName = request->getParam("preset_name")->value();
+    String freqStr = request->getParam("frequency")->value();
     unsigned int freq = freqStr.toInt();
 
     // Validate frequency range (20Hz to 20kHz)
@@ -34,7 +38,7 @@ void handlePutPresetCrossover(AsyncWebServerRequest *request) {
     sendFloatToTeensy(CMD_SET_CROSSOVER_FREQ, freq);
     
     // Prepare and send response
-    DynamicJsonDocument doc(128);
+        DynamicJsonDocument doc(1024);
     doc["status"] = "ok";
     doc["crossoverFreq"] = freq;
     
@@ -47,8 +51,12 @@ void handlePutPresetCrossover(AsyncWebServerRequest *request) {
 }
 
 void handlePutPresetCrossoverEnabled(AsyncWebServerRequest *request) {
-    String presetName = request->pathArg(0);
-    String state = request->pathArg(2);
+    if (!request->hasParam("preset_name") || !request->hasParam("enabled")) {
+        request->send(400, "text/plain", "Missing required parameters");
+        return;
+    }
+    String presetName = request->getParam("preset_name")->value();
+    String state = request->getParam("enabled")->value();
     
     if (state != "on" && state != "off") {
         request->send(400, "text/plain", "Invalid state");
@@ -71,7 +79,7 @@ void handlePutPresetCrossoverEnabled(AsyncWebServerRequest *request) {
     sendOnOffToTeensy(CMD_SET_CROSSOVER_ENABLED, enabled);
     
     // Prepare and send response
-    DynamicJsonDocument doc(128);
+        DynamicJsonDocument doc(1024);
     doc["status"] = "ok";
     doc["crossoverEnabled"] = enabled;
     
@@ -83,8 +91,12 @@ void handlePutPresetCrossoverEnabled(AsyncWebServerRequest *request) {
     broadcastWebSocket(response);
 }
 
-void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size_t len) {
-    String presetName = request->pathArg(0);
+void handlePutPresetEQPoints(AsyncWebServerRequest *request, JsonVariant &json) {
+    if (!request->hasParam("preset_name")) {
+        request->send(400, "text/plain", "Missing required parameters");
+        return;
+    }
+    String presetName = request->getParam("preset_name")->value();
     const int spl = 0; // Hardcoded SPL
 
     int presetIndex = find_preset_by_name(presetName.c_str());
@@ -123,16 +135,7 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size
 
     PEQSet* target_set = &sets[set_index];
 
-    Serial.printf("Updating EQ points for preset '%s' at SPL %d with body %s\n", presetName.c_str(), spl, (const char*)data);
-    DynamicJsonDocument doc(1024); // Adjust size as needed
-    DeserializationError error = deserializeJson(doc, (const char*)data);
-
-    if (error) {
-        request->send(400, "text/plain", "Invalid JSON");
-        return;
-    }
-
-    JsonArray pointsArray = doc.as<JsonArray>();
+    JsonArray pointsArray = json.as<JsonArray>();
     if (pointsArray.size() > MAX_PEQ_POINTS) {
         request->send(400, "text/plain", "Too many PEQ points");
         return;
@@ -169,13 +172,14 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size
     scheduleConfigWrite();
     
     // Prepare and send response
-    doc["status"] = "ok";
-    doc["eqType"] = "pref"; // Hardcoded
-    doc["spl"] = spl;
-    doc["numPoints"] = target_set->num_points;
+        DynamicJsonDocument responseDoc(1024);
+    responseDoc["status"] = "ok";
+    responseDoc["eqType"] = "pref"; // Hardcoded
+    responseDoc["spl"] = spl;
+    responseDoc["numPoints"] = target_set->num_points;
     
     String response;
-    serializeJson(doc, response);
+    serializeJson(responseDoc, response);
     request->send(200, "application/json", response);
     
     // Broadcast update
@@ -183,8 +187,12 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, uint8_t *data, size
 }
 
 void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
-    String presetName = request->pathArg(0);
-    String state = request->pathArg(2);
+    if (!request->hasParam("preset_name") || !request->hasParam("enabled")) {
+        request->send(400, "text/plain", "Missing required parameters");
+        return;
+    }
+    String presetName = request->getParam("preset_name")->value();
+    String state = request->getParam("enabled")->value();
     
     if (state != "on" && state != "off") {
         request->send(400, "text/plain", "Invalid state. Must be 'on' or 'off'");
@@ -235,7 +243,7 @@ void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
     scheduleConfigWrite();
     
     // Prepare and send response
-    DynamicJsonDocument doc(128);
+        DynamicJsonDocument doc(1024);
     doc["status"] = "ok";
     doc["enabled"] = enabled;
     
@@ -265,7 +273,11 @@ void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
 }
 
 void handleResetEQFilters(AsyncWebServerRequest *request) {
-    String presetName = request->pathArg(0);
+    if (!request->hasParam("preset_name")) {
+        request->send(400, "text/plain", "Missing required parameters");
+        return;
+    }
+    String presetName = request->getParam("preset_name")->value();
     
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
@@ -290,7 +302,7 @@ void handleResetEQFilters(AsyncWebServerRequest *request) {
     sendToTeensy(CMD_RESET_EQ_FILTERS, "pref");
     
     // Prepare and send response
-    DynamicJsonDocument doc(128);
+        DynamicJsonDocument doc(1024);
     doc["status"] = "ok";
     doc["eqType"] = "pref";
     
@@ -301,4 +313,3 @@ void handleResetEQFilters(AsyncWebServerRequest *request) {
     // Broadcast update
     broadcastWebSocket(response);
 }
-

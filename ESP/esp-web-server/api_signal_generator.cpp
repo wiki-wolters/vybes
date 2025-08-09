@@ -6,8 +6,12 @@
 #include "utilities.h"
 
 void handlePutTone(AsyncWebServerRequest *request) {
-    String freqStr = request->pathArg(0);
-    String volStr = request->pathArg(1);
+    if (!request->hasParam("frequency") || !request->hasParam("volume")) {
+        request->send(400, "text/plain", "Missing required parameters");
+        return;
+    }
+    String freqStr = request->getParam("frequency")->value();
+    String volStr = request->getParam("volume")->value();
     int freq = freqStr.toInt();
     int vol = volStr.toInt();
 
@@ -26,7 +30,7 @@ void handlePutTone(AsyncWebServerRequest *request) {
 
     sendToTeensy("tone", freqStr + "," + volStr);
 
-    DynamicJsonDocument doc(256);
+        DynamicJsonDocument doc(1024);
     doc["toneFrequency"] = current_config.toneFrequency;
     doc["toneVolume"] = current_config.toneVolume;
 
@@ -44,7 +48,7 @@ void handlePutToneStop(AsyncWebServerRequest *request) {
 
     sendToTeensy("tone_stop", "");
 
-    DynamicJsonDocument doc(256);
+        DynamicJsonDocument doc(1024);
     doc["toneFrequency"] = 0;
     doc["toneVolume"] = 0;
 
@@ -56,7 +60,11 @@ void handlePutToneStop(AsyncWebServerRequest *request) {
 }
 
 void handlePutNoise(AsyncWebServerRequest *request) {
-    String volStr = request->pathArg(0);
+    if (!request->hasParam("level")) {
+        request->send(400, "text/plain", "Missing required parameters");
+        return;
+    }
+    String volStr = request->getParam("level")->value();
     int vol = volStr.toInt();
 
     if (vol < 0 || vol > 100) {
@@ -69,7 +77,7 @@ void handlePutNoise(AsyncWebServerRequest *request) {
 
     sendToTeensy("noise", volStr);
 
-    DynamicJsonDocument doc(256);
+        DynamicJsonDocument doc(1024);
     doc["noiseVolume"] = current_config.noiseVolume;
 
     String response;

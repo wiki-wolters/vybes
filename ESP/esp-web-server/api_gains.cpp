@@ -6,8 +6,12 @@
 #include "utilities.h"
 
 void handlePutSpeakerGain(AsyncWebServerRequest *request) {
-    String speaker = request->pathArg(0);
-    float gain = request->pathArg(1).toFloat();
+    if (!request->hasParam("speaker") || !request->hasParam("value")) {
+        request->send(400, "text/plain", "Missing required parameters");
+        return;
+    }
+    String speaker = request->getParam("speaker")->value();
+    float gain = request->getParam("value")->value().toFloat();
 
     if (gain < 0.0f || gain > 2.0f) {
         request->send(400, "text/plain", "Gain must be between 0.0 and 2.0");
@@ -33,7 +37,7 @@ void handlePutSpeakerGain(AsyncWebServerRequest *request) {
         String(current_config.speakerGains.sub, 2));
     
     // Prepare and send response
-    DynamicJsonDocument doc(256);
+        DynamicJsonDocument doc(1024);
     doc[speaker + "Gain"] = gain;
     
     String response;
