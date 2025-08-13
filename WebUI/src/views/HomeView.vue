@@ -351,18 +351,26 @@ async function backupConfiguration() {
 async function restoreConfiguration() {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.json'; // Assuming backup files are JSON
+  input.accept = '.msgpack';
   input.onchange = async (event) => {
     const file = event.target.files[0];
     if (file) {
       const formData = new FormData();
       formData.append('file', file);
       try {
-        await apiClient.restore(formData);
-        alert('Configuration restored successfully!');
+        apiClient.restore(formData);
+        alert('Configuration restore initiated. The device will now reboot. The page will reload automatically to reflect the restored state.');
+        setTimeout(() => {
+          window.location.reload();
+        }, 3000);
       } catch (error) {
-        console.error('Failed to restore configuration:', error);
-        errorMessage.value = `Failed to restore configuration: ${error.message}`;
+        // This error is expected because the server reboots.
+        // We can ignore it and proceed with the optimistic UI update.
+        console.log('Ignoring expected error during restore:', error);
+        alert('Configuration restore initiated. The device will now reboot. The page will reload automatically to reflect the restored state.');
+        setTimeout(() => {
+          window.location.reload();
+        }, 3000);
       }
     }
   };

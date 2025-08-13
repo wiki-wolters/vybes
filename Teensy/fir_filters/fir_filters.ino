@@ -38,7 +38,7 @@ PEQProcessor peqRight;
 AudioAmplifier           Left_Post_EQ_amp;
 AudioAmplifier           Right_Post_EQ_amp;
 AudioAmplifier           Sub_Post_EQ_amp;
-AudioAmplifier           Mono_Post_EQ_amp; // Declaration for Mono_Post_EQ_amp
+AudioAmplifier           Mono_Post_EQ_amp;
 
 //Post crossover checkpoint (using amps with gain = 1.0)
 AudioAmplifier           Left_Post_Crossover_amp;
@@ -58,10 +58,15 @@ AudioAmplifier           Right_Post_Delay_amp;
 // Mono mix
 AudioMixer4              Mono_mixer;   
 
-// Crossover components
-AudioFilterBiquad        Left_highpass;  
-AudioFilterBiquad        Sub_lowpass;    
-AudioFilterBiquad        Right_highpass;
+// Crossover components (first stage)
+AudioFilterStateVariable  Left_highpass;  
+AudioFilterStateVariable  Sub_lowpass;    
+AudioFilterStateVariable  Right_highpass;
+
+// Crossover components (second stage for 4th order Butterworth)
+AudioFilterStateVariable  Left_highpass2;  
+AudioFilterStateVariable  Sub_lowpass2;    
+AudioFilterStateVariable  Right_highpass2;
 
 // FIR Filters
 AudioFilterFIRFloat      Left_FIR_Filter;
@@ -117,7 +122,7 @@ AudioConnection patchCord_LeftPreEQToPEQ(Left_Pre_EQ_amp, 0, peqLeft, 0);
 AudioConnection patchCord_RightPreEQToPEQ(Right_Pre_EQ_amp, 0, peqRight, 0);
 AudioConnection patchCord_PEQLeftToPostEQ(peqLeft, 0, Left_Post_EQ_amp, 0);
 AudioConnection patchCord_PEQRightToPostEQ(peqRight, 0, Right_Post_EQ_amp, 0);
-AudioConnection patchCord_PEQLeftToMonoMixer(peqLeft, 0, Mono_mixer, 0);
+AudioConnection patchCord_PEQLeftToMonoMixer(Left_Post_EQ_amp, 0, Mono_mixer, 0);
 AudioConnection patchCord_PEQRightToMonoMixer(peqRight, 0, Mono_mixer, 1);
 AudioConnection patchCord_PEQMonoToMonoPostEQ(Mono_mixer, 0, Mono_Post_EQ_amp, 0); // Added source port 0 for Mono_mixer
 AudioConnection* peqConnections[] = {
@@ -135,25 +140,34 @@ const size_t peqConnections_len = sizeof(peqConnections) / sizeof(peqConnections
 
 // Connect from Post-EQ checkpoint to Post-Crossover checkpoint via crossover
 AudioConnection          patchCord_LeftPostEQAmpToHighpass1(Left_Post_EQ_amp, 0, Left_highpass, 0);
-AudioConnection          patchCord_LeftHighpassToPostCrossoverAmp(Left_highpass, 0, Left_Post_Crossover_amp, 0);
+AudioConnection          patchCord_LeftHighpassToHighpass2(Left_highpass, 2, Left_highpass2, 0); // Output 2 = highpass
+AudioConnection          patchCord_LeftHighpass2ToPostCrossoverAmp(Left_highpass2, 2, Left_Post_Crossover_amp, 0);  // Output 2 = highpass
+
 AudioConnection          patchCord_RightPostEQAmpToHighpass1(Right_Post_EQ_amp, 0, Right_highpass, 0);
-AudioConnection          patchCord_RightHighpassToPostCrossoverAmp(Right_highpass, 0, Right_Post_Crossover_amp, 0);
+AudioConnection          patchCord_RightHighpassToHighpass2(Right_highpass, 2, Right_highpass2, 0); // Output 2 = highpass
+AudioConnection          patchCord_RightHighpass2ToPostCrossoverAmp(Right_highpass2, 2, Right_Post_Crossover_amp, 0);  // Output 2 = highpass
+
 AudioConnection          patchCord_MonoPostEQAmpToSubLowpass1(Mono_Post_EQ_amp, 0, Sub_lowpass, 0);
-AudioConnection          patchCord_SubLowpassToPostCrossoverAmp(Sub_lowpass, 0, Sub_Post_Crossover_amp, 0);
+AudioConnection          patchCord_SubLowpassToSubLowpass2(Sub_lowpass, 0, Sub_lowpass2, 0); // Output 0 = lowpass
+AudioConnection          patchCord_SubLowpass2ToPostCrossoverAmp(Sub_lowpass2, 0, Sub_Post_Crossover_amp, 0);  // Output 0 = lowpass
+
 AudioConnection* crossoverConnections[] = {
   &patchCord_LeftPostEQAmpToHighpass1,
-  &patchCord_LeftHighpassToPostCrossoverAmp,
+  &patchCord_LeftHighpassToHighpass2,
+  &patchCord_LeftHighpass2ToPostCrossoverAmp,
   &patchCord_RightPostEQAmpToHighpass1,
-  &patchCord_RightHighpassToPostCrossoverAmp,
+  &patchCord_RightHighpassToHighpass2,
+  &patchCord_RightHighpass2ToPostCrossoverAmp,
   &patchCord_MonoPostEQAmpToSubLowpass1,
-  &patchCord_SubLowpassToPostCrossoverAmp
+  &patchCord_SubLowpassToSubLowpass2,
+  &patchCord_SubLowpass2ToPostCrossoverAmp
 };
 const size_t crossoverConnections_len = sizeof(crossoverConnections) / sizeof(crossoverConnections[0]);
 
 // Connect from Post-EQ checkpoint to Post-Crossover checkpoint directly, bypassing crossover
 AudioConnection          patchCord_LeftPostEQAmpToPostCrossoverAmp(Left_Post_EQ_amp, 0, Left_Post_Crossover_amp, 0);
 AudioConnection          patchCord_RightPostEQAmpToPostCrossoverAmp(Right_Post_EQ_amp, 0, Right_Post_Crossover_amp, 0);
-AudioConnection          patchCord_MonoPostEQAmpToSubPostCrossoverAmp(Mono_Post_EQ_amp, 0, Sub_Post_Crossover_amp, 0); // Corrected Sub_Post_EQ_amp to Mono_Post_EQ_amp for consistency
+AudioConnection          patchCord_MonoPostEQAmpToSubPostCrossoverAmp(Mono_Post_EQ_amp, 0, Sub_Post_Crossover_amp, 0);
 AudioConnection* bypassCrossoverConnections[] = {
   &patchCord_LeftPostEQAmpToPostCrossoverAmp,
   &patchCord_RightPostEQAmpToPostCrossoverAmp,
@@ -307,7 +321,13 @@ void setup() {
   
   // Audio connections require memory to work
   Serial.println("Allocating audio memory");
-  AudioMemory(30); // Increased from 20 to handle complex audio graph
+  AudioMemory(60);
+  Serial.println("=== Audio Memory Debug ===");
+  Serial.print("AudioMemoryUsage(): ");
+  Serial.println(AudioMemoryUsage());
+  Serial.print("AudioMemoryUsageMax(): ");
+  Serial.println(AudioMemoryUsageMax());
+  Serial.println("========================");
 
   // Initialize PEQ processors
   peqLeft.begin(AUDIO_SAMPLE_RATE);
@@ -331,21 +351,32 @@ void setup() {
   Right_Post_Delay_amp.gain(1.0);
   Sub_Post_Delay_amp.gain(1.0);
 
+  // Set mono mixer amp gain to 0.5
+  Mono_mixer.gain(0, 0.5);
+  Mono_mixer.gain(1, 0.5);
 
   // Apply state
   Serial.println("Applying state");
   setInputGains(state.gainBluetooth, state.gainOptical, state.gainGenerator);
   setSpeakerGains(state.gainLeft, state.gainRight, state.gainSub);
   setEQEnabled(state.eqEnabled);
-  setCrossoverEnabled(state.crossoverEnabled);
   setFIREnabled(state.firEnabled);
   setDelayEnabled(state.delayEnabled);
   setEQFilters(state.filters, getConsecutiveActiveFilterCount());
   setCrossoverFrequency(state.crossoverFrequency);
+  setCrossoverEnabled(state.crossoverEnabled);
   setFIR(state.firFileLeft, state.firFileRight, state.firFileSub);
   setDelays(state.delayLeftMicroSeconds, state.delayRightMicroSeconds, state.delaySubMicroSeconds);
   // State hasn't changed, so don't save
   state.isDirty = false;
+
+  // Add this at the very end of setup(), after state.isDirty = false;
+  Serial.println("=== End of Setup Memory Usage ===");
+  Serial.print("AudioMemoryUsage(): ");
+  Serial.println(AudioMemoryUsage());
+  Serial.print("AudioMemoryUsageMax(): ");
+  Serial.println(AudioMemoryUsageMax());
+  Serial.println("================================");
 
   //Register handlers for I2C commands
   Serial.println("Registering I2C handlers");
@@ -381,11 +412,28 @@ void loop() {
     // }
   }
 
-  if (firFilesPending) {
-    loadFirFiles();
-    firFilesPending = false;
+  // if (firFilesPending) {
+  //   loadFirFiles();
+  //   firFilesPending = false;
+  // }
+
+  // Add this as the very first thing in loop()
+  static bool firstLoop = true;
+  if (firstLoop) {
+    Serial.println("=== First Loop Iteration ===");
+    Serial.print("Memory at start of first loop: ");
+    Serial.println(AudioMemoryUsage());
+    firstLoop = false;
   }
 
+  static unsigned long lastMemoryCheck = 0;
+  if (millis() - lastMemoryCheck > 5000) {
+    lastMemoryCheck = millis();
+    
+    Serial.print("Audio Memory Usage: ");
+    Serial.println(AudioMemoryUsage());
+    // Don't call AudioMemoryUsageMaxReset() yet
+  }
   router.loop();
 }
 
@@ -499,18 +547,30 @@ void setCrossoverFrequency(uint16_t frequency) {
   state.crossoverFrequency = frequency;
   state.isDirty = true;
 
-  // Use a 4th-order Linkwitz-Riley filter for a steeper cutoff
-  float q = 0.707f; // Q value for a 2nd-order Butterworth filter
+  // Resonance parameter: 0.707 for Butterworth response
+  float resonance = 0.707f;
+  
+  // High-pass for left and right channels (use output port 2)
+  Left_highpass.frequency(state.crossoverFrequency);
+  Left_highpass.resonance(resonance);
+  
+  Right_highpass.frequency(state.crossoverFrequency);
+  Right_highpass.resonance(resonance);
 
-  // High-pass for left and right channels
-  Left_highpass.setHighpass(0, state.crossoverFrequency, q);
-  Left_highpass.setHighpass(1, state.crossoverFrequency, q);
-  Right_highpass.setHighpass(0, state.crossoverFrequency, q);
-  Right_highpass.setHighpass(1, state.crossoverFrequency, q);
+  // Low-pass for the subwoofer (use output port 0)
+  Sub_lowpass.frequency(state.crossoverFrequency);
+  Sub_lowpass.resonance(resonance);
 
-  // Low-pass for the subwoofer
-  Sub_lowpass.setLowpass(0, state.crossoverFrequency, q);
-  Sub_lowpass.setLowpass(1, state.crossoverFrequency, q);
+  // Configure second stage of high-pass filters
+  Left_highpass2.frequency(state.crossoverFrequency);
+  Left_highpass2.resonance(resonance);
+  
+  Right_highpass2.frequency(state.crossoverFrequency);
+  Right_highpass2.resonance(resonance);
+
+  // Configure second stage of low-pass filter
+  Sub_lowpass2.frequency(state.crossoverFrequency);
+  Sub_lowpass2.resonance(resonance);
 }
 
 void setFIR(String leftFile, String rightFile, String subFile) {
