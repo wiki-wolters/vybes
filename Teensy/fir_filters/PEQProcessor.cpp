@@ -5,6 +5,8 @@ PEQProcessor::PEQProcessor() : AudioStream(1, inputQueue),
                                sampleRate(44100.0f), initialized(false), bypassed(false) {
   for (int i = 0; i < MAX_PEQ_BANDS; i++) {
     bands[i] = {1000.0f, 0.0f, 1.0f, false};
+    // Initialize Chamberlin state variables
+    chamberlin_states[i] = {0.0f, 0.0f, 0.0f, 0.0f};
   }
   
   animation.active = false;
@@ -25,11 +27,9 @@ void PEQProcessor::setBand(int bandIndex, float frequency, float gain, float q, 
   bands[bandIndex].gain = constrain(gain, -15.0f, 15.0f);
   bands[bandIndex].q = constrain(q, 0.1f, 10.0f);
   bands[bandIndex].enabled = enabled;
-
-  
   
   if (initialized) {
-    updateBiquadFilter(bandIndex);
+    updateFilter(bandIndex);
   }
 }
 
@@ -57,13 +57,15 @@ void PEQProcessor::enableBand(int bandIndex, bool enabled) {
   bands[bandIndex].enabled = enabled;
   
   if (initialized) {
-    updateBiquadFilter(bandIndex);
+    updateFilter(bandIndex);
   }
 }
 
 void PEQProcessor::clearAll() {
   for (int i = 0; i < MAX_PEQ_BANDS; i++) {
     bands[i].enabled = false;
+    // Clear both filter types
+    chamberlin_states[i] = {0.0f, 0.0f, 0.0f, 0.0f};
     if (initialized) {
       setUnityGain(i);
     }
@@ -85,24 +87,68 @@ int PEQProcessor::getActiveBandCount() const {
   return count;
 }
 
+FilterType PEQProcessor::getOptimalFilterType(float frequency) {
+  return (frequency < 1000.0f) ? FILTER_CHAMBERLIN : FILTER_BIQUAD;
+}
+
+void PEQProcessor::updateFilter(int bandIndex) {
+  if (bandIndex < 0 || bandIndex >= MAX_PEQ_BANDS) return;
+  
+  FilterType filterType = getOptimalFilterType(bands[bandIndex].frequency);
+  filter_types[bandIndex] = filterType;
+  
+  switch (filterType) {
+    case FILTER_CHAMBERLIN:
+      updateChamberlinFilter(bandIndex);
+      break;
+    case FILTER_BIQUAD:
+      updateBiquadFilter(bandIndex);
+      break;
+  }
+}
+
+void PEQProcessor::updateChamberlinFilter(int bandIndex) {
+  if (bandIndex < 0 || bandIndex >= MAX_PEQ_BANDS) return;
+  
+  const PEQBand& band = bands[bandIndex];
+  ChamberlinState& state = chamberlin_states[bandIndex];
+  
+  if (!band.enabled || band.gain == 0.0f) {
+    // Set to bypass state
+    state.f = 0.0f;
+    state.q_inv = 0.0f;
+    state.low = 0.0f;
+    state.band = 0.0f;
+    return;
+  }
+  
+  // Calculate Chamberlin parameters
+  double omega = 2.0 * PI * (double)band.frequency / (double)sampleRate;
+  state.f = 2.0f * sin(omega * 0.5f);  // More stable than direct sin(omega)
+  state.q_inv = 1.0f / band.q;
+  
+  // Constrain f to prevent instability
+  if (state.f > 1.99f) state.f = 1.99f;
+}
+
 void PEQProcessor::calculateCoefficients(const PEQBand& band, double coeffs[5]) {
   if (!band.enabled || band.gain == 0.0f) {
     coeffs[0] = 1.0; coeffs[1] = 0.0; coeffs[2] = 0.0; coeffs[3] = 0.0; coeffs[4] = 0.0;
     return;
   }
   
-  float omega = 2.0 * PI * band.frequency / sampleRate;
-  float cosOmega = cos(omega);
-  float sinOmega = sin(omega);
-  float A = pow(10.0, band.gain / 40.0);
-  float alpha = sinOmega / (2.0 * band.q);
+  double omega = 2.0 * PI * (double)band.frequency / (double)sampleRate;
+  double cosOmega = cos(omega);
+  double sinOmega = sin(omega);
+  double A = pow(10.0, (double)band.gain / 40.0);
+  double alpha = sinOmega / (2.0 * (double)band.q);
   
-  float b0 = 1.0 + alpha * A;
-  float b1 = -2.0 * cosOmega;
-  float b2 = 1.0 - alpha * A;
-  float a0 = 1.0 + alpha / A;
-  float a1 = -2.0 * cosOmega;
-  float a2 = 1.0 - alpha / A;
+  double b0 = 1.0 + alpha * A;
+  double b1 = -2.0 * cosOmega;
+  double b2 = 1.0 - alpha * A;
+  double a0 = 1.0 + alpha / A;
+  double a1 = -2.0 * cosOmega;
+  double a2 = 1.0 - alpha / A;
   
   // Normalize coefficients by a0
   coeffs[0] = b0 / a0;
@@ -112,11 +158,28 @@ void PEQProcessor::calculateCoefficients(const PEQBand& band, double coeffs[5]) 
   coeffs[4] = a2 / a0;
 }
 
+bool PEQProcessor::validateCoefficients(double coeffs[5]) {
+  // Check for NaN or infinity
+  for (int i = 0; i < 5; i++) {
+    if (!isfinite(coeffs[i])) return false;
+  }
+  
+  // Check stability (poles inside unit circle)
+  double a1 = coeffs[3], a2 = coeffs[4];
+  return (abs(a2) < 1.0 && abs(a1) < (1.0 + abs(a2)));
+}
+
 void PEQProcessor::updateBiquadFilter(int bandIndex) {
   if (bandIndex < 0 || bandIndex >= MAX_PEQ_BANDS) return;
   
   double coeffs[5];
   calculateCoefficients(bands[bandIndex], coeffs);
+  
+  // Validate coefficients before using them
+  if (!validateCoefficients(coeffs)) {
+    setUnityGain(bandIndex);
+    return;
+  }
   
   biquad_coeffs[bandIndex][0] = coeffs[0];
   biquad_coeffs[bandIndex][1] = coeffs[1];
@@ -124,21 +187,45 @@ void PEQProcessor::updateBiquadFilter(int bandIndex) {
   biquad_coeffs[bandIndex][3] = -coeffs[3];
   biquad_coeffs[bandIndex][4] = -coeffs[4];
 
-  
-
   arm_biquad_cascade_df1_init_f32(&biquad_insts[bandIndex], 1, biquad_coeffs[bandIndex], biquad_states[bandIndex]);
 }
 
 void PEQProcessor::setUnityGain(int bandIndex) {
   if (bandIndex < 0 || bandIndex >= MAX_PEQ_BANDS) return;
   
+  // Set biquad to unity
   biquad_coeffs[bandIndex][0] = 1.0f;
   biquad_coeffs[bandIndex][1] = 0.0f;
   biquad_coeffs[bandIndex][2] = 0.0f;
   biquad_coeffs[bandIndex][3] = 0.0f;
   biquad_coeffs[bandIndex][4] = 0.0f;
-
   arm_biquad_cascade_df1_init_f32(&biquad_insts[bandIndex], 1, biquad_coeffs[bandIndex], biquad_states[bandIndex]);
+  
+  // Set Chamberlin to unity
+  chamberlin_states[bandIndex] = {0.0f, 0.0f, 0.0f, 0.0f};
+}
+
+void PEQProcessor::processChamberlinBand(int bandIndex, float32_t* buffer, int numSamples) {
+  ChamberlinState& state = chamberlin_states[bandIndex];
+  const PEQBand& band = bands[bandIndex];
+  
+  if (!band.enabled || band.gain == 0.0f || state.f == 0.0f) {
+    return; // No processing needed
+  }
+  
+  float gain_linear = pow(10.0f, band.gain / 20.0f) - 1.0f; // Convert to additive gain
+  
+  for (int i = 0; i < numSamples; i++) {
+    float input = buffer[i];
+    
+    // Chamberlin state variable filter equations
+    state.low += state.f * state.band;
+    float high = input - state.low - state.q_inv * state.band;
+    state.band += state.f * high;
+    
+    // For PEQ, we want to boost/cut the bandpass component
+    buffer[i] = input + (state.band * gain_linear);
+  }
 }
 
 void PEQProcessor::animateToBands(const PEQBand* targetBands, int numBands, unsigned long durationMs) {
@@ -187,7 +274,7 @@ void PEQProcessor::processAnimation() {
   if (elapsed >= animation.duration) {
     for (int i = 0; i < MAX_PEQ_BANDS; i++) {
       bands[i] = animation.targetBands[i];
-      updateBiquadFilter(i);
+      updateFilter(i);
     }
     animation.active = false;
     return;
@@ -207,7 +294,7 @@ void PEQProcessor::processAnimation() {
     bands[i].enabled = (progress < 0.5f) ? animation.startBands[i].enabled : 
                                           animation.targetBands[i].enabled;
     
-    updateBiquadFilter(i);
+    updateFilter(i);
   }
 }
 
@@ -243,11 +330,17 @@ void PEQProcessor::update(void) {
   arm_q15_to_float(block->data, float_buffer, AUDIO_BLOCK_SAMPLES);
   release(block);
 
-  int active_bands = 0;
+  // Process each enabled band with appropriate filter type
   for (int i = 0; i < MAX_PEQ_BANDS; i++) {
     if (bands[i].enabled) {
-      arm_biquad_cascade_df1_f32(&biquad_insts[i], float_buffer, float_buffer, AUDIO_BLOCK_SAMPLES);
-      active_bands++;
+      switch (filter_types[i]) {
+        case FILTER_CHAMBERLIN:
+          processChamberlinBand(i, float_buffer, AUDIO_BLOCK_SAMPLES);
+          break;
+        case FILTER_BIQUAD:
+          arm_biquad_cascade_df1_f32(&biquad_insts[i], float_buffer, float_buffer, AUDIO_BLOCK_SAMPLES);
+          break;
+      }
     }
   }
 
