@@ -443,6 +443,8 @@ const checkOrientation = () => {
   const isLandscape = window.matchMedia("(orientation: landscape)").matches;
   isFullscreen.value = isLandscape;
   document.body.style.overflow = isLandscape ? 'hidden' : '';
+  console.log('Is landscape:', isLandscape); // Debug this
+  console.log('Window dimensions:', window.innerWidth, 'x', window.innerHeight);
   
   // Allow time for orientation change and then update dimensions
   nextTick(() => {
@@ -471,7 +473,7 @@ onMounted(async () => {
   window.addEventListener('resize', updateDimensions);
 
   // Orientation change listener
-  window.addEventListener('orientationchange', checkOrientation);
+  window.addEventListener('resize', checkOrientation);
   checkOrientation(); // Initial check
 });
 
@@ -481,7 +483,7 @@ onUnmounted(() => {
   document.removeEventListener('touchmove', onMouseMove);
   document.removeEventListener('touchend', stopDrag);
   window.removeEventListener('resize', updateDimensions);
-  window.removeEventListener('orientationchange', checkOrientation);
+  window.removeEventListener('resize', checkOrientation);
   
   // Ensure body scroll is unlocked on component unmount
   document.body.style.overflow = '';
@@ -499,10 +501,7 @@ onUnmounted(() => {
 <style scoped>
 .parametric-eq {
   font-family: 'Segoe UI', system-ui, sans-serif;
-  background: #1a1a1a;
   color: #fff;
-  padding: 20px;
-  border-radius: 8px;
   width: 100%;
 }
 
@@ -530,7 +529,7 @@ onUnmounted(() => {
 .eq-container {
   position: relative;
   width: 100%;
-  height: 400px;
+  height: 280px;
   background: #0f0f0f;
   border-radius: 4px;
   overflow: hidden;

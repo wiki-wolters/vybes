@@ -1,6 +1,11 @@
 <template>
-    <section class="mb-6 p-4 bg-vybes-dark-card rounded-lg">
-      <div class="flex justify-between items-center mb-4">
+    <section 
+      class="mb-3 p-3 bg-vybes-dark-card rounded-lg"
+    >
+      <div
+        class="flex justify-between items-center"
+        :class="{ 'pb-3': isExpanded }"
+      >
         <h3 class="text-lg font-semibold text-vybes-accent">{{ title }}</h3>
         
         <div class="flex items-center space-x-3">

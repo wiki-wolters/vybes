@@ -1,5 +1,5 @@
 <template>
-  <section class="mb-6 p-4 bg-vybes-dark-card rounded-lg">
+  <section class="mb-3 p-3 bg-vybes-dark-card rounded-lg">
     <div v-if="title" class="flex justify-between items-center mb-4">
       <h3 class="text-lg font-semibold text-vybes-accent">{{ title }}</h3>
       <slot name="header-actions"></slot>

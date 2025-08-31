@@ -1,5 +1,5 @@
 <template>
-  <div class="container mx-auto p-6 space-y-6">
+  <div class="container mx-auto p-3 space-y-3">
     <!-- Loading State -->
     <div v-if="isLoading" class="text-center py-10">
       <svg class="animate-spin h-8 w-8 text-vybes-primary mx-auto mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">

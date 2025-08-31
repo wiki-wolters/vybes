@@ -1,5 +1,5 @@
 <template>
-  <div class="container mx-auto p-6 bg-vybes-dark-element rounded-lg shadow-xl min-h-[calc(100vh-200px)]">
+  <div class="container mx-auto p-3 bg-vybes-dark-element rounded-lg shadow-xl min-h-[calc(100vh-200px)]">
     <div v-if="editorMessage && messageType === 'error'" class="mb-6 p-4 rounded-md text-sm text-center transition-all duration-300"
       :class="{
         'bg-green-700 text-green-100': messageType === 'success',
@@ -74,7 +74,7 @@
           </CollapsibleSection>
 
           <CollapsibleSection title="Speaker Delays" :model-value="selectedPresetData.isSpeakerDelayEnabled" @update:modelValue="updateSpeakerDelayEnabled($event)" :animate="animationsEnabled">
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6" :class="{ 'opacity-50': !selectedPresetData.isSpeakerDelayEnabled }">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3" :class="{ 'opacity-50': !selectedPresetData.isSpeakerDelayEnabled }">
               <SpeakerDelayInput 
                 title="Left" 
                 v-model="speakerDelays.left" 

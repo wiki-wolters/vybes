@@ -1,5 +1,5 @@
 <template>
-    <div class="p-4 bg-vybes-dark-element rounded-lg shadow-sm">
+    <div class="p-3 bg-vybes-dark-element rounded-lg shadow-sm">
       <h4 class="text-md font-medium mb-3 text-vybes-light-blue">{{ title }}</h4>
       <InputGroup
         :model-value="modelValue"
