@@ -1,13 +1,15 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://vybes.local'
+const API_BASE_URL = import.meta.env.DEV ? 'http://vybes-mock.local' : 'http://vybes.local'
 
 /*
  * Vybes DSP API Client - Enhanced Version
  * A comprehensive JavaScript client for interacting with the Vybes DSP system
  */
 class VybesAPI {
-  constructor(baseUrl = API_BASE_URL) {
-    this.baseUrl = baseUrl;
+  constructor() {
+    this.baseUrl = API_BASE_URL;
     this.socket = null;
+
+    console.log(API_BASE_URL);
   }
 
   get isWebSocketConnected() {
@@ -22,7 +24,7 @@ class VybesAPI {
    * @returns {Promise<Object>} Response data
    */
   async request(method, endpoint, body = null, isFormData = false) {
-    const url = `${this.baseUrl}${endpoint}`;
+    const url = this.baseUrl + endpoint;
     const config = {
       method: method.toUpperCase(),
       headers: {},
@@ -422,10 +424,9 @@ class VybesAPI {
       this.socket.close();
     }
 
-    const wsUrl = this.baseUrl.replace('http://', 'ws://').replace('https://', 'wss://');
-    const url = new URL(wsUrl);
+    const wsUrl = window.location.protocol === 'https:' ? 'wss://' : 'ws://' + window.location.host;
     
-    this.socket = new WebSocket(`${url.toString().replace(/\/$/, '')}/live-updates`);
+    this.socket = new WebSocket(`${wsUrl}/live-updates`);
 
     this.socket.onmessage = (event) => {
       try {

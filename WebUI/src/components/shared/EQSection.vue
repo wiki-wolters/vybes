@@ -1,17 +1,14 @@
 <template>
-    <CardSection>
-      <ParametricEQ
-          v-if="eqPointsForEditor"
-          :peq-points="eqPointsForEditor"
-          @change="$emit('update-eq-points', $event)"
-          class="min-h-[400px] h-auto"
-      />
-    </CardSection>
+    <ParametricEQ
+        v-if="eqPointsForEditor"
+        :peq-points="eqPointsForEditor"
+        @change="$emit('update-eq-points', $event)"
+        class="min-h-[400px] h-auto"
+    />
   </template>
   
   <script setup>
   import { computed, ref, watch } from 'vue';
-  import CardSection from './CardSection.vue';
   import ParametricEQ from '../ParametricEQ.vue';
   
   const props = defineProps({
@@ -40,3 +37,6 @@
     console.log('EQSection - eqSets prop changed', newValue);
   }, { immediate: true });
   </script>
+
+<style scoped>
+</style>

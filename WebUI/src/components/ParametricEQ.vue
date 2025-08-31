@@ -1,5 +1,5 @@
 <template>
-  <div class="parametric-eq">
+  <div class="parametric-eq" :class="{ 'is-fullscreen': isFullscreen }">
     <div class="eq-container" ref="eqContainer">
       <!-- Background grid -->
       <svg class="eq-grid" :width="width" :height="height">
@@ -181,10 +181,13 @@ const props = defineProps({
 
 const emit = defineEmits(['change']);
 
+// Fullscreen state
+const isFullscreen = ref(false);
+
 // Component dimensions
 const eqContainer = ref(null);
 const width = ref(800); // Default width
-const height = 400;
+const height = ref(400);
 
 // Resize observer to update width
 let resizeObserver = null;
@@ -194,6 +197,10 @@ const updateDimensions = () => {
     const containerWidth = eqContainer.value.clientWidth;
     if (containerWidth > 0) {
       width.value = containerWidth;
+    }
+    const containerHeight = eqContainer.value.clientHeight;
+    if (containerHeight > 0) {
+      height.value = containerHeight;
     }
   }
 };
@@ -285,13 +292,13 @@ const xToFrequency = (x) => {
 const gainToY = (gain) => {
   const maxGain = 15;
   const minGain = -15;
-  return height - ((gain - minGain) / (maxGain - minGain)) * height;
+  return height.value - ((gain - minGain) / (maxGain - minGain)) * height.value;
 };
 
 const yToGain = (y) => {
   const maxGain = 15;
   const minGain = -15;
-  const ratio = (height - y) / height;
+  const ratio = (height.value - y) / height.value;
   return minGain + ratio * (maxGain - minGain);
 };
 
@@ -431,6 +438,18 @@ const stopDrag = () => {
   dragState.pointIndex = null;
 };
 
+// Fullscreen logic
+const checkOrientation = () => {
+  const isLandscape = window.matchMedia("(orientation: landscape)").matches;
+  isFullscreen.value = isLandscape;
+  document.body.style.overflow = isLandscape ? 'hidden' : '';
+  
+  // Allow time for orientation change and then update dimensions
+  nextTick(() => {
+    updateDimensions();
+  });
+};
+
 // Event listeners
 onMounted(async () => {
   document.addEventListener('mousemove', onMouseMove);
@@ -450,6 +469,10 @@ onMounted(async () => {
   
   // Fallback resize listener
   window.addEventListener('resize', updateDimensions);
+
+  // Orientation change listener
+  window.addEventListener('orientationchange', checkOrientation);
+  checkOrientation(); // Initial check
 });
 
 onUnmounted(() => {
@@ -458,7 +481,11 @@ onUnmounted(() => {
   document.removeEventListener('touchmove', onMouseMove);
   document.removeEventListener('touchend', stopDrag);
   window.removeEventListener('resize', updateDimensions);
+  window.removeEventListener('orientationchange', checkOrientation);
   
+  // Ensure body scroll is unlocked on component unmount
+  document.body.style.overflow = '';
+
   if (resizeObserver) {
     resizeObserver.disconnect();
   }
@@ -477,6 +504,27 @@ onUnmounted(() => {
   padding: 20px;
   border-radius: 8px;
   width: 100%;
+}
+
+.parametric-eq.is-fullscreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 9999;
+  padding: 0;
+  border-radius: 0;
+}
+
+.parametric-eq.is-fullscreen .eq-container {
+  height: 100%;
+}
+
+.parametric-eq.is-fullscreen .point-selection,
+.parametric-eq.is-fullscreen .eq-controls,
+.parametric-eq.is-fullscreen .add-point-btn {
+  display: none;
 }
 
 .eq-container {

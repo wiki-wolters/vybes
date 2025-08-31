@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "VITE_API_BASE_URL=http://vybes-mock.local vite build",
     "preview": "vite preview",
     "lint": "lint"
   },
