@@ -7,6 +7,7 @@
 #include "api_fir.h"
 #include "api_presets.h"
 #include "api_preset_config.h"
+#include "api_volume.h"
 #include "teensy_comm.h"
 #include "config.h"
 #include <ESPAsyncWebServer.h>
@@ -59,6 +60,7 @@ void setupWebServer() {
     server.on("/status", HTTP_GET, handleGetStatus);
     server.on("/mute/percent", HTTP_PUT, handlePutMutePercent);
     server.on("/mute", HTTP_PUT, handlePutMute);
+    server.on("/volume", HTTP_PUT, handlePutVolume);
 
     // API Routes - Speaker & Input gains
     server.on("/gains/speaker", HTTP_PUT, handlePutSpeakerGain);

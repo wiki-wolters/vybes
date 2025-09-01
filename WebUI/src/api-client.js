@@ -401,6 +401,11 @@ class VybesAPI {
     return this.request('PUT', `/gains/speaker?speaker=${speaker}&value=${gain}`);
   }
 
+  // ===== VOLUME ===== //
+  async setVolume(volume) {
+    return this.request('PUT', `/volume?value=${volume}`);
+  }
+
   /**
    * Set input gains
    * @param {number} bluetooth - Bluetooth gain (0.0-1.0)

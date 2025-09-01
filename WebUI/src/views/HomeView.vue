@@ -56,6 +56,21 @@
         </div>
       </CardSection>
 
+      <!-- Volume -->
+      <CardSection title="Volume">
+        <div class="space-y-4">
+          <RangeSlider
+            :model-value="volume"
+            label="Master Volume"
+            :min="0"
+            :max="100"
+            :step="1"
+            unit="%"
+            @update:modelValue="updateVolume($event)"
+          />
+        </div>
+      </CardSection>
+
       <!-- Input Source -->
       <CardSection title="Input Source">
         <div class="space-y-4">
@@ -179,6 +194,8 @@ const calibrationValue = ref(null);
 const showNewPresetDialog = ref(false);
 const newPresetName = ref('');
 const newPresetNameInput = ref(null);
+const volume = ref(50);
+let volumeUpdateTimeout = null;
 
 const MIN_DB = -40;
 const MAX_DB = 3.5;
@@ -220,6 +237,7 @@ async function loadSystemData() {
         inputGainsDB.value.spdif = linearToDb(status.inputGains.spdif);
         inputGainsDB.value.tone = linearToDb(status.inputGains.tone);
       }
+      volume.value = status.volume || 50;
     } catch (statusError) {
       console.warn('Could not load system status:', statusError);
     }
@@ -258,6 +276,23 @@ function updateInputGain(source, dbValue) {
     } catch (error) {
       console.error('Failed to update input gains:', error);
       errorMessage.value = `Failed to update input gains: ${error.message}`;
+    }
+  }, 250);
+}
+
+function updateVolume(newValue) {
+  if (volumeUpdateTimeout) {
+    clearTimeout(volumeUpdateTimeout);
+  }
+
+  volume.value = newValue;
+
+  volumeUpdateTimeout = setTimeout(async () => {
+    try {
+      await apiClient.setVolume(volume.value);
+    } catch (error) {
+      console.error('Failed to update volume:', error);
+      errorMessage.value = `Failed to update volume: ${error.message}`;
     }
   }, 250);
 }
@@ -388,6 +423,9 @@ function setupLiveUpdates() {
           ...p,
           isCurrent: p.name === data.activePresetName
         }));
+      }
+      if (data.messageType === 'volumeChanged') {
+        volume.value = data.volume;
       }
       // Add more event handlers as needed
     },

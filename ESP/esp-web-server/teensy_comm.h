@@ -6,6 +6,7 @@
 // Speaker and Gain Commands
 #define CMD_SET_SPEAKER_GAINS "setSpeakerGains"
 #define CMD_SET_INPUT_GAINS "setInputGains"
+#define CMD_SET_VOLUME "setVolume"
 
 // Crossover Commands
 #define CMD_SET_CROSSOVER_FREQ "setCrossoverFrequency"

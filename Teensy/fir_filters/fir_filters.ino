@@ -264,6 +264,9 @@ struct State {
   float gainUSB = 1.0;
   float gainGenerator = 1.0;
 
+  // Master Volume
+  float volume = 0.5;
+
   // Speaker gain
   float gainLeft = 1.0;
   float gainRight = 1.0;
@@ -381,6 +384,7 @@ void setup() {
   //Register handlers for I2C commands
   Serial.println("Registering I2C handlers");
   router.on("setSpeakerGains", handleSetSpeakerGains);
+  router.on("setVolume", handleSetVolume);
   router.on("getFiles", handleGetFiles);
   router.on("setInputGains", handleSetInputGains);
   router.on("setCrossoverFrequency", handleSetCrossoverFrequency);
@@ -509,6 +513,15 @@ void setDelayEnabled(bool enabled) {
       connection->connect();
     }
   }
+}
+
+void setVolume(float volume) {
+  Serial.println("Set volume: " + String(volume));
+  state.volume = volume;
+  state.isDirty = true;
+  Left_Post_Delay_amp.gain(state.gainLeft * state.volume);
+  Right_Post_Delay_amp.gain(state.gainRight * state.volume);
+  Sub_Post_Delay_amp.gain(state.gainSub * state.volume);
 }
 
 void setInputGains(float bluetoothGain, float opticalGain, float generatorGain) {
@@ -677,6 +690,12 @@ void handleSetSpeakerGains(const String& command, String* args, int argCount, Ou
     setSpeakerGains(leftGain, rightGain, subGain);
   } else {
     // Optional: Send error back to master if arg count is wrong
+  }
+}
+
+void handleSetVolume(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 1) {
+    setVolume(args[0].toFloat());
   }
 }
 

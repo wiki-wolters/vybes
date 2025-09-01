@@ -86,6 +86,7 @@ struct Config {
     int mutePercent = 0;            // 0-100
     SpeakerGains speakerGains;
     InputGains inputGains;
+    int volume = 50; // 0-100
 };
 
 // --- Global Configuration Variable ---

@@ -199,8 +199,25 @@ app.get('/status', async (req, res) => {
         spdif: spdifGain ? parseFloat(spdifGain) : 0,
         tone: toneGain ? parseFloat(toneGain) : 0
       },
+      volume: volume ? parseInt(volume) : 50,
       currentPreset
     });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/volume', async (req, res) => {
+  const { value } = req.query;
+  const volume = parseInt(value);
+  if (isNaN(volume) || volume < 0 || volume > 100) {
+    return res.status(400).json({ error: 'Volume must be between 0 and 100' });
+  }
+
+  try {
+    await setSetting('volume', volume.toString());
+    broadcast({ messageType: 'volumeChanged', volume });
+    res.json({ success: true, volume });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

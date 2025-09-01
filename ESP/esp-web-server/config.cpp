@@ -58,6 +58,7 @@ bool load_config() {
     current_config.noiseVolume = doc["noiseVolume"] | 0;
     current_config.muted = doc["muted"] | false;
     current_config.mutePercent = doc["mutePercent"] | 0;
+    current_config.volume = doc["volume"] | 50;
 
     // Load speaker gains
     if (doc.containsKey("speakerGains")) {
@@ -157,6 +158,7 @@ void save_config() {
     doc["noiseVolume"] = current_config.noiseVolume;
     doc["muted"] = current_config.muted;
     doc["mutePercent"] = current_config.mutePercent;
+    doc["volume"] = current_config.volume;
 
     // Save speaker gains
     JsonObject speakerGains = doc.createNestedObject("speakerGains");
@@ -247,6 +249,7 @@ void reset_config_to_defaults() {
     current_config.noiseVolume = 0;
     current_config.muted = false;
     current_config.mutePercent = 0;
+    current_config.volume = 50;
     
     // Reset gains to defaults
     current_config.speakerGains.left = 1.0f;
@@ -345,4 +348,7 @@ void updateTeensyWithActivePresetParameters() {
         sendToTeensy(CMD_SET_FIR, "right", activePreset->FIRFilters.right);
         sendToTeensy(CMD_SET_FIR, "sub", activePreset->FIRFilters.sub);
     }
+
+    // Send volume
+    sendFloatToTeensy(CMD_SET_VOLUME, current_config.volume / 100.0f);
 }
