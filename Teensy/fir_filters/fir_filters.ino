@@ -431,7 +431,7 @@ void loop() {
   }
 
   static unsigned long lastMemoryCheck = 0;
-  if (millis() - lastMemoryCheck > 5000) {
+  if (millis() - lastMemoryCheck > 60000) {
     lastMemoryCheck = millis();
     
     Serial.print("Audio Memory Usage: ");

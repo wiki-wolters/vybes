@@ -5,4 +5,6 @@
 
 String urlDecode(String str);
 
+void scheduleConfigWrite();
+
 #endif

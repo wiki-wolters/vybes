@@ -2,6 +2,8 @@
 #include "config.h"
 #include "teensy_comm.h"
 #include "utilities.h"
+#include "websocket.h"
+#include <ArduinoJson.h>
 
 void handlePutVolume(AsyncWebServerRequest *request) {
     if (request->hasParam("value")) {
@@ -13,11 +15,29 @@ void handlePutVolume(AsyncWebServerRequest *request) {
             scheduleConfigWrite();
             String message = "{\"messageType\":\"volumeChanged\",\"volume\": " + String(current_config.volume) + "}";
             broadcastWebSocket(message);
-            request->send(200, "text/plain", "Volume updated");
+            
+            AsyncResponseStream *response = request->beginResponseStream("application/json");
+            DynamicJsonDocument json(128);
+            json["success"] = true;
+            json["volume"] = current_config.volume;
+            serializeJson(json, *response);
+            request->send(response);
         } else {
-            request->send(400, "text/plain", "Volume must be between 0 and 100");
+            AsyncResponseStream *response = request->beginResponseStream("application/json");
+            DynamicJsonDocument json(128);
+            json["success"] = false;
+            json["error"] = "Volume must be between 0 and 100";
+            serializeJson(json, *response);
+            response->setCode(400);
+            request->send(response);
         }
     } else {
-        request->send(400, "text/plain", "Missing value parameter");
+        AsyncResponseStream *response = request->beginResponseStream("application/json");
+        DynamicJsonDocument json(128);
+        json["success"] = false;
+        json["error"] = "Missing value parameter";
+        serializeJson(json, *response);
+        response->setCode(400);
+        request->send(response);
     }
 }
