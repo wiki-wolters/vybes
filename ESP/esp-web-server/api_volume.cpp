@@ -41,3 +41,39 @@ void handlePutVolume(AsyncWebServerRequest *request) {
         request->send(response);
     }
 }
+
+void increase_volume() {
+    if (current_config.volume < 100) {
+        current_config.volume += 2;
+        if (current_config.volume > 100) {
+            current_config.volume = 100;
+        }
+        float volumeFloat = current_config.volume / 100.0f;
+        sendFloatToTeensy(CMD_SET_VOLUME, volumeFloat);
+        scheduleConfigWrite();
+        String message = "{\"messageType\":\"volumeChanged\",\"volume\": " + String(current_config.volume) + "}";
+        broadcastWebSocket(message);
+    }
+}
+
+void decrease_volume() {
+    if (current_config.volume > 0) {
+        current_config.volume -= 2;
+        if (current_config.volume < 0) {
+            current_config.volume = 0;
+        }
+        float volumeFloat = current_config.volume / 100.0f;
+        sendFloatToTeensy(CMD_SET_VOLUME, volumeFloat);
+        scheduleConfigWrite();
+        String message = "{\"messageType\":\"volumeChanged\",\"volume\": " + String(current_config.volume) + "}";
+        broadcastWebSocket(message);
+    }
+}
+
+void toggle_mute() {
+    current_config.muted = !current_config.muted;
+    sendOnOffToTeensy(CMD_SET_MUTE, current_config.muted);
+    scheduleConfigWrite();
+    String message = "{\"messageType\":\"muteChanged\",\"muted\": " + String(current_config.muted) + "}";
+    broadcastWebSocket(message);
+}

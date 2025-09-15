@@ -364,3 +364,47 @@ void handlePutPresetDelayNamed(AsyncWebServerRequest *request) {
     // Broadcast update
     broadcastWebSocket(response);
 }
+
+void next_preset() {
+    int next_preset_index = current_config.active_preset_index;
+    do {
+        next_preset_index = (next_preset_index + 1) % MAX_PRESETS;
+    } while (strlen(current_config.presets[next_preset_index].name) == 0);
+
+    current_config.active_preset_index = next_preset_index;
+    updateTeensyWithActivePresetParameters();
+    scheduleConfigWrite();
+
+    // Prepare data for WebSocket broadcast
+    DynamicJsonDocument doc(1024);
+    doc["messageType"] = "activePresetChanged";
+    doc["activePresetName"] = current_config.presets[current_config.active_preset_index].name;
+    doc["activePresetIndex"] = current_config.active_preset_index;
+    
+    String ws_response;
+    serializeJson(doc, ws_response);
+
+    broadcastWebSocket(ws_response);
+}
+
+void previous_preset() {
+    int prev_preset_index = current_config.active_preset_index;
+    do {
+        prev_preset_index = (prev_preset_index - 1 + MAX_PRESETS) % MAX_PRESETS;
+    } while (strlen(current_config.presets[prev_preset_index].name) == 0);
+
+    current_config.active_preset_index = prev_preset_index;
+    updateTeensyWithActivePresetParameters();
+    scheduleConfigWrite();
+
+    // Prepare data for WebSocket broadcast
+    DynamicJsonDocument doc(1024);
+    doc["messageType"] = "activePresetChanged";
+    doc["activePresetName"] = current_config.presets[current_config.active_preset_index].name;
+    doc["activePresetIndex"] = current_config.active_preset_index;
+    
+    String ws_response;
+    serializeJson(doc, ws_response);
+
+    broadcastWebSocket(ws_response);
+}

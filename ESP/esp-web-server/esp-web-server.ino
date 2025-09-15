@@ -8,10 +8,12 @@
 #include "i2c.h"
 #include "screen.h"
 #include "button.h"
+#include "remote_control.h"
 
 // Define global objects
 WebSocketsServer webSocket(8080);
 WiFiManager wifiManager;
+RemoteControl remoteControl;
 // SystemSettings systemSettings; // This is now replaced by the global 'current_config' object.
 bool configChanged = false;
 unsigned long lastConfigChange = 0;
@@ -47,6 +49,8 @@ void setup() {
     setupButton();
     initLittleFS(); // For serving web files
 
+    remoteControl.setup();
+
     setupWiFi();
     initI2C();
     setupScreen();
@@ -69,6 +73,7 @@ void setup() {
 }
 
 void loop() {
+    remoteControl.loop();
     webSocket.loop();
     MDNS.update();
     handleDebounceWrite();
