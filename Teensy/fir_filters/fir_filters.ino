@@ -610,8 +610,6 @@ void setFIR(String leftFile, String rightFile, String subFile) {
   strncpy(state.firFileSub, subFile.c_str(), MAX_FILENAME_LEN - 1);
   state.firFileSub[MAX_FILENAME_LEN - 1] = '\0';
   state.isDirty = true;
-
-  firFilesPending = true;
 }
 
 void loadFirFiles() {
@@ -622,12 +620,6 @@ void loadFirFiles() {
     Right_FIR_Filter.loadCoefficients(nullptr, 0);
     Sub_FIR_Filter.loadCoefficients(nullptr, 0);
     return;
-  }
-
-  if (state.firEnabled) {
-    for (size_t i = 0; i < firConnections_len; ++i) {
-      firConnections[i]->disconnect();
-    }
   }
   
   uint16_t actualTaps = 0;
@@ -673,12 +665,6 @@ void loadFirFiles() {
   } else {
     Sub_FIR_Filter.loadCoefficients(nullptr, 0);
   }
-  
-  if (state.firEnabled) {
-    for (size_t i = 0; i < firConnections_len; ++i) {
-      firConnections[i]->connect();
-    }
-  }  
 }
 
 void setDelays(int delayL_us, int delayR_us, int delayS_us) {

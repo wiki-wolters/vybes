@@ -15,12 +15,34 @@ public:
     char* buffer;
     size_t capacity;
     size_t length;
-    I2CCommandRouterBufferStream(char* buf, size_t cap) : buffer(buf), capacity(cap), length(0) {}
+    I2CCommandRouterBufferStream(char* buf, size_t cap) : buffer(buf), capacity(cap), length(0) {
+        if (capacity > 0) buffer[0] = '\0';
+    }
+
+    // Required by Print class
+    size_t write(uint8_t c) override {
+        if (length < capacity - 1) {
+            buffer[length++] = c;
+            buffer[length] = '\0'; // Keep it null-terminated
+            return 1;
+        }
+        return 0;
+    }
+
+    // Overload for writing a buffer, used by the parent OutputStream
     size_t write(const char* data, size_t len) override {
-        size_t toWrite = min(len, capacity - length);
-        memcpy(buffer + length, data, toWrite);
-        length += toWrite;
+        size_t toWrite = min(len, capacity - length - 1);
+        if (toWrite > 0) {
+          memcpy(buffer + length, data, toWrite);
+          length += toWrite;
+          buffer[length] = '\0'; // Keep it null-terminated
+        }
         return toWrite;
+    }
+
+    // This is the standard Print::write for buffers
+    size_t write(const uint8_t *buffer, size_t size) override {
+        return write((const char *)buffer, size);
     }
 };
 

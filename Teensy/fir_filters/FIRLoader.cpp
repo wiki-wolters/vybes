@@ -131,18 +131,26 @@ float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps, uint16
         return nullptr;
     }
     
-    // Limit to maxTaps if specified and file has more coefficients
     if (maxTaps > 0 && coeffCount > maxTaps) {
-        logInfo("File has " + String(coeffCount) + " taps, limiting to " + String(maxTaps));
+        Serial.print("FIR Info: File has ");
+        Serial.print(coeffCount);
+        Serial.print(" taps, limiting to ");
+        Serial.println(maxTaps);
         coeffCount = maxTaps;
     }
     
     // Now that we know how many coefficients we have, allocate the array
+    Serial.print("FIR Info: Attempting to allocate ");
+    Serial.print(coeffCount * sizeof(float));
+    Serial.print(" bytes for ");
+    Serial.print(coeffCount);
+    Serial.println(" taps...");
     float* coeffs = new float[coeffCount];
     if (!coeffs) {
-        logError("Failed to allocate memory for coefficients.");
+        logError("!!! MEMORY ALLOCATION FAILED !!! System will likely crash.");
         return nullptr;
     }
+    logInfo("Memory allocated successfully.");
     
     // Reopen the file to read the actual coefficients
     file = SD.open(filename.c_str());
@@ -168,8 +176,11 @@ float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps, uint16
         return nullptr;
     }
     
-    actualTaps = coeffCount;
-    logInfo("Successfully loaded FIR coefficients: " + filename + " (" + String(actualTaps) + " taps)");
+    Serial.print("FIR Info: Successfully loaded FIR coefficients: ");
+    Serial.print(filename);
+    Serial.print(" (");
+    Serial.print(actualTaps);
+    Serial.println(" taps)");
     return coeffs;
 }
 
@@ -297,11 +308,15 @@ int FIRLoader::loadFromWAV(File& file, float* coeffs, int maxTaps) {
 
     // Check supported audio formats
     if (audioFormat != 1 && audioFormat != 3) { // 1 = PCM, 3 = IEEE Float
-        logError("Unsupported WAV audio format: " + String(audioFormat) + ". Only PCM (1) and IEEE Float (3) are supported.");
+        Serial.print("FIR Error: Unsupported WAV audio format: ");
+        Serial.print(audioFormat);
+        Serial.println(". Only PCM (1) and IEEE Float (3) are supported.");
         return 0;
     }
     if (!(bitsPerSample == 8 || bitsPerSample == 16 || (bitsPerSample == 32 && audioFormat == 3))) {
-        logError("Unsupported bit depth: " + String(bitsPerSample) + " or invalid format/bit depth combination.");
+        Serial.print("FIR Error: Unsupported bit depth: ");
+        Serial.print(bitsPerSample);
+        Serial.println(" or invalid format/bit depth combination.");
         return 0;
     }
 
@@ -349,7 +364,10 @@ int FIRLoader::loadFromWAV(File& file, float* coeffs, int maxTaps) {
     }
 
     if (file.available() && coeffCount == maxTaps) { // Still data left after filling maxTaps
-        logInfo("WAV file has more samples than requested taps (" + String(maxTaps) + "), using first " + String(coeffCount));
+        Serial.print("FIR Info: WAV file has more samples than requested taps (");
+        Serial.print(maxTaps);
+        Serial.print("), using first ");
+        Serial.println(coeffCount);
     } else if (bytesRead < data_chunk_size && coeffCount < maxTaps) {
         logError("WAV file: Premature end of data or read error.");
         return 0;
@@ -365,9 +383,11 @@ bool FIRLoader::isValidWAVHeader(const char* header) {
 }
 
 void FIRLoader::logError(String message) {
-    Serial.println("FIR Error: " + message);
+    Serial.print("FIR Error: ");
+    Serial.println(message);
 }
 
 void FIRLoader::logInfo(String message) {
-    Serial.println("FIR Info: " + message);
+    Serial.print("FIR Info: ");
+    Serial.println(message);
 }

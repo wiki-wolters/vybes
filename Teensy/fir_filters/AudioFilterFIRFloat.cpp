@@ -17,38 +17,55 @@ AudioFilterFIRFloat::~AudioFilterFIRFloat() {
 
 // loadCoefficients method implementation
 void AudioFilterFIRFloat::loadCoefficients(const float* coeffs, uint16_t newNumTaps) {
-  // Free existing buffers
-  delete[] firCoeffs;
-  delete[] firState;
-  firCoeffs = nullptr;
-  firState = nullptr;
+  // Step 1: Allocate new buffers with interrupts enabled.
+  float* newCoeffs = nullptr;
+  float* newState = nullptr;
 
-  // Update taps count
-  numTaps = newNumTaps;
-
-  if (numTaps > 0 && coeffs != nullptr) {
-    // Allocate memory for coefficients and copy them
-    firCoeffs = new float[numTaps];
-    if (firCoeffs) {
-      memcpy(firCoeffs, coeffs, sizeof(float) * numTaps);
+  if (newNumTaps > 0 && coeffs != nullptr) {
+    newCoeffs = new float[newNumTaps];
+    if (!newCoeffs) {
+      // Allocation failed, do nothing and return.
+      return;
     }
+    memcpy(newCoeffs, coeffs, sizeof(float) * newNumTaps);
 
-    // Allocate state buffer
-    firState = new float[numTaps + AUDIO_BLOCK_SAMPLES - 1](); // Value-initialized to zero
-
-    // If either allocation failed, reset to a safe empty state
-    if (!firCoeffs || !firState) {
-      delete[] firCoeffs;
-      delete[] firState;
-      firCoeffs = nullptr;
-      firState = nullptr;
-      numTaps = 0;
+    newState = new float[newNumTaps + AUDIO_BLOCK_SAMPLES - 1]();
+    if (!newState) {
+      delete[] newCoeffs; // Clean up partial allocation
+      return;
     }
   }
 
-  // Re-initialize the CMSIS FIR instance only if the filter is active
+  // Step 2: Atomically swap pointers and re-initialize the filter.
+  float* oldCoeffs = nullptr;
+  float* oldState = nullptr;
+
+  __disable_irq();
+  // --- Start Critical Section ---
+
+  // Store old pointers for later deletion
+  oldCoeffs = firCoeffs;
+  oldState = firState;
+
+  // Point to the new data
+  firCoeffs = newCoeffs;
+  firState = newState;
+  numTaps = newNumTaps;
+
+  // Re-initialize the CMSIS FIR instance with the new data
   if (numTaps > 0) {
     arm_fir_init_f32(&fir, numTaps, firCoeffs, firState, AUDIO_BLOCK_SAMPLES);
+  }
+
+  // --- End Critical Section ---
+  __enable_irq();
+
+  // Step 3: Free the old buffers with interrupts enabled.
+  if (oldCoeffs) {
+    delete[] oldCoeffs;
+  }
+  if (oldState) {
+    delete[] oldState;
   }
 }
 
