@@ -140,7 +140,7 @@ void RemoteControl::apply_preset() {
     if (_selected_preset_index != current_config.active_preset_index) {
         current_config.active_preset_index = _selected_preset_index;
         updateTeensyWithActivePresetParameters();
-        save_config();
+        scheduleConfigWrite();
 
         // Prepare data for WebSocket broadcast
         DynamicJsonDocument doc(1024);

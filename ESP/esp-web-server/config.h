@@ -55,6 +55,7 @@ struct SpeakerGains {
 struct InputGains {
     float spdif = 1.0f;
     float bluetooth = 1.0f;
+    float usb = 1.0f;
     float tone = 0.0f;
 };
 

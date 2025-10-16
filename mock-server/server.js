@@ -78,6 +78,7 @@ db.serialize(() => {
         ['noise_volume', '0'],
         ['bluetooth_gain', '1.0'],
         ['spdif_gain', '0.0'],
+        ['usb_gain', '1.0'],
         ['tone_gain', '0.0']
       ];
       
@@ -154,6 +155,7 @@ app.get('/status', async (req, res) => {
       noiseVolume,
       bluetoothGain,
       spdifGain,
+      usbGain,
       toneGain
     ] = await Promise.all([
       getSetting('sub_gain'),
@@ -166,6 +168,7 @@ app.get('/status', async (req, res) => {
       getSetting('noise_volume'),
       getSetting('bluetooth_gain'),
       getSetting('spdif_gain'),
+      getSetting('usb_gain'),
       getSetting('tone_gain')
     ]);
 
@@ -197,6 +200,7 @@ app.get('/status', async (req, res) => {
       inputGains: {
         bluetooth: bluetoothGain ? parseFloat(bluetoothGain) : 0,
         spdif: spdifGain ? parseFloat(spdifGain) : 0,
+        usb: usbGain ? parseFloat(usbGain) : 0,
         tone: toneGain ? parseFloat(toneGain) : 0
       },
       volume: volume ? parseInt(volume) : 50,
@@ -283,19 +287,20 @@ app.put('/gains/speaker', async (req, res) => {
 });
 
 app.put('/gains/input', async (req, res) => {
-  const { bluetooth, spdif, tone } = req.body;
+  const { bluetooth, spdif, usb, tone } = req.body;
 
-  if (bluetooth === undefined || spdif === undefined || tone === undefined) {
+  if (bluetooth === undefined || spdif === undefined || usb === undefined || tone === undefined) {
     return res.status(400).json({ error: 'Missing gain values' });
   }
 
   try {
     await setSetting('bluetooth_gain', bluetooth.toString());
     await setSetting('spdif_gain', spdif.toString());
+    await setSetting('usb_gain', usb.toString());
     await setSetting('tone_gain', tone.toString());
 
-    broadcast({ event: 'input_gains', gains: { bluetooth, spdif, tone } });
-    res.json({ success: true, gains: { bluetooth, spdif, tone } });
+    broadcast({ event: 'input_gains', gains: { bluetooth, spdif, usb, tone } });
+    res.json({ success: true, gains: { bluetooth, spdif, usb, tone } });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

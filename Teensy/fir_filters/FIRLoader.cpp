@@ -5,8 +5,8 @@
 // The caller is responsible for deleting the returned float array.
 // The method will read the entire file to determine the number of taps.
 // Returns a pointer to the coefficients array and sets actualTaps to the number of taps found.
-float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps) {
-    actualTaps = 0; // Initialize actualTaps to 0
+float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps, uint16_t maxTaps) {
+    actualTaps = 0;
     if (filename == "") {
         logError("Filename cannot be empty.");
         return nullptr;
@@ -22,15 +22,83 @@ float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps) {
     // Count the number of coefficients first
     int coeffCount = 0;
     if (filename.endsWith(".wav") || filename.endsWith(".WAV")) {
-        // For WAV files, we'll count the number of samples in the data chunk
-        if (file.size() >= 44) { // Minimum valid WAV header size
-            file.seek(40); // Points to the data chunk size (4 bytes after 'data' marker)
-            uint32_t dataSize = 0;
-            for (int i = 0; i < 4; i++) {
-                dataSize |= (file.read() << (i * 8));
+        // For WAV files, we need to parse the header to find the 'data' chunk and its size.
+        // This is more robust than assuming a fixed header size.
+        file.seek(0);
+        if (file.size() >= 44) {
+            char riff_id[4];
+            char wave_id[4];
+            file.seek(0);
+            file.read(riff_id, 4);
+            file.seek(8);
+            file.read(wave_id, 4);
+
+            if (strncmp(riff_id, "RIFF", 4) == 0 && strncmp(wave_id, "WAVE", 4) == 0) {
+                file.seek(12); // Move past 'RIFF', size, and 'WAVE'
+                char chunk_id[4];
+                uint32_t chunk_size;
+                bool dataChunkFound = false;
+
+                while (file.available()) {
+                    if (file.read(chunk_id, 4) != 4) break;
+                    if (file.read(&chunk_size, 4) != 4) break;
+
+                    if (strncmp(chunk_id, "data", 4) == 0) {
+                        // Found the data chunk.
+                        // We need to determine the number of samples based on bit depth.
+                        // To do this, we need to read the 'fmt' chunk first.
+                        // This is getting complex for just counting.
+                        // Let's assume the most common case for a quick count, 
+                        // and the loader will do the full validation.
+                        // A better approach might be to not pre-count for WAVs.
+                        // For now, we'll assume 32-bit float or 16-bit PCM for a rough estimate.
+                        // Let's re-read the fmt chunk to get bit depth.
+                        
+                        // Re-scan to find fmt chunk to get bits per sample
+                        file.seek(12);
+                        bool fmtChunkFound = false;
+                        uint16_t bitsPerSample = 0;
+                        while(file.available()) {
+                            char inner_id[4];
+                            uint32_t inner_size;
+                            if (file.read(inner_id, 4) != 4) break;
+                            if (file.read(&inner_size, 4) != 4) break;
+
+                            if (strncmp(inner_id, "fmt ", 4) == 0) {
+                                // The bits_per_sample field is 14 bytes into the fmt chunk's data.
+                                file.seek(file.position() + 14);
+                                file.read((uint8_t*)&bitsPerSample, 2);
+                                fmtChunkFound = true;
+                                break; // Found fmt, exit inner loop
+                            }
+                            file.seek(file.position() + inner_size);
+                            if (inner_size % 2 != 0) file.seek(file.position() + 1);
+                        }
+
+                        if (fmtChunkFound && bitsPerSample > 0) {
+                            coeffCount = chunk_size / (bitsPerSample / 8);
+                        } else {
+                            // Fallback for safety, assume 16-bit if fmt chunk is weird
+                            coeffCount = chunk_size / 2;
+                        }
+                        
+                        dataChunkFound = true;
+                        break;
+                    } else {
+                        // Not the data chunk, skip it.
+                        file.seek(file.position() + chunk_size);
+                        // Handle odd-sized chunks
+                        if (chunk_size % 2 != 0) {
+                            file.seek(file.position() + 1);
+                        }
+                    }
+                }
+                if (!dataChunkFound) {
+                    logError("Could not find 'data' chunk to count taps in: " + filename);
+                }
+            } else {
+                logError("Not a valid WAV file (missing RIFF/WAVE): " + filename);
             }
-            // Assuming 32-bit float samples (4 bytes per sample)
-            coeffCount = dataSize / 4;
         }
     } else if (filename.endsWith(".txt") || filename.endsWith(".TXT")) {
         // For text files, count the number of valid number entries
@@ -61,6 +129,12 @@ float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps) {
     if (coeffCount <= 0) {
         logError("No valid coefficients found in file: " + filename);
         return nullptr;
+    }
+    
+    // Limit to maxTaps if specified and file has more coefficients
+    if (maxTaps > 0 && coeffCount > maxTaps) {
+        logInfo("File has " + String(coeffCount) + " taps, limiting to " + String(maxTaps));
+        coeffCount = maxTaps;
     }
     
     // Now that we know how many coefficients we have, allocate the array
@@ -100,7 +174,7 @@ float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps) {
 }
 
 // --- loadFromTXT: Loads coefficients from a text file into a float array ---
-int FIRLoader::loadFromTXT(File& file, float* coeffs, int8_t maxTaps) {
+int FIRLoader::loadFromTXT(File& file, float* coeffs, int maxTaps) {
     int coeffCount = 0;
     String line = "";
     file.seek(0); // Rewind to start of file
@@ -130,7 +204,7 @@ int FIRLoader::loadFromTXT(File& file, float* coeffs, int8_t maxTaps) {
 
 // --- loadFromWAV: Loads coefficients from a WAV file into a float array ---
 // Supports 32-bit float WAV (Format 3) and converts other formats
-int FIRLoader::loadFromWAV(File& file, float* coeffs, int8_t maxTaps) {
+int FIRLoader::loadFromWAV(File& file, float* coeffs, int maxTaps) {
     if (file.size() < 44) {
         logError("WAV file too small (less than header size).");
         return 0;
@@ -177,10 +251,15 @@ int FIRLoader::loadFromWAV(File& file, float* coeffs, int8_t maxTaps) {
     char chunk_id[4];
     uint32_t chunk_size;
 
-    // Start searching after the fmt chunk (after the 36 bytes of typical header + fmt_size)
-    file.seek(sizeof(WavHeader) - 8); // Go back to where data_id usually is if it's not a standard header.
-                                      // Or even better, just iterate from after the fmt_chunk
-    file.seek(12 + (4 + header.fmt_size)); // 12 bytes for RIFF/WAVE/fmt+size. Position after fmt chunk
+    // The 'data' chunk may not immediately follow the 'fmt ' chunk.
+    // We must find it by iterating through chunks. The search should start after the 'fmt ' chunk.
+    // The 'fmt ' chunk starts at offset 12, has an 8-byte ID/size header, and its content is header.fmt_size bytes long.
+    // So, the next chunk search should begin at offset 12 + 8 + header.fmt_size.
+    uint32_t nextChunkPos = 12 + 8 + header.fmt_size;
+    if (nextChunkPos % 2 != 0) { // Chunks must be word-aligned
+        nextChunkPos++;
+    }
+    file.seek(nextChunkPos);
 
     while (file.available()) {
         if (file.read(chunk_id, 4) != 4) break;

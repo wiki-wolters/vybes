@@ -4,10 +4,14 @@
 #include <SerialFlash.h>
 
 // GUItool: begin automatically generated code
-AsyncAudioInputSPDIF3    Optical_in;   //xy=173,346
-AudioOutputI2S           L_R_Analog_Out;           //xy=545,347
-AudioConnection          patchCord1(Optical_in, 0, L_R_Analog_Out, 0);
-AudioConnection          patchCord2(Optical_in, 1, L_R_Analog_Out, 1);
+AudioAnalyzePeak peak1;
+//AudioInputI2S    Audio_in;
+//AsyncAudioInputSPDIF3    Audio_in;
+AudioInputUSB    Audio_in;
+AudioOutputI2S           L_R_Analog_Out;
+AudioConnection          patchCord1(Audio_in, 0, L_R_Analog_Out, 0);
+AudioConnection          patchCord2(Audio_in, 1, L_R_Analog_Out, 1);
+AudioConnection          patchCord3(Audio_in, 0, peak1, 0);
 // GUItool: end automatically generated code
 
 void setup() {
@@ -19,8 +23,7 @@ void setup() {
   // Audio connections require memory to work
   AudioMemory(20);
   
-  Serial.println("SPDIF Optical Input to Analog Output Test");
-  Serial.println("Connect optical input cable and analog output (headphones/speakers)");
+  Serial.println("I2S Input to Analog Output Test with Peak Meter");
 }
 
 void loop() {
@@ -29,11 +32,9 @@ void loop() {
   if (millis() - lastPrint > 2000) {
     lastPrint = millis();
     
-    // Check if we're getting input signal
-    if (Optical_in.isLocked()) {
-      Serial.println("SPDIF Input Locked - Signal detected");
-    } else {
-      Serial.println("No SPDIF input signal detected");
+    if (peak1.available()) {
+      Serial.print("Peak Level: ");
+      Serial.println(peak1.read());
     }
     
     // Print memory usage

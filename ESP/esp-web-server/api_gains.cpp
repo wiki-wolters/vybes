@@ -53,15 +53,17 @@ void handlePutInputGains(AsyncWebServerRequest *request, JsonVariant &json) {
 
     float bluetooth = jsonObj["bluetooth"];
     float spdif = jsonObj["spdif"];
+    float usb = jsonObj["usb"];
     float tone = jsonObj["tone"];
 
-    if (bluetooth < 0.0f || bluetooth > 1.0f || spdif < 0.0f || spdif > 1.0f || tone < 0.0f || tone > 1.0f) {
+    if (bluetooth < 0.0f || bluetooth > 1.0f || spdif < 0.0f || spdif > 1.0f || usb < 0.0f || usb > 1.0f || tone < 0.0f || tone > 1.0f) {
         request->send(400, "text/plain", "Gains must be between 0.0 and 1.0");
         return;
     }
 
     current_config.inputGains.bluetooth = bluetooth;
     current_config.inputGains.spdif = spdif;
+    current_config.inputGains.usb = usb;
     current_config.inputGains.tone = tone;
 
     scheduleConfigWrite();
@@ -69,6 +71,7 @@ void handlePutInputGains(AsyncWebServerRequest *request, JsonVariant &json) {
     sendToTeensy(CMD_SET_INPUT_GAINS, 
         String(current_config.inputGains.bluetooth, 2),
         String(current_config.inputGains.spdif, 2),
+        String(current_config.inputGains.usb, 2),
         String(current_config.inputGains.tone, 2));
 
     request->send(200, "application/json", "{\"status\": \"ok\"}");

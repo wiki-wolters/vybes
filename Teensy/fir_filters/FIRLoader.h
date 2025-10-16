@@ -15,12 +15,12 @@ public:
     // The caller is responsible for deleting the returned float array.
     // The method will read the entire file to determine the number of taps.
     // Returns a pointer to the coefficients array and sets actualTaps to the number of taps found.
-    static float* loadCoefficients(String filename, uint16_t& actualTaps);
+    static float* loadCoefficients(String filename, uint16_t& actualTaps, uint16_t maxTaps = 0);
 
 private:
     // Helper methods, now static as they don't depend on FIRLoader instance state.
-    static int loadFromTXT(File& file, float* coeffs, int8_t maxTaps);
-    static int loadFromWAV(File& file, float* coeffs, int8_t maxTaps);
+    static int loadFromTXT(File& file, float* coeffs, int maxTaps);
+    static int loadFromWAV(File& file, float* coeffs, int maxTaps);
     static bool isValidWAVHeader(const char* header);
     static void logError(String message);
     static void logInfo(String message);

@@ -12,7 +12,5 @@ void handleDeletePreset(AsyncWebServerRequest *request);
 void handlePutActivePreset(AsyncWebServerRequest *request);
 void handlePutPresetDelayEnabled(AsyncWebServerRequest *request);
 void handlePutPresetDelayNamed(AsyncWebServerRequest *request);
-void next_preset();
-void previous_preset();
 
 #endif // API_PRESETS_H

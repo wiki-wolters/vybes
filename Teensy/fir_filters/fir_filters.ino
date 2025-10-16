@@ -13,6 +13,7 @@
 I2CCommandRouter router(0x12);
 
 #define MAX_FILENAME_LEN 64 // Maximum length for FIR filenames
+#define MAX_FIR_TAPS 4096
 
 // Audio generators
 AudioSynthWaveform       Tone_generator;
@@ -21,7 +22,7 @@ AudioSynthNoisePink      pink1;
 //Audio Inputs (Bluetooth, SPDIF, USB)
 AudioInputI2S            Bluetooth_in;  
 AsyncAudioInputSPDIF3    Optical_in; 
-//AudioInputUSB            USB_in;   
+AudioInputUSB            USB_in;   
 
 // Input mixers
 AudioMixer4              Left_mixer;    
@@ -103,15 +104,15 @@ AudioConnection          patchCord_OpticalLToLeftMixer(Optical_in, 0, Left_mixer
 AudioConnection          patchCord_OpticalRToRightMixer(Optical_in, 1, Right_mixer, 0);
 AudioConnection          patchCord_BluetoothLToLeftMixer(Bluetooth_in, 0, Left_mixer, 1);
 AudioConnection          patchCord_BluetoothRToRightMixer(Bluetooth_in, 1, Right_mixer, 1);
-//AudioConnection          patchCord_USBLToLeftMixer(USB_in, 0, Left_mixer, 2);
-//AudioConnection          patchCord_USBRToRightMixer(USB_in, 0, Right_mixer, 2);
+AudioConnection          patchCord_USBLToLeftMixer(USB_in, 0, Left_mixer, 2);
+AudioConnection          patchCord_USBRToRightMixer(USB_in, 1, Right_mixer, 2);
 AudioConnection* externalInputConnections[] = {
   &patchCord_OpticalLToLeftMixer,
   &patchCord_OpticalRToRightMixer,
   &patchCord_BluetoothLToLeftMixer,
   &patchCord_BluetoothRToRightMixer,
-  //&patchCord_USBLToLeftMixer,
-  //&patchCord_USBRToRightMixer
+  &patchCord_USBLToLeftMixer,
+  &patchCord_USBRToRightMixer
 };
 const size_t externalInputConnections_len = sizeof(externalInputConnections) / sizeof(externalInputConnections[0]);
 
@@ -251,6 +252,7 @@ AudioConnection* outputConnections[] = {
 const size_t outputConnections_len = sizeof(outputConnections) / sizeof(outputConnections[0]);
 
 const int CURRENT_VERSION = 3;
+bool sdCardInitialized = false;
 bool firFilesPending = false;
 
 //Define a structure for holding state
@@ -321,6 +323,15 @@ void setup() {
   }
 
   pinMode(LED_BUILTIN, OUTPUT);
+
+  Serial.println("Initializing SD card...");
+  if (SD.begin(BUILTIN_SDCARD)) {
+    Serial.println("SD card initialized.");
+    sdCardInitialized = true;
+  } else {
+    Serial.println("SD card initialization failed. Continuing without SD card.");
+    sdCardInitialized = false;
+  }
   
   // Audio connections require memory to work
   Serial.println("Allocating audio memory");
@@ -360,7 +371,7 @@ void setup() {
 
   // Apply state
   Serial.println("Applying state");
-  setInputGains(state.gainBluetooth, state.gainOptical, state.gainGenerator);
+  setInputGains(state.gainBluetooth, state.gainOptical, state.gainUSB, state.gainGenerator);
   setSpeakerGains(state.gainLeft, state.gainRight, state.gainSub);
   setEQEnabled(state.eqEnabled);
   setFIREnabled(state.firEnabled);
@@ -416,10 +427,10 @@ void loop() {
     // }
   }
 
-  // if (firFilesPending) {
-  //   loadFirFiles();
-  //   firFilesPending = false;
-  // }
+  if (firFilesPending) {
+    loadFirFiles();
+    firFilesPending = false;
+  }
 
   // Add this as the very first thing in loop()
   static bool firstLoop = true;
@@ -491,6 +502,7 @@ void setFIREnabled(bool enabled) {
       connection->connect();
     }
   }
+  firFilesPending = true;
 }
 
 void setDelayEnabled(bool enabled) {
@@ -524,16 +536,19 @@ void setVolume(float volume) {
   Sub_Post_Delay_amp.gain(state.gainSub * state.volume);
 }
 
-void setInputGains(float bluetoothGain, float opticalGain, float generatorGain) {
-  Serial.println("Set input gains: bluetooth " + String(bluetoothGain) + ", optical " + String(opticalGain));
+void setInputGains(float bluetoothGain, float opticalGain, float usbGain, float generatorGain) {
+  Serial.println("Set input gains: bluetooth " + String(bluetoothGain) + ", optical " + String(opticalGain) + ", usb " + String(usbGain));
   state.gainBluetooth = bluetoothGain;
   state.gainOptical = opticalGain;
+  state.gainUSB = usbGain;
   state.gainGenerator = generatorGain;
   state.isDirty = true;
   Left_mixer.gain(0, state.gainOptical);
   Right_mixer.gain(0, state.gainOptical);
   Left_mixer.gain(1, state.gainBluetooth);
   Right_mixer.gain(1, state.gainBluetooth);
+  Left_mixer.gain(2, state.gainUSB);
+  Right_mixer.gain(2, state.gainUSB);
   Left_mixer.gain(3, state.gainGenerator);
   Right_mixer.gain(3, state.gainGenerator);
 }
@@ -600,6 +615,15 @@ void setFIR(String leftFile, String rightFile, String subFile) {
 }
 
 void loadFirFiles() {
+  if (!sdCardInitialized) {
+    Serial.println("Cannot load FIR files, SD card not available.");
+    // Clear any existing FIR filters to ensure no stale filters are used
+    Left_FIR_Filter.loadCoefficients(nullptr, 0);
+    Right_FIR_Filter.loadCoefficients(nullptr, 0);
+    Sub_FIR_Filter.loadCoefficients(nullptr, 0);
+    return;
+  }
+
   if (state.firEnabled) {
     for (size_t i = 0; i < firConnections_len; ++i) {
       firConnections[i]->disconnect();
@@ -611,7 +635,7 @@ void loadFirFiles() {
   // Load left channel FIR
   if (strlen(state.firFileLeft) > 0) {
     actualTaps = 0;
-    float* coeffs = FIRLoader::loadCoefficients(state.firFileLeft, actualTaps);
+    float* coeffs = FIRLoader::loadCoefficients(state.firFileLeft, actualTaps, MAX_FIR_TAPS);
     if (coeffs) {
       Left_FIR_Filter.loadCoefficients(coeffs, actualTaps);
       delete[] coeffs;
@@ -625,7 +649,7 @@ void loadFirFiles() {
   // Load right channel FIR
   if (strlen(state.firFileRight) > 0) {
     actualTaps = 0;
-    float* coeffs = FIRLoader::loadCoefficients(state.firFileRight, actualTaps);
+    float* coeffs = FIRLoader::loadCoefficients(state.firFileRight, actualTaps, MAX_FIR_TAPS);
     if (coeffs) {
       Right_FIR_Filter.loadCoefficients(coeffs, actualTaps);
       delete[] coeffs;
@@ -639,7 +663,7 @@ void loadFirFiles() {
   // Load subwoofer FIR
   if (strlen(state.firFileSub) > 0) {
     actualTaps = 0;
-    float* coeffs = FIRLoader::loadCoefficients(state.firFileSub, actualTaps);
+    float* coeffs = FIRLoader::loadCoefficients(state.firFileSub, actualTaps, MAX_FIR_TAPS);
     if (coeffs) {
       Sub_FIR_Filter.loadCoefficients(coeffs, actualTaps);
       delete[] coeffs;
@@ -700,7 +724,12 @@ void handleSetVolume(const String& command, String* args, int argCount, OutputSt
 }
 
 void handleGetFiles(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (!sdCardInitialized) {
+    stream.write("ERROR: SD not initialized\n", 26);
+    return;
+  }
   File root = SD.open("/");
+
   if (!root) {
     stream.write("ERROR: No SD card\n", 19);
     return;
@@ -731,8 +760,8 @@ void handleGetFiles(const String& command, String* args, int argCount, OutputStr
 }
 
 void handleSetInputGains(const String& command, String* args, int argCount, OutputStream& stream) {
-  if (argCount == 3) {
-    setInputGains(args[0].toFloat(), args[1].toFloat(), args[2].toFloat());
+  if (argCount == 4) {
+    setInputGains(args[0].toFloat(), args[1].toFloat(), args[2].toFloat(), args[3].toFloat());
   }
 }
 
@@ -767,7 +796,26 @@ void handleSetDelayEnabled(const String& command, String* args, int argCount, Ou
 }
 
 void handleSetFIR(const String& command, String* args, int argCount, OutputStream& stream) {
-  if (argCount == 3) {
+  if (argCount == 2) { // e.g. "setFir left DeskL.wav"
+    String channel = args[0];
+    String filename = args[1];
+    if (channel.equalsIgnoreCase("left")) {
+      setFIR(filename, state.firFileRight, state.firFileSub);
+    } else if (channel.equalsIgnoreCase("right")) {
+      setFIR(state.firFileLeft, filename, state.firFileSub);
+    } else if (channel.equalsIgnoreCase("sub")) {
+      setFIR(state.firFileLeft, state.firFileRight, filename);
+    }
+  } else if (argCount == 1) { // e.g. "setFir sub" to clear
+    String channel = args[0];
+    if (channel.equalsIgnoreCase("left")) {
+      setFIR("", state.firFileRight, state.firFileSub);
+    } else if (channel.equalsIgnoreCase("right")) {
+      setFIR(state.firFileLeft, "", state.firFileSub);
+    } else if (channel.equalsIgnoreCase("sub")) {
+      setFIR(state.firFileLeft, state.firFileRight, "");
+    }
+  } else if (argCount == 3) { // existing functionality for setting all at once
     setFIR(args[0], args[1], args[2]);
   }
 }

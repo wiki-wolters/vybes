@@ -78,7 +78,7 @@
             :model-value="inputGainsDB.bluetooth"
             label="Bluetooth"
             :min="-40"
-            :max="3.5"
+            :max="MAX_DB"
             :step="0.1"
             unit="dB"
             @update:modelValue="updateInputGain('bluetooth', $event)"
@@ -87,16 +87,25 @@
             :model-value="inputGainsDB.spdif"
             label="TV"
             :min="-40"
-            :max="3.5"
+            :max="MAX_DB"
             :step="0.1"
             unit="dB"
             @update:modelValue="updateInputGain('spdif', $event)"
           />
           <RangeSlider
+            :model-value="inputGainsDB.usb"
+            label="USB"
+            :min="-40"
+            :max="MAX_DB"
+            :step="0.1"
+            unit="dB"
+            @update:modelValue="updateInputGain('usb', $event)"
+          />
+          <RangeSlider
             :model-value="inputGainsDB.tone"
             label="Tone"
             :min="-40"
-            :max="3.5"
+            :max="MAX_DB"
             :step="0.1"
             unit="dB"
             @update:modelValue="updateInputGain('tone', $event)"
@@ -186,8 +195,8 @@ const presets = ref([]);
 const speakersEnabled = ref({sub: true, left: true, right: true});
 const muteEnabled = ref(false);
 const mutePercentage = ref(100);
-const inputGainsDB = ref({ bluetooth: -40, spdif: -40, tone: -40 });
-const inputGainsLinear = ref({ bluetooth: 0, spdif: 0, tone: 0 });
+const inputGainsDB = ref({ bluetooth: -40, spdif: -40, usb: -40, tone: -40 });
+const inputGainsLinear = ref({ bluetooth: 0, spdif: 0, usb: 0, tone: 0 });
 let muteUpdateTimeout = null;
 let inputGainsUpdateTimeout = null;
 const calibrationValue = ref(null);
@@ -198,7 +207,7 @@ const volume = ref(50);
 let volumeUpdateTimeout = null;
 
 const MIN_DB = -40;
-const MAX_DB = 3.5;
+const MAX_DB = 0;
 
 function dbToLinear(db) {
   if (db <= MIN_DB) return 0;
@@ -235,6 +244,7 @@ async function loadSystemData() {
         inputGainsLinear.value = { ...status.inputGains };
         inputGainsDB.value.bluetooth = linearToDb(status.inputGains.bluetooth);
         inputGainsDB.value.spdif = linearToDb(status.inputGains.spdif);
+        inputGainsDB.value.usb = linearToDb(status.inputGains.usb);
         inputGainsDB.value.tone = linearToDb(status.inputGains.tone);
       }
       volume.value = status.volume || 50;
@@ -271,6 +281,7 @@ function updateInputGain(source, dbValue) {
       await apiClient.setInputGains(
         inputGainsLinear.value.bluetooth,
         inputGainsLinear.value.spdif,
+        inputGainsLinear.value.usb,
         inputGainsLinear.value.tone
       );
     } catch (error) {
