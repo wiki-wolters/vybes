@@ -367,7 +367,7 @@ async function fetchPresetData(presetName, isNewOrCopy = false) { // [cite: 72]
     () => apiClient.getPreset(presetName), // [cite: 74]
     (data) => {
       selectedPresetData.value = data;
-      speakerDelays.value = {...data.speakerDelays};
+      Object.assign(speakerDelays, data.speakerDelays);
       
       // Initialize prefEQSets from the preference curve data
       if (data.preferenceEQ) {
