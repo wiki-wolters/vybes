@@ -20,6 +20,7 @@
 // FIR Filter Commands
 #define CMD_SET_FIR "setFir"
 #define CMD_SET_FIR_ENABLED "setFirEnabled"
+#define CMD_LOAD_FIR_FILES "loadFirFiles"
 #define CMD_GET_FILES "getFiles"
 
 // Delay Commands
@@ -43,7 +44,7 @@ extern char teensyResponse[1024];
 // Returns: true if successful, false otherwise
 // Response is stored in the teensyResponse global variable
 bool sendToTeensy(const char* command, const String& param1 = "", 
-                 const String& param2 = "", const String& param3 = "");
+                 const String& param2 = "", const String& param3 = "", const String& param4 = "");
 
 // Helper functions for common command types
 void sendOnOffToTeensy(const char* command, bool on);

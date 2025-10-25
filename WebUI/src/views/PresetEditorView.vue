@@ -274,7 +274,8 @@ const updateFIREnabled = async (value) => {
 };
 
 const updateFIRFilter = async (speaker, value) => {
-  selectedPresetData.value[speaker] = value;
+  const key = `fir${speaker.charAt(0).toUpperCase() + speaker.slice(1)}`;
+  selectedPresetData.value[key] = value;
   await performApiCall(() => apiClient.setFirFilter(
     selectedPresetName.value,
     speaker,

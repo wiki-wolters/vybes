@@ -80,8 +80,6 @@ void AudioFilterFIRFloat::loadCoefficients(const float* coeffs, uint16_t newNumT
 
 // update() method implementation
 void AudioFilterFIRFloat::update(void) {
-  unsigned long start_us = micros();
-
   audio_block_t* block = receiveReadOnly(0);
   if (!block) return;
 
@@ -108,18 +106,8 @@ void AudioFilterFIRFloat::update(void) {
   arm_fir_f32(&fir, inputF32, outputF32, AUDIO_BLOCK_SAMPLES);
   __enable_irq();
 
-  // Scale down the output to prevent clipping.
-  for (int i = 0; i < AUDIO_BLOCK_SAMPLES; i++) {
-    outputF32[i] *= 0.5f;
-  }
-
   arm_float_to_q15(outputF32, outBlock->data, AUDIO_BLOCK_SAMPLES);
 
   transmit(outBlock);
   release(outBlock);
-
-  unsigned long elapsed_us = micros() - start_us;
-  if (elapsed_us > max_update_us) {
-    max_update_us = elapsed_us;
-  }
 }

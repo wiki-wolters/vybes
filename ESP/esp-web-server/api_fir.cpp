@@ -84,9 +84,6 @@ void handlePutPresetFir(AsyncWebServerRequest *request) {
     
     scheduleConfigWrite();
     
-    // Send FIR filter command to Teensy
-    sendToTeensy(CMD_SET_FIR, speaker, filename);
-    
     // Prepare and send response
         DynamicJsonDocument doc(1024);
     doc["status"] = "ok";
@@ -131,6 +128,10 @@ void handlePutPresetFirEnabled(AsyncWebServerRequest *request) {
     
     // Send FIR enable/disable command to Teensy
     sendOnOffToTeensy(CMD_SET_FIR_ENABLED, state == "on");
+
+    if (state == "on") {
+        sendToTeensy(CMD_LOAD_FIR_FILES);
+    }
     
     // Prepare and send response
         DynamicJsonDocument doc(1024);

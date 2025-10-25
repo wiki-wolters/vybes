@@ -62,6 +62,10 @@ public:
     
     // Call this in your main loop to process commands
     void loop();
+
+    // Detach/reattach I2C interrupt handlers
+    void detachInterrupts();
+    void reattachInterrupts();
     
     // Manual processing (if you want to handle I2C events manually)
     void processCommand(const String& rawCommand, OutputStream& output);

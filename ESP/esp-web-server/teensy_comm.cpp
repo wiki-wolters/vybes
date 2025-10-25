@@ -11,7 +11,7 @@ char teensyResponse[1024] = {0};  // Global buffer for storing the last response
 int responseIndex = 0;
 
 bool sendToTeensy(const char* command, const String& param1, 
-    const String& param2, const String& param3) {
+    const String& param2, const String& param3, const String& param4) {
     // Build the command string with parameters
     String message = String(command);
 
@@ -23,6 +23,10 @@ bool sendToTeensy(const char* command, const String& param1,
 
             if (param3.length() > 0) {
                 message += ' ' + param3;
+
+                if (param4.length() > 0) {
+                    message += ' ' + param4;
+                }
             }
         }
     }

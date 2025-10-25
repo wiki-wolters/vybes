@@ -54,10 +54,11 @@ float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps, uint16
                         // For now, we'll assume 32-bit float or 16-bit PCM for a rough estimate.
                         // Let's re-read the fmt chunk to get bit depth.
                         
-                        // Re-scan to find fmt chunk to get bits per sample
+                        // Re-scan to find fmt chunk to get bits per sample and num channels
                         file.seek(12);
                         bool fmtChunkFound = false;
                         uint16_t bitsPerSample = 0;
+                        uint16_t numChannels = 1;
                         while(file.available()) {
                             char inner_id[4];
                             uint32_t inner_size;
@@ -65,9 +66,16 @@ float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps, uint16
                             if (file.read(&inner_size, 4) != 4) break;
 
                             if (strncmp(inner_id, "fmt ", 4) == 0) {
-                                // The bits_per_sample field is 14 bytes into the fmt chunk's data.
-                                file.seek(file.position() + 14);
+                                long fmt_data_start = file.position();
+                                // Read numChannels (at offset 2)
+                                file.seek(fmt_data_start + 2);
+                                file.read((uint8_t*)&numChannels, 2);
+                                if (numChannels == 0) numChannels = 1; // Safety check
+
+                                // Read bitsPerSample (at offset 14)
+                                file.seek(fmt_data_start + 14);
                                 file.read((uint8_t*)&bitsPerSample, 2);
+                                
                                 fmtChunkFound = true;
                                 break; // Found fmt, exit inner loop
                             }
@@ -77,8 +85,11 @@ float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps, uint16
 
                         if (fmtChunkFound && bitsPerSample > 0) {
                             coeffCount = chunk_size / (bitsPerSample / 8);
+                            if (numChannels > 0) {
+                                coeffCount /= numChannels;
+                            }
                         } else {
-                            // Fallback for safety, assume 16-bit if fmt chunk is weird
+                            // Fallback for safety, assume 16-bit mono if fmt chunk is weird
                             coeffCount = chunk_size / 2;
                         }
                         
@@ -175,6 +186,8 @@ float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps, uint16
         delete[] coeffs;
         return nullptr;
     }
+
+    actualTaps = loadedCount;
     
     Serial.print("FIR Info: Successfully loaded FIR coefficients: ");
     Serial.print(filename);
@@ -215,162 +228,253 @@ int FIRLoader::loadFromTXT(File& file, float* coeffs, int maxTaps) {
 
 // --- loadFromWAV: Loads coefficients from a WAV file into a float array ---
 // Supports 32-bit float WAV (Format 3) and converts other formats
+// --- loadFromWAV: Loads coefficients from a WAV file into a float array ---
+// Supports 32-bit float WAV (Format 3) and converts other formats
+// Fixed version with proper chunk parsing and multi-channel handling
 int FIRLoader::loadFromWAV(File& file, float* coeffs, int maxTaps) {
     if (file.size() < 44) {
-        logError("WAV file too small (less than header size).");
+        logError("WAV file too small (less than minimum header size).");
         return 0;
     }
 
-    // Read WAV header
     file.seek(0);
-    // Use a struct to read header for better readability and access
-    struct WavHeader {
-      char riff_id[4];     // "RIFF"
-      uint32_t file_size;
-      char wave_id[4];     // "WAVE"
-      char fmt_id[4];      // "fmt "
-      uint32_t fmt_size;
-      uint16_t format_type;   // 1 for PCM, 3 for IEEE Float
-      uint16_t num_channels;
-      uint32_t sample_rate;
-      uint32_t byte_rate;
-      uint16_t block_align;
-      uint16_t bits_per_sample;
-      // Data chunk ID and size (can be after other chunks, but for simple WAV, it's often here)
-      char data_id[4];     // "data"
-      uint32_t data_size;
-    } header;
 
-    if (file.read(&header, sizeof(WavHeader)) != sizeof(WavHeader)) {
-        logError("Failed to read WAV header.");
+    // Read and validate RIFF header
+    char riff_id[4];
+    uint32_t file_size;
+    char wave_id[4];
+    
+    if (file.read(riff_id, 4) != 4) {
+        logError("Failed to read RIFF ID");
+        return 0;
+    }
+    if (file.read((uint8_t*)&file_size, 4) != 4) {
+        logError("Failed to read file size");
+        return 0;
+    }
+    if (file.read(wave_id, 4) != 4) {
+        logError("Failed to read WAVE ID");
         return 0;
     }
 
-    // Basic header validation
-    if (strncmp(header.riff_id, "RIFF", 4) != 0 ||
-        strncmp(header.wave_id, "WAVE", 4) != 0 ||
-        strncmp(header.fmt_id, "fmt ", 4) != 0) // Removed data_id check here, as data chunk might not be at fixed offset
-    {
-        logError("Invalid WAV file format (RIFF/WAVE/fmt chunk missing).");
+    if (strncmp(riff_id, "RIFF", 4) != 0 || strncmp(wave_id, "WAVE", 4) != 0) {
+        logError("Invalid WAV file format (RIFF/WAVE header missing)");
         return 0;
     }
 
-    // Search for the "data" chunk if it's not at the standard 36-byte offset
-    // This is more robust as some WAV files can have extra chunks (e.g., LIST)
-    uint32_t data_chunk_pos = 0;
-    uint32_t data_chunk_size = 0;
-    char chunk_id[4];
-    uint32_t chunk_size;
+    // Initialize format parameters
+    uint16_t audioFormat = 0;
+    uint16_t numChannels = 0;
+    uint32_t sampleRate = 0;
+    uint16_t bitsPerSample = 0;
+    bool fmtFound = false;
+    
+    uint32_t dataChunkPos = 0;
+    uint32_t dataChunkSize = 0;
+    bool dataFound = false;
 
-    // The 'data' chunk may not immediately follow the 'fmt ' chunk.
-    // We must find it by iterating through chunks. The search should start after the 'fmt ' chunk.
-    // The 'fmt ' chunk starts at offset 12, has an 8-byte ID/size header, and its content is header.fmt_size bytes long.
-    // So, the next chunk search should begin at offset 12 + 8 + header.fmt_size.
-    uint32_t nextChunkPos = 12 + 8 + header.fmt_size;
-    if (nextChunkPos % 2 != 0) { // Chunks must be word-aligned
-        nextChunkPos++;
-    }
-    file.seek(nextChunkPos);
-
+    // Parse all chunks to find fmt and data
+    file.seek(12); // Skip past RIFF header (12 bytes: "RIFF" + size + "WAVE")
+    
     while (file.available()) {
+        char chunk_id[4];
+        uint32_t chunk_size;
+        
         if (file.read(chunk_id, 4) != 4) break;
-        if (file.read(&chunk_size, 4) != 4) break;
-
-        if (strncmp(chunk_id, "data", 4) == 0) {
-            data_chunk_pos = file.position();
-            data_chunk_size = chunk_size;
-            break;
-        } else {
-            // Skip this chunk and its content
+        if (file.read((uint8_t*)&chunk_size, 4) != 4) break;
+        
+        if (strncmp(chunk_id, "fmt ", 4) == 0) {
+            // Read fmt chunk
+            if (chunk_size < 16) {
+                logError("fmt chunk too small");
+                return 0;
+            }
+            
+            if (file.read((uint8_t*)&audioFormat, 2) != 2) break;
+            if (file.read((uint8_t*)&numChannels, 2) != 2) break;
+            if (file.read((uint8_t*)&sampleRate, 4) != 4) break;
+            
+            // Skip byte rate (4 bytes) and block align (2 bytes)
+            file.seek(file.position() + 6);
+            
+            if (file.read((uint8_t*)&bitsPerSample, 2) != 2) break;
+            
+            fmtFound = true;
+            
+            // Skip any remaining fmt chunk data (e.g., extended format info)
+            uint32_t bytesRead = 16; // We've read 16 bytes of the fmt chunk
+            if (chunk_size > bytesRead) {
+                file.seek(file.position() + (chunk_size - bytesRead));
+            }
+            
+            // Handle odd-sized chunks (must be word-aligned)
+            if (chunk_size % 2 != 0) {
+                file.seek(file.position() + 1);
+            }
+            
+        } else if (strncmp(chunk_id, "data", 4) == 0) {
+            // Found data chunk
+            dataChunkPos = file.position(); // Position right after chunk header
+            dataChunkSize = chunk_size;
+            dataFound = true;
+            
+            // Don't read the data yet - we might need to find fmt first
+            // Just skip past it
             file.seek(file.position() + chunk_size);
-            // Ensure alignment for next chunk if chunk_size is odd
-            if (chunk_size % 2 != 0) file.seek(file.position() + 1);
+            if (chunk_size % 2 != 0) {
+                file.seek(file.position() + 1);
+            }
+            
+        } else {
+            // Unknown chunk, skip it
+            file.seek(file.position() + chunk_size);
+            if (chunk_size % 2 != 0) {
+                file.seek(file.position() + 1);
+            }
+        }
+        
+        // If we've found both chunks, we can stop searching
+        if (fmtFound && dataFound) {
+            break;
         }
     }
 
-    if (data_chunk_pos == 0) {
-        logError("WAV file: 'data' chunk not found.");
+    // Validate that we found both required chunks
+    if (!fmtFound) {
+        logError("WAV file: 'fmt ' chunk not found");
+        return 0;
+    }
+    
+    if (!dataFound) {
+        logError("WAV file: 'data' chunk not found");
         return 0;
     }
 
-    file.seek(data_chunk_pos); // Move to the beginning of the data chunk
+    // Log format information
+    Serial.print("FIR Info: WAV Format - ");
+    Serial.print(audioFormat == 3 ? "IEEE Float" : "PCM");
+    Serial.print(", ");
+    Serial.print(numChannels);
+    Serial.print(" channel(s), ");
+    Serial.print(sampleRate);
+    Serial.print(" Hz, ");
+    Serial.print(bitsPerSample);
+    Serial.println(" bits");
 
-    // Extract necessary format info from the read header struct
-    uint16_t audioFormat = header.format_type;
-    uint16_t numChannels = header.num_channels;
-    uint16_t bitsPerSample = header.bits_per_sample;
+    // Validate format
+    if (audioFormat != 1 && audioFormat != 3) {
+        Serial.print("FIR Error: Unsupported WAV audio format: ");
+        Serial.println(audioFormat);
+        return 0;
+    }
+    
+    if (bitsPerSample != 8 && bitsPerSample != 16 && bitsPerSample != 32) {
+        Serial.print("FIR Error: Unsupported bit depth: ");
+        Serial.println(bitsPerSample);
+        return 0;
+    }
+    
+    if (audioFormat == 3 && bitsPerSample != 32) {
+        logError("IEEE Float format must be 32-bit");
+        return 0;
+    }
+
+    if (numChannels == 0) {
+        logError("Invalid number of channels (0)");
+        return 0;
+    }
+
+    // Warn if not mono
+    if (numChannels != 1) {
+        Serial.print("FIR Info: WAV file has ");
+        Serial.print(numChannels);
+        Serial.println(" channels. Using first channel only.");
+    }
+
+    // Calculate bytes per sample (for all channels)
     uint8_t bytesPerSample = bitsPerSample / 8;
 
-    if (numChannels != 1) {
-        logInfo("WAV file is not mono. Only reading coefficients from the first channel.");
-        // If you strictly want mono, you'd need to skip interleaved samples.
-    }
-
-    // Check supported audio formats
-    if (audioFormat != 1 && audioFormat != 3) { // 1 = PCM, 3 = IEEE Float
-        Serial.print("FIR Error: Unsupported WAV audio format: ");
-        Serial.print(audioFormat);
-        Serial.println(". Only PCM (1) and IEEE Float (3) are supported.");
-        return 0;
-    }
-    if (!(bitsPerSample == 8 || bitsPerSample == 16 || (bitsPerSample == 32 && audioFormat == 3))) {
-        Serial.print("FIR Error: Unsupported bit depth: ");
-        Serial.print(bitsPerSample);
-        Serial.println(" or invalid format/bit depth combination.");
-        return 0;
-    }
-
+    // Now read the actual data
+    file.seek(dataChunkPos);
+    
     int coeffCount = 0;
-    uint32_t bytesRead = 0; // Track bytes read from data chunk
+    uint32_t bytesProcessed = 0;
 
-    while (bytesRead < data_chunk_size && coeffCount < maxTaps) {
-        if (bitsPerSample == 32 && audioFormat == 3) { // IEEE Float 32-bit
-            float sample;
-            if (file.read((uint8_t*)&sample, 4) == 4) {
-                coeffs[coeffCount] = sample;
-                coeffCount++;
-                bytesRead += 4;
-            } else { break; } // Break if read fails
-        } else if (bitsPerSample == 16 && audioFormat == 1) { // PCM 16-bit
-            int16_t sample;
-            if (file.read((uint8_t*)&sample, 2) == 2) {
-                coeffs[coeffCount] = static_cast<float>(sample) / 32768.0f; // Normalize to -1.0 to 1.0 range
-                coeffCount++;
-                bytesRead += 2;
-            } else { break; }
-        } else if (bitsPerSample == 8 && audioFormat == 1) { // PCM 8-bit
-            uint8_t sample;
-            if (file.read(&sample, 1) == 1) {
-                coeffs[coeffCount] = static_cast<float>(sample - 128) / 128.0f; // Normalize to -1.0 to 1.0 range
-                coeffCount++;
-                bytesRead += 1;
-            } else { break; }
-        } else {
-            // Should have been caught by earlier checks, but as a fallback
-            logError("Unexpected format/bit depth encountered during read loop.");
+    // Read samples
+    while (bytesProcessed < dataChunkSize && coeffCount < maxTaps) {
+        float sample = 0.0f;
+        bool readSuccess = false;
+
+        // Read first channel's sample based on format
+        if (audioFormat == 3 && bitsPerSample == 32) {
+            // IEEE Float 32-bit
+            float rawSample;
+            if (file.read((uint8_t*)&rawSample, 4) == 4) {
+                sample = rawSample;
+                readSuccess = true;
+                bytesProcessed += 4;
+            }
+            
+        } else if (audioFormat == 1 && bitsPerSample == 16) {
+            // PCM 16-bit signed
+            int16_t rawSample;
+            if (file.read((uint8_t*)&rawSample, 2) == 2) {
+                // Normalize to -1.0 to +1.0
+                sample = (float)rawSample / 32768.0f;
+                readSuccess = true;
+                bytesProcessed += 2;
+            }
+            
+        } else if (audioFormat == 1 && bitsPerSample == 8) {
+            // PCM 8-bit unsigned (offset by 128)
+            uint8_t rawSample;
+            if (file.read(&rawSample, 1) == 1) {
+                // Convert from unsigned (0-255) to signed (-128 to +127), then normalize
+                sample = ((float)rawSample - 128.0f) / 128.0f;
+                readSuccess = true;
+                bytesProcessed += 1;
+            }
+            
+        } else if (audioFormat == 1 && bitsPerSample == 32) {
+            // PCM 32-bit signed (less common, but supported by some tools)
+            int32_t rawSample;
+            if (file.read((uint8_t*)&rawSample, 4) == 4) {
+                // Normalize to -1.0 to +1.0
+                sample = (float)rawSample / 2147483648.0f;
+                readSuccess = true;
+                bytesProcessed += 4;
+            }
+        }
+
+        if (!readSuccess) {
+            logError("Failed to read sample data");
             return 0;
         }
 
-        // Skip extra channels if not mono. We only care about the first channel's data.
+        // Store the coefficient
+        coeffs[coeffCount] = sample;
+        coeffCount++;
+
+        // Skip remaining channels if multi-channel
         if (numChannels > 1) {
             uint32_t skipBytes = (numChannels - 1) * bytesPerSample;
-            if (file.position() + skipBytes > file.size()) { // Avoid seeking past end of file
-                 logInfo("Reached end of file prematurely while skipping channels.");
-                 break;
+            
+            // Safety check to avoid seeking past end of data chunk
+            if (bytesProcessed + skipBytes > dataChunkSize) {
+                logInfo("Reached end of data chunk while skipping channels");
+                break;
             }
+            
             file.seek(file.position() + skipBytes);
-            bytesRead += skipBytes;
+            bytesProcessed += skipBytes;
         }
     }
 
-    if (file.available() && coeffCount == maxTaps) { // Still data left after filling maxTaps
-        Serial.print("FIR Info: WAV file has more samples than requested taps (");
+    // Report if we hit the tap limit
+    if (bytesProcessed < dataChunkSize && coeffCount >= maxTaps) {
+        Serial.print("FIR Info: WAV file contains more samples than max taps (");
         Serial.print(maxTaps);
-        Serial.print("), using first ");
-        Serial.println(coeffCount);
-    } else if (bytesRead < data_chunk_size && coeffCount < maxTaps) {
-        logError("WAV file: Premature end of data or read error.");
-        return 0;
+        Serial.println("). Loaded first samples only.");
     }
 
     return coeffCount;

@@ -22,8 +22,6 @@ public:
   // Load new FIR coefficients. The class creates its own copy.
   void loadCoefficients(const float* coeffs, uint16_t numTaps);
 
-  volatile unsigned long max_update_us = 0;
-
 private:
   audio_block_t *inputQueueArray[1];
   arm_fir_instance_f32 fir;

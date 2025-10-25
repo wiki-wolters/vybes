@@ -5,7 +5,7 @@
 I2CCommandRouter* I2CCommandRouter::instance = nullptr;
 
 I2CCommandRouter::I2CCommandRouter(uint8_t i2cAddress) 
-    : commandCount(0), address(i2cAddress), delimiter(' '), 
+    : commandCount(0), address(i2cAddress), delimiter(' '),
       bufferIndex(0), commandReady(false), bufferOverflow(false),
       isProcessing(false), i2cRequestWriteIndex(0), i2cRequestReadIndex(0),
       responseLength(0), lastStatus(STATUS_OK) {
@@ -30,8 +30,19 @@ I2CCommandRouter::I2CCommandRouter(uint8_t i2cAddress)
 
 void I2CCommandRouter::begin() {
     Wire.begin(address);
+    Wire.setClock(100000); // Set I2C to 100kHz (Standard Mode) for stability
     Wire.onReceive(i2cReceiveWrapper);
     Wire.onRequest(i2cRequestWrapper);
+}
+
+void I2CCommandRouter::detachInterrupts() {
+  Wire.onReceive(nullptr);
+  Wire.onRequest(nullptr);
+}
+
+void I2CCommandRouter::reattachInterrupts() {
+  Wire.onReceive(i2cReceiveWrapper);
+  Wire.onRequest(i2cRequestWrapper);
 }
 
 void I2CCommandRouter::setDelimiter(char delimiter) {

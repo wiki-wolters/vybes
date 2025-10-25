@@ -13,7 +13,7 @@
 I2CCommandRouter router(0x12);
 
 #define MAX_FILENAME_LEN 64 // Maximum length for FIR filenames
-#define MAX_FIR_TAPS 4096
+#define MAX_FIR_TAPS 1536
 
 // Audio generators
 AudioSynthWaveform       Tone_generator;
@@ -45,11 +45,6 @@ AudioAmplifier           Mono_Post_EQ_amp;
 AudioAmplifier           Left_Post_Crossover_amp;
 AudioAmplifier           Sub_Post_Crossover_amp;
 AudioAmplifier           Right_Post_Crossover_amp;
-
-// Post FIR checkpoint (using amps with gain = 1.0)
-AudioAmplifier           Left_Post_FIR_amp;
-AudioAmplifier           Sub_Post_FIR_amp;
-AudioAmplifier           Right_Post_FIR_amp;
 
 // Post Delay checkpoint (using amps with gain = 1.0)
 AudioAmplifier           Left_Post_Delay_amp;
@@ -91,13 +86,6 @@ AudioConnection          patchCord_GenToneToMixer(Tone_generator, 0, Generator_m
 AudioConnection          patchCord_PinkToMixer(pink1, 0, Generator_mixer, 1);
 AudioConnection          patchCord_GenMixerToLeftMixer(Generator_mixer, 0, Left_mixer, 3); // Assuming output 0 from Generator_mixer
 AudioConnection          patchCord_GenMixerToRightMixer(Generator_mixer, 0, Right_mixer, 3); // Assuming output 0 from Generator_mixer
-AudioConnection* generatorConnections[] = {
-  &patchCord_GenToneToMixer,
-  &patchCord_PinkToMixer,
-  &patchCord_GenMixerToLeftMixer,
-  &patchCord_GenMixerToRightMixer
-};
-const size_t generatorConnections_len = sizeof(generatorConnections) / sizeof(generatorConnections[0]);
 
 // External input connections
 AudioConnection          patchCord_OpticalLToLeftMixer(Optical_in, 0, Left_mixer, 0);
@@ -106,15 +94,6 @@ AudioConnection          patchCord_BluetoothLToLeftMixer(Bluetooth_in, 0, Left_m
 AudioConnection          patchCord_BluetoothRToRightMixer(Bluetooth_in, 1, Right_mixer, 1);
 AudioConnection          patchCord_USBLToLeftMixer(USB_in, 0, Left_mixer, 2);
 AudioConnection          patchCord_USBRToRightMixer(USB_in, 1, Right_mixer, 2);
-AudioConnection* externalInputConnections[] = {
-  &patchCord_OpticalLToLeftMixer,
-  &patchCord_OpticalRToRightMixer,
-  &patchCord_BluetoothLToLeftMixer,
-  &patchCord_BluetoothRToRightMixer,
-  &patchCord_USBLToLeftMixer,
-  &patchCord_USBRToRightMixer
-};
-const size_t externalInputConnections_len = sizeof(externalInputConnections) / sizeof(externalInputConnections[0]);
 
 // Patchcords for PEQ processors
 AudioConnection patchCord_LeftMixerToPreEQ(Left_mixer, 0, Left_Pre_EQ_amp, 0);
@@ -126,18 +105,6 @@ AudioConnection patchCord_PEQRightToPostEQ(peqRight, 0, Right_Post_EQ_amp, 0);
 AudioConnection patchCord_PEQLeftToMonoMixer(Left_Post_EQ_amp, 0, Mono_mixer, 0);
 AudioConnection patchCord_PEQRightToMonoMixer(peqRight, 0, Mono_mixer, 1);
 AudioConnection patchCord_PEQMonoToMonoPostEQ(Mono_mixer, 0, Mono_Post_EQ_amp, 0); // Added source port 0 for Mono_mixer
-AudioConnection* peqConnections[] = {
-  &patchCord_LeftMixerToPreEQ,
-  &patchCord_RightMixerToPreEQ,
-  &patchCord_LeftPreEQToPEQ,
-  &patchCord_RightPreEQToPEQ,
-  &patchCord_PEQLeftToPostEQ,
-  &patchCord_PEQRightToPostEQ,
-  &patchCord_PEQLeftToMonoMixer,
-  &patchCord_PEQRightToMonoMixer,
-  &patchCord_PEQMonoToMonoPostEQ
-};
-const size_t peqConnections_len = sizeof(peqConnections) / sizeof(peqConnections[0]);
 
 // Connect from Post-EQ checkpoint to Post-Crossover checkpoint via crossover
 AudioConnection          patchCord_LeftPostEQAmpToHighpass1(Left_Post_EQ_amp, 0, Left_highpass, 0);
@@ -176,45 +143,24 @@ AudioConnection* bypassCrossoverConnections[] = {
 };
 const size_t bypassCrossoverConnections_len = sizeof(bypassCrossoverConnections) / sizeof(bypassCrossoverConnections[0]);
 
-// Connect from Post-Crossover checkpoint to Post-FIR checkpoint via FIR
+// --- Simplified FIR Audio Path ---
+// The Crossover output feeds the FIR filters directly
 AudioConnection          patchCord_LeftPostCrossoverAmpToFIR(Left_Post_Crossover_amp, 0, Left_FIR_Filter, 0);
-AudioConnection          patchCord_LeftFIRToPostFIRAmp(Left_FIR_Filter, 0, Left_Post_FIR_amp, 0);
 AudioConnection          patchCord_RightPostCrossoverAmpToFIR(Right_Post_Crossover_amp, 0, Right_FIR_Filter, 0);
-AudioConnection          patchCord_RightFIRToPostFIRAmp(Right_FIR_Filter, 0, Right_Post_FIR_amp, 0);
 AudioConnection          patchCord_SubPostCrossoverAmpToFIR(Sub_Post_Crossover_amp, 0, Sub_FIR_Filter, 0);
-AudioConnection          patchCord_SubFIRToPostFIRAmp(Sub_FIR_Filter, 0, Sub_Post_FIR_amp, 0);
-AudioConnection* firConnections[] = {
-  &patchCord_LeftPostCrossoverAmpToFIR,
-  &patchCord_LeftFIRToPostFIRAmp,
-  &patchCord_RightPostCrossoverAmpToFIR,
-  &patchCord_RightFIRToPostFIRAmp,
-  &patchCord_SubPostCrossoverAmpToFIR,
-  &patchCord_SubFIRToPostFIRAmp
-};
-const size_t firConnections_len = sizeof(firConnections) / sizeof(firConnections[0]);
 
-// Connect from Post-Crossover checkpoint to Post-FIR checkpoint directly, bypassing FIR
-AudioConnection          patchCord_LeftPostCrossoverAmpToPostFIRAmp(Left_Post_Crossover_amp, 0, Left_Post_FIR_amp, 0);
-AudioConnection          patchCord_RightPostCrossoverAmpToPostFIRAmp(Right_Post_Crossover_amp, 0, Right_Post_FIR_amp, 0);
-AudioConnection          patchCord_SubPostCrossoverAmpToPostFIRAmp(Sub_Post_Crossover_amp, 0, Sub_Post_FIR_amp, 0);
-AudioConnection* bypassFIRConnections[] = {
-  &patchCord_LeftPostCrossoverAmpToPostFIRAmp,
-  &patchCord_RightPostCrossoverAmpToPostFIRAmp,
-  &patchCord_SubPostCrossoverAmpToPostFIRAmp
-};
-const size_t bypassFIRConnections_len = sizeof(bypassFIRConnections) / sizeof(bypassFIRConnections[0]);
+AudioConnection          patchCord_LeftFIRToDelay(Left_FIR_Filter, 0, Left_delay, 0);
+AudioConnection          patchCord_RightFIRToDelay(Right_FIR_Filter, 0, Right_delay, 0);
+AudioConnection          patchCord_SubFIRToDelay(Sub_FIR_Filter, 0, Sub_delay, 0);
 
 // Connect from Post-FIR checkpoint to Post-Delay checkpoint via delay
-AudioConnection          patchCord_LeftPostFIRAmpToDelay(Left_Post_FIR_amp, 0, Left_delay, 0);
-AudioConnection          patchCord_RightPostFIRAmpToDelay(Right_Post_FIR_amp, 0, Right_delay, 0);
-AudioConnection          patchCord_SubPostFIRAmpToDelay(Sub_Post_FIR_amp, 0, Sub_delay, 0);
 AudioConnection          patchCord_LeftDelayToPostDelayAmp(Left_delay, 0, Left_Post_Delay_amp, 0);
 AudioConnection          patchCord_RightDelayToPostDelayAmp(Right_delay, 0, Right_Post_Delay_amp, 0);
 AudioConnection          patchCord_SubDelayToPostDelayAmp(Sub_delay, 0, Sub_Post_Delay_amp, 0);
 AudioConnection* delayConnections[] = {
-  &patchCord_LeftPostFIRAmpToDelay,
-  &patchCord_RightPostFIRAmpToDelay,
-  &patchCord_SubPostFIRAmpToDelay,
+  &patchCord_LeftFIRToDelay,
+  &patchCord_RightFIRToDelay,
+  &patchCord_SubFIRToDelay,
   &patchCord_LeftDelayToPostDelayAmp,
   &patchCord_RightDelayToPostDelayAmp,
   &patchCord_SubDelayToPostDelayAmp
@@ -222,13 +168,13 @@ AudioConnection* delayConnections[] = {
 const size_t delayConnections_len = sizeof(delayConnections) / sizeof(delayConnections[0]);
 
 // Connect from Post-FIR checkpoint to Post-Delay checkpoint directly, bypassing delay
-AudioConnection          patchCord_LeftPostFIRAmpToPostDelayAmp(Left_Post_FIR_amp, 0, Left_Post_Delay_amp, 0);
-AudioConnection          patchCord_RightPostFIRAmpToPostDelayAmp(Right_Post_FIR_amp, 0, Right_Post_Delay_amp, 0);
-AudioConnection          patchCord_SubPostFIRAmpToPostDelayAmp(Sub_Post_FIR_amp, 0, Sub_Post_Delay_amp, 0);
+AudioConnection          patchCord_LeftFIRToPostDelayAmp(Left_FIR_Filter, 0, Left_Post_Delay_amp, 0);
+AudioConnection          patchCord_RightFIRToPostDelayAmp(Right_FIR_Filter, 0, Right_Post_Delay_amp, 0);
+AudioConnection          patchCord_SubFIRToPostDelayAmp(Sub_FIR_Filter, 0, Sub_Post_Delay_amp, 0);
 AudioConnection* bypassDelayConnections[] = {
-  &patchCord_LeftPostFIRAmpToPostDelayAmp,
-  &patchCord_RightPostFIRAmpToPostDelayAmp,
-  &patchCord_SubPostFIRAmpToPostDelayAmp
+  &patchCord_LeftFIRToPostDelayAmp,
+  &patchCord_RightFIRToPostDelayAmp,
+  &patchCord_SubFIRToPostDelayAmp
 };
 const size_t bypassDelayConnections_len = sizeof(bypassDelayConnections) / sizeof(bypassDelayConnections[0]);
 
@@ -241,15 +187,6 @@ AudioConnection          patchCord_SubPostDelayAmpToAnalogOutR(Sub_Post_Delay_am
 // Digital outs
 AudioConnection          patchCord_LeftPostDelayAmpToSpdifOut(Left_Post_Delay_amp, 0, L_R_Spdif_Out, 0);
 AudioConnection          patchCord_RightPostDelayAmpToSpdifOut(Right_Post_Delay_amp, 0, L_R_Spdif_Out, 1);
-AudioConnection* outputConnections[] = {
-  &patchCord_LeftPostDelayAmpToAnalogOut,
-  &patchCord_RightPostDelayAmpToAnalogOut,
-  &patchCord_SubPostDelayAmpToAnalogOutL,
-  &patchCord_SubPostDelayAmpToAnalogOutR,
-  &patchCord_LeftPostDelayAmpToSpdifOut,
-  &patchCord_RightPostDelayAmpToSpdifOut
-};
-const size_t outputConnections_len = sizeof(outputConnections) / sizeof(outputConnections[0]);
 
 const int CURRENT_VERSION = 3;
 bool sdCardInitialized = false;
@@ -358,9 +295,6 @@ void setup() {
   Left_Post_Crossover_amp.gain(1.0);
   Right_Post_Crossover_amp.gain(1.0);
   Sub_Post_Crossover_amp.gain(1.0);
-  Left_Post_FIR_amp.gain(1.0);
-  Right_Post_FIR_amp.gain(1.0);
-  Sub_Post_FIR_amp.gain(1.0);
   Left_Post_Delay_amp.gain(1.0);
   Right_Post_Delay_amp.gain(1.0);
   Sub_Post_Delay_amp.gain(1.0);
@@ -402,6 +336,7 @@ void setup() {
   router.on("setEqEnabled", handleSetEQEnabled);
   router.on("setCrossoverEnabled", handleSetCrossoverEnabled);
   router.on("setFirEnabled", handleSetFIREnabled);
+  router.on("loadFirFiles", handleLoadFirFiles);
   router.on("setDelayEnabled", handleSetDelayEnabled);
   router.on("setFir", handleSetFIR);
   router.on("setDelays", handleSetDelays);
@@ -414,17 +349,14 @@ void loop() {
   // Optional: Print some diagnostics every 2 seconds
   static unsigned long lastPrint = 0;
 
-  if (millis() - lastPrint > 5000) {
+  if (millis() - lastPrint > 20000) {
     lastPrint = millis();
-    
-    // Check if we're getting input signal
-    // if (Optical_in.isLocked()) {
-    //   Serial.println("SPDIF Input Locked - Signal detected");
-    //   Serial.print("Audio memory usage max: ");
-    //   Serial.println(AudioMemoryUsageMax());
-    // } else {
-    //   Serial.println("No SPDIF input signal detected");
-    // }
+    Serial.print("Audio Processor Usage: ");
+    Serial.print(AudioProcessorUsage());
+    Serial.print("% (Max: ");
+    Serial.print(AudioProcessorUsageMax());
+    Serial.println("%)");
+    AudioProcessorUsageMaxReset();
   }
 
   if (firFilesPending) {
@@ -486,23 +418,10 @@ void setFIREnabled(bool enabled) {
   Serial.println(String("Set fir enabled: ") + (enabled ? "yes" : "no"));
   state.firEnabled = enabled;
   state.isDirty = true;
-  AudioConnection** disableConnections = enabled ? bypassFIRConnections : firConnections;
-  AudioConnection** enableConnections = enabled ? firConnections : bypassFIRConnections;
-  const size_t disableConnections_len = enabled ? bypassFIRConnections_len : firConnections_len;
-  const size_t enableConnections_len = enabled ? firConnections_len : bypassFIRConnections_len;
-  for (size_t i = 0; i < disableConnections_len; ++i) {
-    AudioConnection* connection = disableConnections[i];
-    if (connection) {
-      connection->disconnect();
-    }
-  }
-  for (size_t i = 0; i < enableConnections_len; ++i) {
-    AudioConnection* connection = enableConnections[i];
-    if (connection) {
-      connection->connect();
-    }
-  }
-  firFilesPending = true;
+
+  Left_FIR_Filter.setEnabled(enabled);
+  Right_FIR_Filter.setEnabled(enabled);
+  Sub_FIR_Filter.setEnabled(enabled);
 }
 
 void setDelayEnabled(bool enabled) {
@@ -613,12 +532,17 @@ void setFIR(String leftFile, String rightFile, String subFile) {
 }
 
 void loadFirFiles() {
+  router.detachInterrupts();
+
   if (!sdCardInitialized) {
-    Serial.println("Cannot load FIR files, SD card not available.");
+    Serial.println("SD not initialized - can't load FIR files");
     // Clear any existing FIR filters to ensure no stale filters are used
     Left_FIR_Filter.loadCoefficients(nullptr, 0);
     Right_FIR_Filter.loadCoefficients(nullptr, 0);
     Sub_FIR_Filter.loadCoefficients(nullptr, 0);
+    
+    // Re-enable I2C before returning
+    router.reattachInterrupts();
     return;
   }
   
@@ -630,6 +554,8 @@ void loadFirFiles() {
     float* coeffs = FIRLoader::loadCoefficients(state.firFileLeft, actualTaps, MAX_FIR_TAPS);
     if (coeffs) {
       Left_FIR_Filter.loadCoefficients(coeffs, actualTaps);
+      Serial.print("Left FIR file loaded, taps: ");
+      Serial.println(actualTaps);
       delete[] coeffs;
     } else {
       Left_FIR_Filter.loadCoefficients(nullptr, 0);
@@ -644,11 +570,14 @@ void loadFirFiles() {
     float* coeffs = FIRLoader::loadCoefficients(state.firFileRight, actualTaps, MAX_FIR_TAPS);
     if (coeffs) {
       Right_FIR_Filter.loadCoefficients(coeffs, actualTaps);
+      Serial.print("Right FIR file loaded, taps: ");
+      Serial.println(actualTaps);
       delete[] coeffs;
     } else {
       Right_FIR_Filter.loadCoefficients(nullptr, 0);
     }
-  } else {
+  }
+  else {
     Right_FIR_Filter.loadCoefficients(nullptr, 0);
   }
   
@@ -658,6 +587,8 @@ void loadFirFiles() {
     float* coeffs = FIRLoader::loadCoefficients(state.firFileSub, actualTaps, MAX_FIR_TAPS);
     if (coeffs) {
       Sub_FIR_Filter.loadCoefficients(coeffs, actualTaps);
+      Serial.print("Sub FIR file loaded, taps: ");
+      Serial.println(actualTaps);
       delete[] coeffs;
     } else {
       Sub_FIR_Filter.loadCoefficients(nullptr, 0);
@@ -665,6 +596,9 @@ void loadFirFiles() {
   } else {
     Sub_FIR_Filter.loadCoefficients(nullptr, 0);
   }
+
+  // Re-enable I2C communication
+  router.reattachInterrupts();
 }
 
 void setDelays(int delayL_us, int delayR_us, int delayS_us) {
@@ -775,6 +709,10 @@ void handleSetFIREnabled(const String& command, String* args, int argCount, Outp
   }
 }
 
+void handleLoadFirFiles(const String& command, String* args, int argCount, OutputStream& stream) {
+  firFilesPending = true;
+}
+
 void handleSetDelayEnabled(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 1) {
     setDelayEnabled(args[0].toInt() == 1);
@@ -785,21 +723,37 @@ void handleSetFIR(const String& command, String* args, int argCount, OutputStrea
   if (argCount == 2) { // e.g. "setFir left DeskL.wav"
     String channel = args[0];
     String filename = args[1];
+
+    char* targetStateFilename = nullptr;
+
     if (channel.equalsIgnoreCase("left")) {
-      setFIR(filename, state.firFileRight, state.firFileSub);
+      targetStateFilename = state.firFileLeft;
     } else if (channel.equalsIgnoreCase("right")) {
-      setFIR(state.firFileLeft, filename, state.firFileSub);
+      targetStateFilename = state.firFileRight;
     } else if (channel.equalsIgnoreCase("sub")) {
-      setFIR(state.firFileLeft, state.firFileRight, filename);
+      targetStateFilename = state.firFileSub;
+    }
+
+    if (targetStateFilename) {
+      strncpy(targetStateFilename, filename.c_str(), MAX_FILENAME_LEN - 1);
+      targetStateFilename[MAX_FILENAME_LEN - 1] = '\0';
+      state.isDirty = true;
     }
   } else if (argCount == 1) { // e.g. "setFir sub" to clear
     String channel = args[0];
+    char* targetStateFilename = nullptr;
+
     if (channel.equalsIgnoreCase("left")) {
-      setFIR("", state.firFileRight, state.firFileSub);
+      targetStateFilename = state.firFileLeft;
     } else if (channel.equalsIgnoreCase("right")) {
-      setFIR(state.firFileLeft, "", state.firFileSub);
+      targetStateFilename = state.firFileRight;
     } else if (channel.equalsIgnoreCase("sub")) {
-      setFIR(state.firFileLeft, state.firFileRight, "");
+      targetStateFilename = state.firFileSub;
+    }
+
+    if (targetStateFilename) {
+      targetStateFilename[0] = '\0';
+      state.isDirty = true;
     }
   } else if (argCount == 3) { // existing functionality for setting all at once
     setFIR(args[0], args[1], args[2]);

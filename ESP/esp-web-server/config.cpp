@@ -343,12 +343,14 @@ void updateTeensyWithActivePresetParameters() {
     
     // Send FIR filter settings
     sendOnOffToTeensy(CMD_SET_FIR_ENABLED, activePreset->FIRFiltersEnabled);
-    if (activePreset->FIRFiltersEnabled) {
-        sendToTeensy(CMD_SET_FIR, "left", activePreset->FIRFilters.left);
-        sendToTeensy(CMD_SET_FIR, "right", activePreset->FIRFilters.right);
-        sendToTeensy(CMD_SET_FIR, "sub", activePreset->FIRFilters.sub);
-    }
+    sendToTeensy(CMD_SET_FIR, "left", activePreset->FIRFilters.left);
+    sendToTeensy(CMD_SET_FIR, "right", activePreset->FIRFilters.right);
+    sendToTeensy(CMD_SET_FIR, "sub", activePreset->FIRFilters.sub);
 
     // Send volume
     sendFloatToTeensy(CMD_SET_VOLUME, current_config.volume / 100.0f);
+
+    if (activePreset->FIRFiltersEnabled) {
+        sendToTeensy(CMD_LOAD_FIR_FILES);
+    }
 }
