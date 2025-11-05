@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <AudioStream.h>
 #include <arm_math.h>
+#include <Audio.h>
 
 #ifndef PI
 #define PI 3.14159265359f
@@ -59,6 +60,8 @@ public:
   // Band queries
   PEQBand getBand(int bandIndex) const;
   int getActiveBandCount() const;
+  float calculateMaxEqBoost(const PEQBand* currentBands, int numBands) const;
+  void applyPreEQGain(float maxBoost, AudioAmplifier& leftAmp, AudioAmplifier& rightAmp);
   
   // Animation
   void animateToBands(const PEQBand* targetBands, int numBands, unsigned long durationMs = 1000);
@@ -115,5 +118,8 @@ private:
   void processAnimation();
   float interpolate(float start, float end, float progress);
 };
+
+// Bell filter calculation (peaking EQ) - adapted from WebUI
+float calculateBellFilter(float freq, float centerFreq, float gain, float q);
 
 #endif

@@ -87,6 +87,38 @@ int PEQProcessor::getActiveBandCount() const {
   return count;
 }
 
+float PEQProcessor::calculateMaxEqBoost(const PEQBand* currentBands, int numBands) const {
+  float maxBoost = 0.0f;
+  // Iterate over a range of frequencies to find the peak gain
+  float sampleFrequencies[] = {20.0f, 50.0f, 100.0f, 200.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f, 20000.0f};
+  for (float freq : sampleFrequencies) {
+    float currentTotalGain = 0.0f;
+    for (int i = 0; i < numBands; i++) {
+      if (currentBands[i].enabled) {
+        currentTotalGain += calculateBellFilter(freq, currentBands[i].frequency, currentBands[i].gain, currentBands[i].q);
+      }
+    }
+    if (currentTotalGain > maxBoost) {
+      maxBoost = currentTotalGain;
+    }
+  }
+  return maxBoost;
+}
+
+void PEQProcessor::applyPreEQGain(float maxBoost, AudioAmplifier& leftAmp, AudioAmplifier& rightAmp) {
+  float linearGain = 1.0f; // Default to 1.0 (0dB) if no boost or only cuts
+  if (maxBoost > 0.0f) {
+    // Convert dB to linear gain and apply as attenuation
+    linearGain = 1.0f / pow(10.0f, maxBoost / 20.0f);
+  }
+  // Ensure a reasonable minimum gain to prevent silence or extreme attenuation
+  if (linearGain < 0.01f) linearGain = 0.01f; // Example minimum, adjust as needed
+
+  leftAmp.gain(linearGain);
+  rightAmp.gain(linearGain);
+  Serial.println("Pre-EQ gain set to: " + String(linearGain) + " (max boost: " + String(maxBoost) + "dB)");
+}
+
 FilterType PEQProcessor::getOptimalFilterType(float frequency) {
   return (frequency < 1000.0f) ? FILTER_CHAMBERLIN : FILTER_BIQUAD;
 }
@@ -353,4 +385,15 @@ void PEQProcessor::update(void) {
 
   transmit(output_block);
   release(output_block);
+}
+
+// Bell filter calculation (peaking EQ) - adapted from WebUI
+float calculateBellFilter(float freq, float centerFreq, float gain, float q) {
+  if (q == 0) return 0; // Avoid division by zero
+  float ratio = freq / centerFreq;
+  float bandwidth = 1 / q;
+  // This formula is a simplification and might not perfectly match all digital biquad implementations
+  // but it provides a good approximation for calculating the curve for pre-gain compensation.
+  float response = gain / (1 + pow((ratio - 1/ratio) / bandwidth, 2));
+  return response;
 }

@@ -13,7 +13,7 @@
 I2CCommandRouter router(0x12);
 
 #define MAX_FILENAME_LEN 64 // Maximum length for FIR filenames
-#define MAX_FIR_TAPS 1536
+#define MAX_FIR_TAPS 2048
 
 // Audio generators
 AudioSynthWaveform       Tone_generator;
@@ -284,10 +284,6 @@ void setup() {
   peqLeft.begin(AUDIO_SAMPLE_RATE);
   peqRight.begin(AUDIO_SAMPLE_RATE);
 
-  // Set pre-EQ gain to provide headroom for EQ boosts
-  Left_Pre_EQ_amp.gain(0.5);
-  Right_Pre_EQ_amp.gain(0.5);
-
   // Explicitly set all amps to gain=1.0
   Left_Post_EQ_amp.gain(1.0);
   Right_Post_EQ_amp.gain(1.0);
@@ -390,6 +386,15 @@ void setEQEnabled(bool enabled) {
   state.isDirty = true;
   peqLeft.setBypass(!enabled);
   peqRight.setBypass(!enabled);
+
+  if (enabled) {
+    // EQ is enabled, so apply the filters and the gain compensation
+    setEQFilters(state.filters, 0);
+  } else {
+    // EQ is disabled, so set the pre-amp gain to 1.0
+    Left_Pre_EQ_amp.gain(1.0);
+    Right_Pre_EQ_amp.gain(1.0);
+  }
 }
 
 void setCrossoverEnabled(bool enabled) {
@@ -487,6 +492,10 @@ void setEQFilters(PEQBand filters[], int animationDuration) {
   int8_t nBands = getConsecutiveActiveFilterCount();
   peqLeft.animateToBands(filters, nBands, animationDuration);
   peqRight.animateToBands(filters, nBands, animationDuration);
+
+  // Calculate max boost from current EQ filters and apply pre-EQ gain compensation
+  float maxBoost = peqLeft.calculateMaxEqBoost(state.filters, nBands);
+  peqLeft.applyPreEQGain(maxBoost, Left_Pre_EQ_amp, Right_Pre_EQ_amp);
 }
 
 void setCrossoverFrequency(uint16_t frequency) {
@@ -803,6 +812,9 @@ void handleSetEQFilter(const String& command, String* args, int argCount, Output
       // Directly apply the change to the PEQ processors
       peqLeft.setBand(index, frequency, gain, q, true);
       peqRight.setBand(index, frequency, gain, q, true);
+
+      // Re-evaluate pre-EQ gain after a band is updated
+      setEQFilters(state.filters, 0);
     }
   }
 }

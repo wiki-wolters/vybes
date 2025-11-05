@@ -105,6 +105,14 @@
           <path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         </svg>
       </button>
+
+      <!-- Import Button -->
+      <button class="import-btn" @click="showImportModal = true">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-box-arrow-in-down" viewBox="0 0 16 16">
+          <path fill-rule="evenodd" d="M3.5 10a.5.5 0 0 1-.5-.5v-8a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 .5.5v8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 0 0 1h2A1.5 1.5 0 0 0 14 9.5v-8A1.5 1.5 0 0 0 12.5 0h-9A1.5 1.5 0 0 0 2 1.5v8A1.5 1.5 0 0 0 3.5 11h2a.5.5 0 0 0 0-1z"/>
+          <path fill-rule="evenodd" d="M7.646 15.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 14.293V5.5a.5.5 0 0 0-1 0v8.793l-2.146-2.147a.5.5 0 0 0-.708.708z"/>
+        </svg>
+      </button>
     </div>
 
     <!-- Point Selection Row -->
@@ -161,12 +169,28 @@
         />
       </div>
     </div>
+
+    <modal-dialog
+      v-model="showImportModal"
+      title="Import PEQ Settings"
+      confirm-text="Import"
+      @confirm="handleImport"
+    >
+      <p class="mb-4 text-sm text-gray-400">Paste the filter settings from Room EQ Wizard (REW) below.</p>
+      <textarea
+        v-model="importText"
+        class="w-full h-48 p-2 border border-gray-600 rounded bg-gray-800 text-white"
+        placeholder="Paste settings here..."
+      ></textarea>
+    </modal-dialog>
+
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import RangeSlider from './shared/RangeSlider.vue';
+import ModalDialog from './shared/ModalDialog.vue';
 
 const props = defineProps({
   peqPoints: {
@@ -179,7 +203,40 @@ const props = defineProps({
   }
 });
 
+const showImportModal = ref(false);
+const importText = ref('');
+
+const handleImport = () => {
+  const text = importText.value;
+  const lines = text.split('\n');
+  const newPoints = [];
+
+  const regex = /Filter\s+\d+:\s+ON\s+PK\s+Fc\s+([\d\.]+)\s+Hz\s+Gain\s+([-\d\.]+)\s+dB\s+Q\s+([\d\.]+)/;
+
+  for (const line of lines) {
+    const match = line.match(regex);
+    if (match) {
+      const freq = parseFloat(match[1]);
+      const gain = parseFloat(match[2]);
+      const q = parseFloat(match[3]);
+      newPoints.push({ freq, gain, q });
+    }
+  }
+
+  if (newPoints.length > 0) {
+    localEqPoints.length = 0;
+    newPoints.forEach(point => localEqPoints.push(point));
+    selectedPoint.value = 0;
+    emitChange();
+  }
+
+  showImportModal.value = false;
+  importText.value = '';
+};
+
+
 const emit = defineEmits(['change']);
+
 
 // Fullscreen state
 const isFullscreen = ref(false);
@@ -616,6 +673,30 @@ onUnmounted(() => {
 }
 
 .add-point-btn:hover {
+  background: #0088ff;
+  color: #fff;
+  transform: scale(1.1);
+}
+
+.import-btn {
+  position: absolute;
+  top: 10px;
+  right: 60px;
+  background: #333;
+  color: #fff;
+  border: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  padding: 0;
+}
+
+.import-btn:hover {
   background: #0088ff;
   color: #fff;
   transform: scale(1.1);
