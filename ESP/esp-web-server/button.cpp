@@ -2,6 +2,7 @@
 #include "config.h"
 #include "screen.h"
 #include "websocket.h"
+#include "utilities.h"
 #include <Wire.h>
 #include <ArduinoJson.h>
 #include <string.h>
@@ -29,12 +30,15 @@ void setupButton() {
     currentPresetIndex = current_config.active_preset_index;
 }
 
+unsigned long lastButtonScreenUpdateTime = 0;
+const unsigned long BUTTON_SCREEN_UPDATE_INTERVAL = 200; // milliseconds
+
 void nextPreset() {
     currentPresetIndex++;
     if (currentPresetIndex >= MAX_PRESETS || strlen(current_config.presets[currentPresetIndex].name) == 0) {
         currentPresetIndex = 0;
     }
-    writeToScreen(current_config.presets[currentPresetIndex].name);
+    // writeToScreen(current_config.presets[currentPresetIndex].name); // REMOVED THIS LINE
     lastButtonPressTime = millis();
 }
 
@@ -44,10 +48,17 @@ void handleShortPress() {
         // Just turn on backlight and show current preset
         lcd.setBacklight(1);
         backlightStart = millis();
-        writeToScreen(current_config.presets[currentPresetIndex].name);
+        if (millis() - lastButtonScreenUpdateTime > BUTTON_SCREEN_UPDATE_INTERVAL) {
+            writeToScreen(current_config.presets[currentPresetIndex].name);
+            lastButtonScreenUpdateTime = millis();
+        }
     } else {
         // Backlight is on, so cycle to next preset
-        nextPreset();
+        nextPreset(); // Update the preset index
+        if (millis() - lastButtonScreenUpdateTime > BUTTON_SCREEN_UPDATE_INTERVAL) {
+            writeToScreen(current_config.presets[currentPresetIndex].name); // Display the new preset
+            lastButtonScreenUpdateTime = millis();
+        }
     }
 }
 
@@ -87,7 +98,8 @@ void handleButton() {
         if (currentPresetIndex != current_config.active_preset_index) {
             current_config.active_preset_index = currentPresetIndex;
             updateTeensyWithActivePresetParameters();
-            save_config();
+            loadFirFilters();
+            scheduleConfigWrite();
 
             // Prepare data for WebSocket broadcast
                         DynamicJsonDocument doc(1024);

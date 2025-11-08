@@ -204,12 +204,17 @@ struct State {
   float gainGenerator = 1.0;
 
   // Master Volume
-  float volume = 0.5;
+  float volume = 0.5; // Target volume
+  float currentVolume = 0.5; // Actual applied volume, will be smoothed
 
   // Speaker gain
   float gainLeft = 1.0;
   float gainRight = 1.0;
   float gainSub = 1.0;
+
+  float currentGainLeft = 1.0; // Actual applied left gain, will be smoothed
+  float currentGainRight = 1.0; // Actual applied right gain, will be smoothed
+  float currentGainSub = 1.0; // Actual applied sub gain, will be smoothed
 
   // Crossover
   uint16_t crossoverFrequency = 50;
@@ -311,6 +316,14 @@ void setup() {
   setCrossoverEnabled(state.crossoverEnabled);
   setFIR(state.firFileLeft, state.firFileRight, state.firFileSub);
   setDelays(state.delayLeftMicroSeconds, state.delayRightMicroSeconds, state.delaySubMicroSeconds);
+  // Initialize currentVolume and currentGainX and apply initial gain directly
+  state.currentVolume = state.volume;
+  state.currentGainLeft = state.gainLeft;
+  state.currentGainRight = state.gainRight;
+  state.currentGainSub = state.gainSub;
+  Left_Post_Delay_amp.gain(state.currentGainLeft * state.currentVolume);
+  Right_Post_Delay_amp.gain(state.currentGainRight * state.currentVolume);
+  Sub_Post_Delay_amp.gain(state.currentGainSub * state.currentVolume);
   // State hasn't changed, so don't save
   state.isDirty = false;
 
@@ -378,6 +391,55 @@ void loop() {
     // Don't call AudioMemoryUsageMaxReset() yet
   }
   router.loop();
+  updateAudioVolume(); // Call this frequently to smooth volume changes
+}
+
+// Function to smoothly update the audio volume
+void updateAudioVolume() {
+  const float SMOOTHING_FACTOR = 0.01; // Adjust this for faster/slower ramp
+  const float MIN_CHANGE = 0.001; // Minimum change to apply
+
+  bool volumeChanged = false;
+  if (abs(state.volume - state.currentVolume) > MIN_CHANGE) {
+    state.currentVolume = state.currentVolume * (1.0 - SMOOTHING_FACTOR) + state.volume * SMOOTHING_FACTOR;
+    volumeChanged = true;
+  } else if (state.currentVolume != state.volume) {
+    state.currentVolume = state.volume;
+    volumeChanged = true;
+  }
+
+  bool gainLeftChanged = false;
+  if (abs(state.gainLeft - state.currentGainLeft) > MIN_CHANGE) {
+    state.currentGainLeft = state.currentGainLeft * (1.0 - SMOOTHING_FACTOR) + state.gainLeft * SMOOTHING_FACTOR;
+    gainLeftChanged = true;
+  } else if (state.currentGainLeft != state.gainLeft) {
+    state.currentGainLeft = state.gainLeft;
+    gainLeftChanged = true;
+  }
+
+  bool gainRightChanged = false;
+  if (abs(state.gainRight - state.currentGainRight) > MIN_CHANGE) {
+    state.currentGainRight = state.currentGainRight * (1.0 - SMOOTHING_FACTOR) + state.gainRight * SMOOTHING_FACTOR;
+    gainRightChanged = true;
+  } else if (state.currentGainRight != state.gainRight) {
+    state.currentGainRight = state.gainRight;
+    gainRightChanged = true;
+  }
+
+  bool gainSubChanged = false;
+  if (abs(state.gainSub - state.currentGainSub) > MIN_CHANGE) {
+    state.currentGainSub = state.currentGainSub * (1.0 - SMOOTHING_FACTOR) + state.gainSub * SMOOTHING_FACTOR;
+    gainSubChanged = true;
+  } else if (state.currentGainSub != state.gainSub) {
+    state.currentGainSub = state.gainSub;
+    gainSubChanged = true;
+  }
+
+  if (volumeChanged || gainLeftChanged || gainRightChanged || gainSubChanged) {
+    Left_Post_Delay_amp.gain(state.currentGainLeft * state.currentVolume);
+    Right_Post_Delay_amp.gain(state.currentGainRight * state.currentVolume);
+    Sub_Post_Delay_amp.gain(state.currentGainSub * state.currentVolume);
+  }
 }
 
 void setEQEnabled(bool enabled) {
@@ -453,11 +515,9 @@ void setDelayEnabled(bool enabled) {
 
 void setVolume(float volume) {
   Serial.println("Set volume: " + String(volume));
-  state.volume = volume;
+  state.volume = volume; // Update target volume
   state.isDirty = true;
-  Left_Post_Delay_amp.gain(state.gainLeft * state.volume);
-  Right_Post_Delay_amp.gain(state.gainRight * state.volume);
-  Sub_Post_Delay_amp.gain(state.gainSub * state.volume);
+  // Do NOT apply gain directly here. It will be smoothed in updateAudioVolume().
 }
 
 void setInputGains(float bluetoothGain, float opticalGain, float usbGain, float generatorGain) {
@@ -479,13 +539,11 @@ void setInputGains(float bluetoothGain, float opticalGain, float usbGain, float 
 
 void setSpeakerGains(float leftGain, float rightGain, float subGain) {
   Serial.println("Set gains: Left " + String(leftGain) + ", Right " + String(rightGain) + ", Sub " + String(subGain));
-  state.gainLeft = leftGain;
-  state.gainRight = rightGain;
-  state.gainSub = subGain;
+  state.gainLeft = leftGain; // Update target left gain
+  state.gainRight = rightGain; // Update target right gain
+  state.gainSub = subGain; // Update target sub gain
   state.isDirty = true;
-  Left_Post_Delay_amp.gain(state.gainLeft);
-  Right_Post_Delay_amp.gain(state.gainRight);
-  Sub_Post_Delay_amp.gain(state.gainSub);
+  // Do NOT apply gain directly here. It will be smoothed in updateAudioVolume().
 }
 
 void setEQFilters(PEQBand filters[], int animationDuration) {

@@ -50,6 +50,7 @@ db.serialize(() => {
     fir_left TEXT DEFAULT '',
     fir_right TEXT DEFAULT '',
     fir_sub TEXT DEFAULT '',
+    gains TEXT DEFAULT '{"left": 1.0, "right": 1.0, "sub": 1.0}',
     is_preference_eq_enabled INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
@@ -304,6 +305,49 @@ app.put('/gains/input', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+app.get('/preset/gains', (req, res) => {
+  const presetName = req.query.preset_name;
+  if (!presetName) {
+    return res.status(400).json({ error: 'Preset name is required' });
+  }
+
+  db.get("SELECT gains FROM presets WHERE name = ?", [presetName], (err, row) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    if (!row) {
+      return res.status(404).json({ error: 'Preset not found' });
+    }
+    res.json(JSON.parse(row.gains));
+  });
+});
+
+app.put('/preset/gains', (req, res) => {
+  const presetName = req.query.preset_name;
+  const { left, right, sub } = req.body;
+
+  if (!presetName) {
+    return res.status(400).json({ error: 'Preset name is required' });
+  }
+
+  if (left === undefined || right === undefined || sub === undefined) {
+    return res.status(400).json({ error: 'Missing gain values' });
+  }
+
+  const gains = JSON.stringify({ left, right, sub });
+
+  db.run("UPDATE presets SET gains = ? WHERE name = ?", [gains, presetName], function(err) {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    if (this.changes === 0) {
+      return res.status(404).json({ error: 'Preset not found' });
+    }
+    broadcast({ event: 'preset_gains_updated', preset: presetName, gains: req.body });
+    res.json({ success: true });
+  });
 });
 
 // FIR Filter Management
@@ -715,20 +759,27 @@ app.get('/preset', (req, res) => {
       const preferenceEQ = [];
       
       eqRows.forEach(row => {
+        console.log('Processing row:', row);
         try {
-          const peqData = typeof row.peq_data === 'string' ? JSON.parse(row.peq_data) : row.peq_data;
-          const eqData = {
-            spl: row.spl,
-            peqs: peqData
-          };
-          
-          if (row.type === 'room') {
-            roomCorrection.push(eqData);
-          } else if (row.type === 'pref') {
-            preferenceEQ.push(eqData);
+          if (row.peq_data) {
+            console.log('Parsing peq_data:', row.peq_data);
+            const peqData = typeof row.peq_data === 'string' ? JSON.parse(row.peq_data) : row.peq_data;
+            const eqData = {
+              spl: row.spl,
+              peqs: peqData
+            };
+            
+            if (row.type === 'room') {
+              roomCorrection.push(eqData);
+            } else if (row.type === 'pref') {
+              preferenceEQ.push(eqData);
+            }
+          } else {
+            console.log('Skipping row with no peq_data:', row);
           }
         } catch (e) {
-          console.error('Error parsing PEQ data:', e);
+          console.error('Error parsing PEQ data for row:', row);
+          console.error('Error:', e);
         }
       });
       
@@ -745,6 +796,7 @@ app.get('/preset', (req, res) => {
         isCrossoverEnabled: Boolean(preset.is_crossover_enabled),
         crossoverFreq: preset.crossover_freq,
         isPreferenceEQEnabled: Boolean(preset.is_preference_eq_enabled),
+        gains: preset.gains ? JSON.parse(preset.gains) : { left: 1.0, right: 1.0, sub: 1.0 },
         preferenceEQ,
       });
     });
@@ -836,6 +888,7 @@ app.post('/preset', (req, res) => {
                       isCrossoverEnabled: Boolean(defaultIsCrossoverEnabled),
                       crossoverFreq: defaultCrossoverFreq,
                       isPreferenceEQEnabled: Boolean(defaultIsPreferenceEQEnabled),
+                      gains: { left: 1.0, right: 1.0, sub: 1.0 },
                       preferenceEQ: [{ spl: 0, peqs: defaultPEQPoints }],
                     }
                     res.status(201).json(newPresetForResponse);
@@ -869,9 +922,9 @@ app.post('/preset', (req, res) => {
           return res.status(500).json({ error: err.message });
         }
         
-        db.run(`INSERT INTO presets (name, speaker_delays, crossover_freq, is_current, is_speaker_delay_enabled, is_crossover_enabled, is_fir_enabled, is_preference_eq_enabled, fir_left, fir_right, fir_sub) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
-               [newName, source.speaker_delays, source.crossover_freq, 1, source.is_speaker_delay_enabled, source.is_crossover_enabled, source.is_fir_enabled, source.is_preference_eq_enabled, source.fir_left, source.fir_right, source.fir_sub], 
+        db.run(`INSERT INTO presets (name, speaker_delays, crossover_freq, is_current, is_speaker_delay_enabled, is_crossover_enabled, is_fir_enabled, is_preference_eq_enabled, fir_left, fir_right, fir_sub, gains) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+               [newName, source.speaker_delays, source.crossover_freq, 1, source.is_speaker_delay_enabled, source.is_crossover_enabled, source.is_fir_enabled, source.is_preference_eq_enabled, source.fir_left, source.fir_right, source.fir_sub, source.gains], 
                function(err) {
           if (err) {
             if (err.code === 'SQLITE_CONSTRAINT') {
@@ -990,12 +1043,12 @@ app.post('/restore', (req, res) => {
 });
 
 // Serve static assets and SPA fallback
-app.use('/assets', express.static(path.join(__dirname, 'dist/assets')));
-app.use('/images', express.static(path.join(__dirname, 'dist/images')));
+app.use('/assets', express.static(path.join(__dirname, '..', 'WebUI', 'dist', 'assets')));
+app.use('/images', express.static(path.join(__dirname, '..', 'WebUI', 'dist', 'images')));
 
 // Serve index.html for all other routes (SPA fallback)
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dist/index.html'));
+  res.sendFile(path.join(__dirname, '..', 'WebUI', 'dist', 'index.html'));
 });
 
 // Error handling middleware

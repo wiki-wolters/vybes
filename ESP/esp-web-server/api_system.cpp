@@ -9,9 +9,9 @@ void handleGetStatus(AsyncWebServerRequest *request) {
     DynamicJsonDocument doc(1024);
 
     JsonObject speakerGains = doc.createNestedObject("speakerGains");
-    speakerGains["left"] = current_config.speakerGains.left;
-    speakerGains["right"] = current_config.speakerGains.right;
-    speakerGains["sub"] = current_config.speakerGains.sub;
+    speakerGains["left"] = current_config.speakerGains.left * 100.0f;
+    speakerGains["right"] = current_config.speakerGains.right * 100.0f;
+    speakerGains["sub"] = current_config.speakerGains.sub * 100.0f;
     
     JsonObject inputGains = doc.createNestedObject("inputGains");
     inputGains["spdif"] = current_config.inputGains.spdif;
@@ -29,6 +29,9 @@ void handleGetStatus(AsyncWebServerRequest *request) {
     noise["volume"] = current_config.noiseVolume;
     
     doc["currentPreset"] = current_config.presets[current_config.active_preset_index].name;
+    
+    // Add master volume
+    doc["volume"] = current_config.volume; // Add this line
 
     String response;
     serializeJson(doc, response);

@@ -48,7 +48,6 @@ bool sendToTeensy(const char* command, const String& param1,
 
         if (error == 0) {
             Serial.println("I2C transmission successful");
-            delay(10);
             break;
         }
 
@@ -61,8 +60,6 @@ bool sendToTeensy(const char* command, const String& param1,
             Serial.println("Failed to communicate with Teensy after 3 attempts");
             return false;
         }
-
-        delay(10);
     }
 
     // Rest of the function remains the same...

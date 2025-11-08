@@ -141,7 +141,7 @@
           :decimals="0"
           :logarithmic="true"
           v-model="localEqPoints[selectedPoint].freq"
-          @update:modelValue="emitChange"
+          @update:modelValue="requestUpdate"
         />
       </div>
       <div class="control-group">
@@ -153,7 +153,7 @@
           unit="dB"
           :decimals="2"
           v-model="localEqPoints[selectedPoint].gain"
-          @update:modelValue="emitChange"
+          @update:modelValue="requestUpdate"
         />
       </div>
       <div class="control-group">
@@ -165,7 +165,7 @@
           unit=""
           :decimals="3"
           v-model="localEqPoints[selectedPoint].q"
-          @update:modelValue="emitChange"
+          @update:modelValue="requestUpdate"
         />
       </div>
     </div>
@@ -191,6 +191,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import RangeSlider from './shared/RangeSlider.vue';
 import ModalDialog from './shared/ModalDialog.vue';
+import VybesAPI from '../api-client';
 
 const props = defineProps({
   peqPoints: {
@@ -200,6 +201,14 @@ const props = defineProps({
       { id: 2, freq: 1000, gain: 0, q: 1 },
       { id: 3, freq: 10000, gain: 0, q: 1 }
     ]
+  },
+  presetName: {
+    type: String,
+    required: true
+  },
+  eqType: {
+    type: String,
+    default: 'pref' // Assuming this component is primarily for preference EQ
   }
 });
 
@@ -227,7 +236,7 @@ const handleImport = () => {
     localEqPoints.length = 0;
     newPoints.forEach(point => localEqPoints.push(point));
     selectedPoint.value = 0;
-    emitChange();
+    requestUpdate();
   }
 
   showImportModal.value = false;
@@ -285,7 +294,13 @@ function initializePoints() {
 };
 
 // Watch for prop changes
+const isInteracting = ref(false);
+let interactionEndTimeout = null;
+
 watch(() => props.peqPoints, (newVal, oldVal) => {
+  if (isInteracting.value) {
+    return; // Ignore updates while user is interacting
+  }
   console.log('ParametricEQ - peqPoints prop changed');
   console.log('Old value:', oldVal);
   console.log('New value:', newVal);
@@ -302,32 +317,75 @@ const dragState = reactive({
   startGain: 0
 });
 
-// Throttled emit function
+// Throttling and request queuing
 let throttleTimeout = null;
-let trailingCall = false;
-const emitChange = () => {
-  if (throttleTimeout) {
-    trailingCall = true;
+let pendingRequest = null; // To hold the promise of the ongoing API call
+let trailingCall = false; // To track if a call was made during the throttle period
+const THROTTLE_DELAY = 100; // milliseconds
+
+const sendUpdateToAPI = async () => {
+  // If a request is already pending, skip this update attempt
+  if (pendingRequest) {
+    trailingCall = true; // Mark that a call is waiting
     return;
   }
 
-  trailingCall = false;
-  
-  // Create a clean copy of the points for emission
   const pointsToEmit = localEqPoints.map((point, index) => ({
     id: index,
     freq: point.freq,
     gain: point.gain,
     q: point.q
   }));
+
+  // Emit change immediately to keep the UI responsive
   emit('change', pointsToEmit);
 
-  throttleTimeout = setTimeout(() => {
-    throttleTimeout = null;
+  try {
+    // Store the promise of the current API call
+    pendingRequest = VybesAPI.savePrefEqSet(props.presetName, pointsToEmit);
+    await pendingRequest;
+    console.log('EQ settings updated successfully.');
+  } catch (error) {
+    console.error('Failed to update EQ settings:', error);
+    // Handle error (e.g., show a notification to the user)
+  } finally {
+    pendingRequest = null; // Clear the pending request
+    // If there was a trailing call, immediately trigger another update
     if (trailingCall) {
-      emitChange();
+      trailingCall = false;
+      // Use a small delay to prevent immediate re-triggering if the API call was very fast
+      setTimeout(() => requestUpdate(), 0);
     }
-  }, 250);
+  }
+};
+
+const requestUpdate = () => {
+  // Set interaction flag and timeout to clear it
+  isInteracting.value = true;
+  if (interactionEndTimeout) {
+    clearTimeout(interactionEndTimeout);
+  }
+  interactionEndTimeout = setTimeout(() => {
+    isInteracting.value = false;
+  }, 500); // Wait for a bit after interaction stops
+
+  if (throttleTimeout) {
+    trailingCall = true; // Mark that a call is waiting
+    return;
+  }
+
+  // Immediately send the first update
+  sendUpdateToAPI();
+
+  // Set a throttle timeout
+  throttleTimeout = setTimeout(() => {
+    throttleTimeout = null; // Clear the timeout
+    // If there was a trailing call during the throttle period, trigger it now
+    if (trailingCall) {
+      trailingCall = false;
+      requestUpdate(); // This will call sendUpdateToAPI again
+    }
+  }, THROTTLE_DELAY);
 };
 
 // Frequency conversion (logarithmic scale)
@@ -420,7 +478,7 @@ const calculateBellFilter = (freq, centerFreq, gain, q) => {
 
   localEqPoints.push(newPoint);
   selectedPoint.value = localEqPoints.length - 1;
-  emitChange();
+  requestUpdate();
 };
 
 const removePoint = (index) => {
@@ -431,7 +489,7 @@ const removePoint = (index) => {
   if (selectedPoint.value >= localEqPoints.length) {
     selectedPoint.value = localEqPoints.length - 1;
   }
-  emitChange();
+  requestUpdate();
 };
 
 // Drag functionality
@@ -487,7 +545,7 @@ const onMouseMove = (event) => {
   localEqPoints[dragState.pointIndex].freq = newFreq;
   localEqPoints[dragState.pointIndex].gain = newGain;
   
-  emitChange();
+  requestUpdate();
 };
 
 const stopDrag = () => {
@@ -538,7 +596,7 @@ onUnmounted(() => {
   document.removeEventListener('mousemove', onMouseMove);
   document.removeEventListener('mouseup', stopDrag);
   document.removeEventListener('touchmove', onMouseMove);
-  document.removeEventListener('touchend', stopDrag);
+  document.addEventListener('touchend', stopDrag);
   window.removeEventListener('resize', updateDimensions);
   window.removeEventListener('resize', checkOrientation);
   
@@ -552,6 +610,7 @@ onUnmounted(() => {
   if (throttleTimeout) {
     clearTimeout(throttleTimeout);
   }
+  pendingRequest = null; // Ensure no pending requests block future operations if component unmounts
 });
 </script>
 

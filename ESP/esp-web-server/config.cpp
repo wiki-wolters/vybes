@@ -63,9 +63,14 @@ bool load_config() {
     // Load speaker gains
     if (doc.containsKey("speakerGains")) {
         JsonObject gains = doc["speakerGains"];
-        current_config.speakerGains.left = gains["left"] | 1.0f;
-        current_config.speakerGains.right = gains["right"] | 1.0f;
-        current_config.speakerGains.sub = gains["sub"] | 1.0f;
+        float left = gains["left"] | 1.0f;
+        float right = gains["right"] | 1.0f;
+        float sub = gains["sub"] | 1.0f;
+
+        // Convert from 0-100 scale to 0.0-1.0 linear if necessary
+        current_config.speakerGains.left = (left > 1.0f) ? (left / 100.0f) : left;
+        current_config.speakerGains.right = (right > 1.0f) ? (right / 100.0f) : right;
+        current_config.speakerGains.sub = (sub > 1.0f) ? (sub / 100.0f) : sub;
     }
 
     // Load input gains
@@ -98,6 +103,17 @@ bool load_config() {
                     current_config.presets[i].delay.left = delay["left"] | 0.0f;
                     current_config.presets[i].delay.right = delay["right"] | 0.0f;
                     current_config.presets[i].delay.sub = delay["sub"] | 0.0f;
+                }
+
+                if (preset.containsKey("gains")) {
+                    JsonObject gains = preset["gains"];
+                    float left = gains["left"] | 1.0f;
+                    float right = gains["right"] | 1.0f;
+                    float sub = gains["sub"] | 1.0f;
+
+                    current_config.presets[i].gains.left = (left > 1.0f) ? (left / 100.0f) : left;
+                    current_config.presets[i].gains.right = (right > 1.0f) ? (right / 100.0f) : right;
+                    current_config.presets[i].gains.sub = (sub > 1.0f) ? (sub / 100.0f) : sub;
                 }
                 current_config.presets[i].delayEnabled = preset["delayEnabled"] | false;
 
@@ -185,6 +201,11 @@ void save_config() {
             delay["right"] = current_config.presets[i].delay.right;
             delay["sub"] = current_config.presets[i].delay.sub;
             preset["delayEnabled"] = current_config.presets[i].delayEnabled;
+
+            JsonObject gains = preset.createNestedObject("gains");
+            gains["left"] = current_config.presets[i].gains.left;
+            gains["right"] = current_config.presets[i].gains.right;
+            gains["sub"] = current_config.presets[i].gains.sub;
             
             // Save crossover settings
             preset["crossoverFreq"] = current_config.presets[i].crossoverFreq;
@@ -260,6 +281,7 @@ void reset_config_to_defaults() {
 
     // Initialize the first preset as 'Default'
     strcpy(current_config.presets[0].name, "Default");
+    current_config.presets[0].gains = SpeakerGains();
     current_config.presets[0].delay = Delay(); // Initialize with default values
     current_config.presets[0].delayEnabled = false;
     current_config.presets[0].crossoverFreq = 80;
@@ -302,6 +324,7 @@ void init_config() {
     }
     
     updateTeensyWithActivePresetParameters();
+    loadFirFilters();
 }
 
 
@@ -344,13 +367,50 @@ void updateTeensyWithActivePresetParameters() {
     // Send volume
     sendFloatToTeensy(CMD_SET_VOLUME, current_config.volume / 100.0f);
 
+    // Send preset gains
+    sendToTeensy(CMD_SET_SPEAKER_GAINS, 
+        String(activePreset->gains.left, 2),
+        String(activePreset->gains.right, 2),
+        String(activePreset->gains.sub, 2));
+
     // Send FIR filter settings
     sendOnOffToTeensy(CMD_SET_FIR_ENABLED, activePreset->FIRFiltersEnabled);
     sendToTeensy(CMD_SET_FIR, "left", activePreset->FIRFilters.left);
     sendToTeensy(CMD_SET_FIR, "right", activePreset->FIRFilters.right);
     sendToTeensy(CMD_SET_FIR, "sub", activePreset->FIRFilters.sub);
+}
 
+void loadFirFilters() {
+    Preset* activePreset = &current_config.presets[current_config.active_preset_index];
     if (activePreset->FIRFiltersEnabled) {
         sendToTeensy(CMD_LOAD_FIR_FILES);
     }
+}
+
+bool config_get_preset_gains(const String& presetName, JsonDocument& doc) {
+    for (int i = 0; i < MAX_PRESETS; ++i) {
+        if (presetName == current_config.presets[i].name) {
+            doc["left"] = current_config.presets[i].gains.left * 100.0f;
+            doc["right"] = current_config.presets[i].gains.right * 100.0f;
+            doc["sub"] = current_config.presets[i].gains.sub * 100.0f;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool config_set_preset_gains(const String& presetName, const JsonObject& gains) {
+    for (int i = 0; i < MAX_PRESETS; ++i) {
+        if (presetName == current_config.presets[i].name) {
+            current_config.presets[i].gains.left = gains["left"].as<float>() / 100.0f;
+            current_config.presets[i].gains.right = gains["right"].as<float>() / 100.0f;
+            current_config.presets[i].gains.sub = gains["sub"].as<float>() / 100.0f;
+            save_config();
+            if (i == current_config.active_preset_index) {
+                updateTeensyWithActivePresetParameters();
+            }
+            return true;
+        }
+    }
+    return false;
 }

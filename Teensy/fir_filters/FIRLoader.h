@@ -21,6 +21,7 @@ private:
     // Helper methods, now static as they don't depend on FIRLoader instance state.
     static int loadFromTXT(File& file, float* coeffs, int maxTaps);
     static int loadFromWAV(File& file, float* coeffs, int maxTaps);
+    static void normalizeCoefficients(float* coeffs, uint16_t numTaps);
     static bool isValidWAVHeader(const char* header);
     static void logError(String message);
     static void logInfo(String message);

@@ -2,6 +2,8 @@
     <ParametricEQ
         v-if="eqPointsForEditor"
         :peq-points="eqPointsForEditor"
+        :preset-name="presetName"
+        :eq-type="eqType"
         @change="$emit('update-eq-points', $event)"
         class="min-h-[400px] h-auto"
     />
@@ -13,6 +15,14 @@
   
   const props = defineProps({
     eqSets: Array, // Expected format: [{ spl: Number, peqSet: Array }, ...]
+    presetName: {
+      type: String,
+      required: true
+    },
+    eqType: {
+      type: String,
+      default: 'pref'
+    }
   });
   
   const emit = defineEmits(['update-eq-points']);

@@ -401,6 +401,14 @@ class VybesAPI {
     return this.request('PUT', `/gains/speaker?speaker=${speaker}&value=${gain}`);
   }
 
+  async getPresetGains(presetName) {
+    return this.request('GET', `/preset/gains?preset_name=${encodeURIComponent(presetName)}`);
+  }
+
+  async setPresetGains(presetName, gains) {
+    return this.request('PUT', `/preset/gains?preset_name=${encodeURIComponent(presetName)}`, gains);
+  }
+
   // ===== VOLUME ===== //
   async setVolume(volume) {
     return this.request('PUT', `/volume?value=${volume}`);

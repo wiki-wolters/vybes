@@ -188,6 +188,9 @@ float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps, uint16
     }
 
     actualTaps = loadedCount;
+
+    // Normalize the coefficients to have a peak of 1.0
+    normalizeCoefficients(coeffs, actualTaps);
     
     Serial.print("FIR Info: Successfully loaded FIR coefficients: ");
     Serial.print(filename);
@@ -484,6 +487,27 @@ bool FIRLoader::isValidWAVHeader(const char* header) {
     // This helper is now less crucial as the main loadFromWAV reads the struct and checks.
     // However, it's a quick check if needed elsewhere.
     return (strncmp(header, "RIFF", 4) == 0 && strncmp(header + 8, "WAVE", 4) == 0);
+}
+
+void FIRLoader::normalizeCoefficients(float* coeffs, uint16_t numTaps) {
+    if (!coeffs || numTaps == 0) {
+        return;
+    }
+
+    float maxCoeff = 0.0f;
+    for (uint16_t i = 0; i < numTaps; i++) {
+        if (abs(coeffs[i]) > maxCoeff) {
+            maxCoeff = abs(coeffs[i]);
+        }
+    }
+
+    if (maxCoeff > 0.0f) {
+        Serial.print("FIR Info: Normalizing coefficients. Peak value was ");
+        Serial.println(maxCoeff, 6);
+        for (uint16_t i = 0; i < numTaps; i++) {
+            coeffs[i] /= maxCoeff;
+        }
+    }
 }
 
 void FIRLoader::logError(String message) {

@@ -96,6 +96,8 @@ void handlePutPresetFir(AsyncWebServerRequest *request) {
     
     // Broadcast update
     broadcastWebSocket(response);
+    
+    loadFirFilters();
 }
 
 void handlePutPresetFirEnabled(AsyncWebServerRequest *request) {
@@ -130,7 +132,7 @@ void handlePutPresetFirEnabled(AsyncWebServerRequest *request) {
     sendOnOffToTeensy(CMD_SET_FIR_ENABLED, state == "on");
 
     if (state == "on") {
-        sendToTeensy(CMD_LOAD_FIR_FILES);
+        loadFirFilters();
     }
     
     // Prepare and send response

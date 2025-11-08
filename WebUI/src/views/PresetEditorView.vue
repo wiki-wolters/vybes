@@ -29,8 +29,9 @@
           <CollapsibleSection title="EQ" :model-value="selectedPresetData.isPreferenceEQEnabled" @update:modelValue="updateEQEnabled($event)" :animate="animationsEnabled">
             <EQSection
               :eq-sets="prefEQSets"
+              :preset-name="selectedPresetName"
+              eq-type="pref"
               @update-eq-points="handleEQPointsUpdate('pref', $event)"
-              
               @create-new-set="handleCreateNewSet('pref', $event)"
               :is-enabled="selectedPresetData.isPreferenceEQEnabled"
             />
@@ -95,6 +96,13 @@
               />
             </div>
           </CollapsibleSection>
+
+          <CollapsibleSection title="Volume & Balance" v-model="volumeAndBalanceExpanded" :animate="animationsEnabled">
+            <VolumeControlGroup
+              :initial-gains="presetGains"
+              @update:gains="updatePresetGains"
+            />
+          </CollapsibleSection>
         </div>
       </div>
     </div>
@@ -117,6 +125,7 @@ import RangeSlider from '../components/shared/RangeSlider.vue';
 import InputGroup from '../components/shared/InputGroup.vue';
 import ModalDialog from '../components/shared/ModalDialog.vue';
 import SpeakerDelayInput from '../components/shared/SpeakerDelayInput.vue'; // New component for speaker delay inputs
+import VolumeControlGroup from '../components/shared/VolumeControlGroup.vue';
 import EQSection from '../components/shared/EQSection.vue'; // New component for EQ sections
 import CollapsibleSection from '../components/shared/CollapsibleSection.vue';
 import Loading from '../components/shared/Loading.vue';
@@ -154,6 +163,7 @@ const apiClient = inject('vybesAPI'); // Injected API client for backend communi
 const prefEQExpanded = ref(false);
 const crossoverExpanded = ref(true);
 const speakerDelayExpanded = ref(false);
+const volumeAndBalanceExpanded = ref(true);
 const animationsEnabled = ref(false);
 // General reactive state
 const selectedPresetName = ref(null); // Selected preset name [cite: 45]
@@ -175,6 +185,7 @@ const showModal = ref(false); // Controls visibility of the unified modal
 
 // Preset-specific editable properties
 const speakerDelays = reactive({ left: 0, right: 0, sub: 0 }); // Speaker delays [cite: 49]
+const presetGains = reactive({ left: 100, right: 100, sub: 100 });
 const crossoverFreq = ref(80); // Crossover frequency, Default 80Hz [cite: 50]
 
 // EQ States
@@ -345,6 +356,18 @@ const updateSpeakerDelay = async (speaker, value) => {
   });
 };
 
+const updatePresetGains = async (newGains) => {
+  Object.assign(presetGains, newGains);
+  await debouncedApiCall(() => apiClient.setPresetGains(
+    selectedPresetName.value,
+    newGains
+  ), () => {
+    showSuccess('Preset gains updated');
+  }, 'Failed to update preset gains', () => {
+    showError('Failed to update preset gains');
+  });
+};
+
 // Save crossover enabled (not debounced)
 const setCrossoverEnabled = async () => {
   if (!selectedPresetName.value) return;
@@ -368,6 +391,9 @@ async function fetchPresetData(presetName, isNewOrCopy = false) { // [cite: 72]
     (data) => {
       selectedPresetData.value = data;
       Object.assign(speakerDelays, data.speakerDelays);
+      apiClient.getPresetGains(presetName).then(gains => {
+        Object.assign(presetGains, gains);
+      });
       
       // Initialize prefEQSets from the preference curve data
       if (data.preferenceEQ) {

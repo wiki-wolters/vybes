@@ -233,6 +233,7 @@ void handleDeletePreset(AsyncWebServerRequest *request) {
     }
 
     updateTeensyWithActivePresetParameters();
+    loadFirFilters();
 
     scheduleConfigWrite();
     request->send(200, "application/json", "{}");
@@ -253,6 +254,7 @@ void handlePutActivePreset(AsyncWebServerRequest *request) {
 
     current_config.active_preset_index = presetIndex;
     updateTeensyWithActivePresetParameters();
+    loadFirFilters();
     scheduleConfigWrite();
 
     request->send(200, "application/json", "{}"); // HTTP response

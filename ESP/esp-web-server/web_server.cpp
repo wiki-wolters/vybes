@@ -8,12 +8,12 @@
 #include "api_presets.h"
 #include "api_preset_config.h"
 #include "api_volume.h"
+#include "api_helpers.h"
 #include "teensy_comm.h"
 #include "config.h"
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
 #include <AsyncJson.h>
-#include "config.h"
 
 AsyncWebServer server(80);
 
@@ -65,6 +65,9 @@ void setupWebServer() {
     // API Routes - Speaker & Input gains
     server.on("/gains/speaker", HTTP_PUT, handlePutSpeakerGain);
     server.addHandler(new AsyncCallbackJsonWebHandler("/gains/input", handlePutInputGains));
+
+    server.on("/preset/gains", HTTP_GET, handleGetPresetGains);
+    server.addHandler(new AsyncCallbackJsonWebHandler("/preset/gains", handleSetPresetGains));
     
     // API Routes - FIR Filter Management
     server.on("/fir/files", HTTP_GET, handleGetFirFiles);

@@ -51,6 +51,9 @@ const char* actionToString(IRACTION action) {
     }
 }
 
+unsigned long lastVolumeScreenUpdateTime = 0;
+const unsigned long VOLUME_SCREEN_UPDATE_INTERVAL = 200; // milliseconds
+
 // Function to get the action for a given IR code
 IRACTION getAction(uint64_t code) {
     for (unsigned int i = 0; i < sizeof(remoteCodes) / sizeof(IRCode); i++) {
@@ -87,11 +90,17 @@ void RemoteControl::handle_ir_code(uint64_t code) {
     switch (action) {
         case VOLUME_UP:
             increase_volume();
-            writeToScreen("Volume " + String(current_config.volume), 3000);
+            if (millis() - lastVolumeScreenUpdateTime > VOLUME_SCREEN_UPDATE_INTERVAL) {
+                writeToScreen("Volume " + String(current_config.volume), 3000);
+                lastVolumeScreenUpdateTime = millis();
+            }
             break;
         case VOLUME_DOWN:
             decrease_volume();
-            writeToScreen("Volume " + String(current_config.volume), 3000);
+            if (millis() - lastVolumeScreenUpdateTime > VOLUME_SCREEN_UPDATE_INTERVAL) {
+                writeToScreen("Volume " + String(current_config.volume), 3000);
+                lastVolumeScreenUpdateTime = millis();
+            }
             break;
         case MUTE:
             toggle_mute();
@@ -140,6 +149,7 @@ void RemoteControl::apply_preset() {
     if (_selected_preset_index != current_config.active_preset_index) {
         current_config.active_preset_index = _selected_preset_index;
         updateTeensyWithActivePresetParameters();
+        loadFirFilters();
         scheduleConfigWrite();
 
         // Prepare data for WebSocket broadcast

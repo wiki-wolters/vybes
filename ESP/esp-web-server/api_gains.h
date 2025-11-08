@@ -1,9 +1,14 @@
-#ifndef API_SPEAKER_H
-#define API_SPEAKER_H
+#ifndef API_GAINS_H
+#define API_GAINS_H
 
+#include <Arduino.h>
+#include <ArduinoJson.h>
 #include <ESPAsyncWebServer.h>
 
-void handlePutSpeakerGain(AsyncWebServerRequest *request);
-void handlePutInputGains(AsyncWebServerRequest *request, JsonVariant &json);
+void addPresetGainsHandler(AsyncWebServer* server);
+void handleGetPresetGains(AsyncWebServerRequest* request);
+void handleSetPresetGains(AsyncWebServerRequest* request, JsonVariant& json);
+void handlePutSpeakerGain(AsyncWebServerRequest* request);
+void handlePutInputGains(AsyncWebServerRequest* request, JsonVariant& json);
 
-#endif // API_SPEAKER_H
+#endif

@@ -2,6 +2,7 @@
 #define CONFIG_H
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 
 // --- Constants ---
 #define CONFIG_CURRENT_VERSION 2
@@ -62,6 +63,7 @@ struct InputGains {
 // Represents a single preset
 struct Preset {
     char name[PRESET_NAME_MAX_LEN] = "Default";
+    SpeakerGains gains;
     Delay delay;
     bool delayEnabled = false;
     uint16_t crossoverFreq = 80;
@@ -122,6 +124,11 @@ bool load_config();
 void reset_config_to_defaults();
 
 void updateTeensyWithActivePresetParameters();
+
+void loadFirFilters();
+
+bool config_get_preset_gains(const String& presetName, JsonDocument& doc);
+bool config_set_preset_gains(const String& presetName, const JsonObject& gains);
 
 
 #endif // CONFIG_H
