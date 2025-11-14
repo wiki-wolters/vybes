@@ -481,15 +481,43 @@ const calculateBellFilter = (freq, centerFreq, gain, q) => {
   requestUpdate();
 };
 
-const removePoint = (index) => {
-  if (localEqPoints.length <= 1) return;
-
-  localEqPoints.splice(index, 1);
-
-  if (selectedPoint.value >= localEqPoints.length) {
-    selectedPoint.value = localEqPoints.length - 1;
+const removePoint = async (index) => {
+  // If it's the last point, just zero it out instead of removing it.
+  if (localEqPoints.length <= 1) {
+    if (localEqPoints[0]) {
+      localEqPoints[0].gain = 0;
+      requestUpdate();
+    }
+    return;
   }
-  requestUpdate();
+
+  // Create a temporary list of points with the target point's gain set to 0.
+  const pointsWithZeroedGain = localEqPoints.map((p, i) => {
+    if (i === index) {
+      return { ...p, gain: 0 };
+    }
+    return p;
+  });
+
+  try {
+    // Directly call the API to neutralize the filter on the hardware.
+    await VybesAPI.savePrefEqSet(props.presetName, pointsWithZeroedGain);
+
+    // Now, update the UI state by removing the point.
+    localEqPoints.splice(index, 1);
+
+    // Adjust the selected point if necessary.
+    if (selectedPoint.value >= localEqPoints.length) {
+      selectedPoint.value = localEqPoints.length - 1;
+    }
+
+    // Finally, send the new (shorter) list of points to the API to sync the backend.
+    await VybesAPI.savePrefEqSet(props.presetName, localEqPoints);
+
+  } catch (error) {
+    console.error('An error occurred while deleting the EQ point:', error);
+    // Consider adding user-facing error feedback here.
+  }
 };
 
 // Drag functionality
