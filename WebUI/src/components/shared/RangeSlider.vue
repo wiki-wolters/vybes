@@ -13,7 +13,7 @@
         :step="sliderStep"
         :value="sliderValue"
         @input="sliderValue = parseFloat($event.target.value)"
-        class="flex-1 h-2 bg-vybes-dark-input rounded-lg appearance-none cursor-pointer
+        class="flex-1 h-2 bg-vybes-dark-input rounded-lg appearance-none cursor-pointer select-none
                focus:outline-none focus:ring-2 focus:ring-vybes-blue/50
                [&::-webkit-slider-thumb]:appearance-none
                [&::-webkit-slider-thumb]:w-4
@@ -136,6 +136,9 @@ const displayValue = computed(() => {
 </script>
 
 <style scoped>
+input[type="range"] {
+  -webkit-touch-callout: none;
+}
 /* Scoped styles if needed, Tailwind classes are preferred. */
 /* Custom styling for range input track and thumb for Firefox if not covered by Tailwind plugins */
 input[type="range"]::-moz-range-track {

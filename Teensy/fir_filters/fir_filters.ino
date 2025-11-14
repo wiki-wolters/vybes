@@ -204,8 +204,11 @@ struct State {
   float gainGenerator = 1.0;
 
   // Master Volume
-  float volume = 0.5; // Target volume
+  float volume = 0.5; // User-set volume
+  float targetVolume = 0.5; // Target volume for smoothing
   float currentVolume = 0.5; // Actual applied volume, will be smoothed
+  bool muted = false;
+  float mutePercent = 100.0; // Mute volume reduction percentage
 
   // Speaker gain
   float gainLeft = 1.0;
@@ -296,9 +299,6 @@ void setup() {
   Left_Post_Crossover_amp.gain(1.0);
   Right_Post_Crossover_amp.gain(1.0);
   Sub_Post_Crossover_amp.gain(1.0);
-  Left_Post_Delay_amp.gain(1.0);
-  Right_Post_Delay_amp.gain(1.0);
-  Sub_Post_Delay_amp.gain(1.0);
 
   // Set mono mixer amp gain to 0.5
   Mono_mixer.gain(0, 0.5);
@@ -316,8 +316,9 @@ void setup() {
   setCrossoverEnabled(state.crossoverEnabled);
   setFIR(state.firFileLeft, state.firFileRight, state.firFileSub);
   setDelays(state.delayLeftMicroSeconds, state.delayRightMicroSeconds, state.delaySubMicroSeconds);
+  updateTargetVolume();
   // Initialize currentVolume and currentGainX and apply initial gain directly
-  state.currentVolume = state.volume;
+  state.currentVolume = state.targetVolume;
   state.currentGainLeft = state.gainLeft;
   state.currentGainRight = state.gainRight;
   state.currentGainSub = state.gainSub;
@@ -338,6 +339,8 @@ void setup() {
   //Register handlers for I2C commands
   Serial.println("Registering I2C handlers");
   router.on("setSpeakerGains", handleSetSpeakerGains);
+  router.on("setMute", handleSetMute);
+  router.on("setMutePercent", handleSetMutePercent);
   router.on("setVolume", handleSetVolume);
   router.on("getFiles", handleGetFiles);
   router.on("setInputGains", handleSetInputGains);
@@ -400,11 +403,11 @@ void updateAudioVolume() {
   const float MIN_CHANGE = 0.001; // Minimum change to apply
 
   bool volumeChanged = false;
-  if (abs(state.volume - state.currentVolume) > MIN_CHANGE) {
-    state.currentVolume = state.currentVolume * (1.0 - SMOOTHING_FACTOR) + state.volume * SMOOTHING_FACTOR;
+  if (abs(state.targetVolume - state.currentVolume) > MIN_CHANGE) {
+    state.currentVolume = state.currentVolume * (1.0 - SMOOTHING_FACTOR) + state.targetVolume * SMOOTHING_FACTOR;
     volumeChanged = true;
-  } else if (state.currentVolume != state.volume) {
-    state.currentVolume = state.volume;
+  } else if (state.currentVolume != state.targetVolume) {
+    state.currentVolume = state.targetVolume;
     volumeChanged = true;
   }
 
@@ -440,6 +443,32 @@ void updateAudioVolume() {
     Right_Post_Delay_amp.gain(state.currentGainRight * state.currentVolume);
     Sub_Post_Delay_amp.gain(state.currentGainSub * state.currentVolume);
   }
+}
+
+void updateTargetVolume() {
+  if (state.muted) {
+    float reduction = state.mutePercent / 100.0;
+    state.targetVolume = state.volume * (1.0 - reduction);
+  } else {
+    state.targetVolume = state.volume;
+  }
+}
+
+void setMute(bool mute) {
+  if (mute == state.muted) return; // No change
+  state.muted = mute;
+  updateTargetVolume();
+  state.isDirty = true;
+  Serial.println(state.muted ? "Muting audio" : "Unmuting audio");
+}
+
+void setMutePercent(float percent) {
+  if (percent < 0) percent = 0;
+  if (percent > 100) percent = 100;
+  state.mutePercent = percent;
+  updateTargetVolume(); // Recalculate target volume if muted
+  state.isDirty = true;
+  Serial.println("Set mute percent: " + String(percent));
 }
 
 void setEQEnabled(bool enabled) {
@@ -515,7 +544,8 @@ void setDelayEnabled(bool enabled) {
 
 void setVolume(float volume) {
   Serial.println("Set volume: " + String(volume));
-  state.volume = volume; // Update target volume
+  state.volume = volume;
+  updateTargetVolume();
   state.isDirty = true;
   // Do NOT apply gain directly here. It will be smoothed in updateAudioVolume().
 }
@@ -701,6 +731,18 @@ void handleSetSpeakerGains(const String& command, String* args, int argCount, Ou
     setSpeakerGains(leftGain, rightGain, subGain);
   } else {
     // Optional: Send error back to master if arg count is wrong
+  }
+}
+
+void handleSetMute(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 1) {
+    setMute(args[0].toInt() == 1);
+  }
+}
+
+void handleSetMutePercent(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 1) {
+    setMutePercent(args[0].toFloat());
   }
 }
 

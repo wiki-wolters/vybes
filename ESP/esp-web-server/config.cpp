@@ -407,7 +407,11 @@ bool config_set_preset_gains(const String& presetName, const JsonObject& gains) 
             current_config.presets[i].gains.sub = gains["sub"].as<float>() / 100.0f;
             save_config();
             if (i == current_config.active_preset_index) {
-                updateTeensyWithActivePresetParameters();
+                Preset* activePreset = &current_config.presets[current_config.active_preset_index];
+                sendToTeensy(CMD_SET_SPEAKER_GAINS, 
+                    String(activePreset->gains.left, 2),
+                    String(activePreset->gains.right, 2),
+                    String(activePreset->gains.sub, 2));
             }
             return true;
         }

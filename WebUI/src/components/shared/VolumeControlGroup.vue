@@ -55,6 +55,20 @@ const emit = defineEmits(['update:gains']);
 const gains = reactive({ ...props.initialGains });
 const balance = ref(0);
 
+function calculateBalance() {
+  const left = gains.left;
+  const right = gains.right;
+  if (left > right) {
+    return left > 0 ? -(1 - right / left) * 100 : 0;
+  } else if (right > left) {
+    return right > 0 ? (1 - left / right) * 100 : 0;
+  } else {
+    return 0;
+  }
+}
+
+balance.value = calculateBalance();
+
 function updateBalance(value) {
   balance.value = value;
   const left = value > 0 ? 100 - value : 100;
@@ -66,10 +80,14 @@ function updateBalance(value) {
 
 function updateGain(speaker, value) {
   gains[speaker] = value;
+  if (speaker === 'left' || speaker === 'right') {
+    balance.value = calculateBalance();
+  }
   emit('update:gains', { ...gains });
 }
 
 watch(() => props.initialGains, (newGains) => {
   Object.assign(gains, newGains);
+  balance.value = calculateBalance();
 }, { deep: true });
 </script>
