@@ -383,7 +383,7 @@ void updateTeensyWithActivePresetParameters() {
 void loadFirFilters() {
     Preset* activePreset = &current_config.presets[current_config.active_preset_index];
     if (activePreset->FIRFiltersEnabled) {
-        sendToTeensy(CMD_LOAD_FIR_FILES);
+        sendToTeensy(CMD_LOAD_FIR_FILES, nullptr);
     }
 }
 

@@ -162,10 +162,14 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, JsonVariant &json) 
             target_set->points[id].gain = new_gain;
             target_set->points[id].q    = new_q;
             
-            String pointData = String(new_freq, 1) + " " +
-                             String(new_q, 2) + " " +
-                             String(new_gain, 2);
-            sendToTeensy(CMD_SET_EQ_FILTER, String(id), pointData);
+            char id_str[4];
+            snprintf(id_str, sizeof(id_str), "%d", id);
+
+            char pointData[32];
+            // Use snprintf to format the point data into a single buffer
+            snprintf(pointData, sizeof(pointData), "%.1f %.2f %.2f", new_freq, new_q, new_gain);
+
+            sendToTeensy(CMD_SET_EQ_FILTER, id_str, pointData);
         }
     }
 
@@ -259,10 +263,14 @@ void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
         for (int i = 0; i < MAX_PEQ_SETS; i++) {
             if (sets[i].spl != -1) {
                 for (int j = 0; j < sets[i].num_points; j++) {
-                    String pointData = String(sets[i].points[j].freq, 1) + " " +
-                                     String(sets[i].points[j].q, 2) + " " +
-                                     String(sets[i].points[j].gain, 2);
-                    sendToTeensy(CMD_SET_EQ_FILTER, String(j), pointData);
+                    char id_str[4];
+                    snprintf(id_str, sizeof(id_str), "%d", j);
+                    
+                    char pointData[32];
+                    // Use snprintf to format the point data into a single buffer
+                    snprintf(pointData, sizeof(pointData), "%.1f %.2f %.2f", sets[i].points[j].freq, sets[i].points[j].q, sets[i].points[j].gain);
+
+                    sendToTeensy(CMD_SET_EQ_FILTER, id_str, pointData);
                 }
             }
         }

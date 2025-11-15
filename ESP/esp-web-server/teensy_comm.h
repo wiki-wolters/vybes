@@ -46,11 +46,17 @@ extern char teensyResponse[1024];
 bool sendToTeensy(const char* command, const String& param1 = "", 
                  const String& param2 = "", const String& param3 = "", const String& param4 = "");
 
+// New overload for C-style strings to avoid String allocations
+bool sendToTeensy(const char* command, const char* param1 = nullptr, 
+                 const char* param2 = nullptr, const char* param3 = nullptr, const char* param4 = nullptr);
+
+
 // Helper functions for common command types
 void sendOnOffToTeensy(const char* command, bool on);
 void sendIntToTeensy(const char* command, int value);
 void sendFloatToTeensy(const char* command, float value);
-void sendStringToTeensy(const char* command, const String& value);
+void sendStringToTeensy(const char* command, const char* value); // Changed to const char*
+void sendStringToTeensy(const char* command, const String& value); // Keep overload for compatibility
 
 char* requestFromTeensy(const char* command);
 
