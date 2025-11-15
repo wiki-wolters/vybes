@@ -21,7 +21,8 @@ enum IRACTION {
     VOLUME_DOWN,
     MUTE,
     NEXT_PRESET,
-    PREVIOUS_PRESET
+    PREVIOUS_PRESET,
+    VOLUME_REPEAT
 };
 
 // Define the structure for a remote control code
@@ -36,7 +37,8 @@ const IRCode remoteCodes[] = {
     {0xFFA857, VOLUME_DOWN},
     {0xFFE21D, MUTE},
     {0xFFC23D, NEXT_PRESET},
-    {0xFF02FD, PREVIOUS_PRESET}
+    {0xFF02FD, PREVIOUS_PRESET},
+    {0xFFFFFFFFFFFFFFFF, VOLUME_REPEAT}
 };
 
 const char* actionToString(IRACTION action) {
@@ -46,6 +48,7 @@ const char* actionToString(IRACTION action) {
         case MUTE: return "MUTE";
         case NEXT_PRESET: return "NEXT_PRESET";
         case PREVIOUS_PRESET: return "PREVIOUS_PRESET";
+        case VOLUME_REPEAT: return "VOLUME_REPEAT";
         case NONE: return "NONE";
         default: return "UNKNOWN";
     }
@@ -75,6 +78,30 @@ void RemoteControl::loop() {
         irrecv.resume();  // Receive the next value
     }
 
+    if (_volume_button_held_time > 0 && millis() - _last_ir_code_time > 250) {
+        _volume_button_held_time = 0;
+        _last_volume_action = -1;
+    }
+
+    if (_volume_button_held_time > 0 && millis() - _volume_button_held_time > 1000) {
+        if (millis() - _last_volume_increment_time > 500) {
+            if (_last_volume_action == VOLUME_UP) {
+                increase_volume(2);
+                 if (millis() - lastVolumeScreenUpdateTime > VOLUME_SCREEN_UPDATE_INTERVAL) {
+                    writeToScreen("Volume " + String(current_config.volume), 3000);
+                    lastVolumeScreenUpdateTime = millis();
+                }
+            } else if (_last_volume_action == VOLUME_DOWN) {
+                decrease_volume(2);
+                 if (millis() - lastVolumeScreenUpdateTime > VOLUME_SCREEN_UPDATE_INTERVAL) {
+                    writeToScreen("Volume " + String(current_config.volume), 3000);
+                    lastVolumeScreenUpdateTime = millis();
+                }
+            }
+            _last_volume_increment_time = millis();
+        }
+    }
+
     if (_preset_selection_time > 0 && millis() - _preset_selection_time > 1000) {
         apply_preset();
     }
@@ -82,6 +109,7 @@ void RemoteControl::loop() {
 
 void RemoteControl::handle_ir_code(uint64_t code) {
     IRACTION action = getAction(code);
+    _last_ir_code_time = millis();
     Serial.print("Received IR code: ");
     serialPrintUint64(code, HEX);
     Serial.print(", Action: ");
@@ -94,12 +122,24 @@ void RemoteControl::handle_ir_code(uint64_t code) {
                 writeToScreen("Volume " + String(current_config.volume), 3000);
                 lastVolumeScreenUpdateTime = millis();
             }
+            _last_volume_action = VOLUME_UP;
+            _volume_button_held_time = millis();
+            _last_volume_increment_time = millis();
             break;
         case VOLUME_DOWN:
             decrease_volume();
             if (millis() - lastVolumeScreenUpdateTime > VOLUME_SCREEN_UPDATE_INTERVAL) {
                 writeToScreen("Volume " + String(current_config.volume), 3000);
                 lastVolumeScreenUpdateTime = millis();
+            }
+            _last_volume_action = VOLUME_DOWN;
+            _volume_button_held_time = millis();
+            _last_volume_increment_time = millis();
+            break;
+        case VOLUME_REPEAT:
+            if (_last_volume_action != VOLUME_UP && _last_volume_action != VOLUME_DOWN) {
+                _volume_button_held_time = 0;
+                _last_volume_action = -1;
             }
             break;
         case MUTE:

@@ -42,9 +42,9 @@ void handlePutVolume(AsyncWebServerRequest *request) {
     }
 }
 
-void increase_volume() {
+void increase_volume(int amount) {
     if (current_config.volume < 100) {
-        current_config.volume += 2;
+        current_config.volume += amount;
         if (current_config.volume > 100) {
             current_config.volume = 100;
         }
@@ -56,9 +56,9 @@ void increase_volume() {
     }
 }
 
-void decrease_volume() {
+void decrease_volume(int amount) {
     if (current_config.volume > 0) {
-        current_config.volume -= 2;
+        current_config.volume -= amount;
         if (current_config.volume < 0) {
             current_config.volume = 0;
         }

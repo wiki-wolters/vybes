@@ -16,6 +16,11 @@ private:
 
     unsigned long _preset_selection_time = 0;
     int _selected_preset_index = -1;
+    
+    unsigned long _volume_button_held_time = 0;
+    unsigned long _last_volume_increment_time = 0;
+    unsigned long _last_ir_code_time = 0;
+    int _last_volume_action = -1;
 };
 
 #endif
