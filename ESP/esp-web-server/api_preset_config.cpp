@@ -38,16 +38,19 @@ void handlePutPresetCrossover(AsyncWebServerRequest *request) {
     sendFloatToTeensy(CMD_SET_CROSSOVER_FREQ, freq);
     
     // Prepare and send response
-        DynamicJsonDocument doc(1024);
+    DynamicJsonDocument doc(1024);
     doc["status"] = "ok";
     doc["crossoverFreq"] = freq;
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
-    
-    // Broadcast update
-    broadcastWebSocket(response);
+    char responseBuffer[1024]; // Adjust size as needed
+    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
+    if (len > 0 && len < sizeof(responseBuffer)) {
+        request->send(200, "application/json", responseBuffer);
+        // Broadcast update
+        broadcastWebSocket(responseBuffer);
+    } else {
+        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
+        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+    }
 }
 
 void handlePutPresetCrossoverEnabled(AsyncWebServerRequest *request) {
@@ -79,16 +82,19 @@ void handlePutPresetCrossoverEnabled(AsyncWebServerRequest *request) {
     sendOnOffToTeensy(CMD_SET_CROSSOVER_ENABLED, enabled);
     
     // Prepare and send response
-        DynamicJsonDocument doc(1024);
+    DynamicJsonDocument doc(1024);
     doc["status"] = "ok";
     doc["crossoverEnabled"] = enabled;
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
-    
-    // Broadcast update
-    broadcastWebSocket(response);
+    char responseBuffer[1024]; // Adjust size as needed
+    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
+    if (len > 0 && len < sizeof(responseBuffer)) {
+        request->send(200, "application/json", responseBuffer);
+        // Broadcast update
+        broadcastWebSocket(responseBuffer);
+    } else {
+        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
+        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+    }
 }
 
 void handlePutPresetEQPoints(AsyncWebServerRequest *request, JsonVariant &json) {
@@ -176,18 +182,21 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, JsonVariant &json) 
     scheduleConfigWrite();
     
     // Prepare and send response
-        DynamicJsonDocument responseDoc(1024);
+    DynamicJsonDocument responseDoc(1024);
     responseDoc["status"] = "ok";
     responseDoc["eqType"] = "pref"; // Hardcoded
     responseDoc["spl"] = spl;
     responseDoc["numPoints"] = target_set->num_points;
-    
-    String response;
-    serializeJson(responseDoc, response);
-    request->send(200, "application/json", response);
-    
-    // Broadcast update
-    broadcastWebSocket(response);
+    char responseBuffer[1024]; // Adjust size as needed
+    size_t len = serializeJson(responseDoc, responseBuffer, sizeof(responseBuffer));
+    if (len > 0 && len < sizeof(responseBuffer)) {
+        request->send(200, "application/json", responseBuffer);
+        // Broadcast update
+        broadcastWebSocket(responseBuffer);
+    } else {
+        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
+        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+    }
 }
 
 void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
@@ -247,37 +256,19 @@ void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
     scheduleConfigWrite();
     
     // Prepare and send response
-        DynamicJsonDocument doc(1024);
+    DynamicJsonDocument doc(1024);
     doc["status"] = "ok";
     doc["enabled"] = enabled;
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
-    
-    // Send command to Teensy
-    sendOnOffToTeensy(CMD_SET_EQ_ENABLED, enabled);
-
-    if (enabled) {
-        // Re-apply the EQ points
-        for (int i = 0; i < MAX_PEQ_SETS; i++) {
-            if (sets[i].spl != -1) {
-                for (int j = 0; j < sets[i].num_points; j++) {
-                    char id_str[4];
-                    snprintf(id_str, sizeof(id_str), "%d", j);
-                    
-                    char pointData[32];
-                    // Use snprintf to format the point data into a single buffer
-                    snprintf(pointData, sizeof(pointData), "%.1f %.2f %.2f", sets[i].points[j].freq, sets[i].points[j].q, sets[i].points[j].gain);
-
-                    sendToTeensy(CMD_SET_EQ_FILTER, id_str, pointData);
-                }
-            }
-        }
+    char responseBuffer[1024]; // Adjust size as needed
+    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
+    if (len > 0 && len < sizeof(responseBuffer)) {
+        request->send(200, "application/json", responseBuffer);
+        // Broadcast update
+        broadcastWebSocket(responseBuffer);
+    } else {
+        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
+        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
     }
-    
-    // Broadcast update
-    broadcastWebSocket(response);
 }
 
 void handleResetEQFilters(AsyncWebServerRequest *request) {
@@ -310,14 +301,17 @@ void handleResetEQFilters(AsyncWebServerRequest *request) {
     sendToTeensy(CMD_RESET_EQ_FILTERS, "pref");
     
     // Prepare and send response
-        DynamicJsonDocument doc(1024);
+    DynamicJsonDocument doc(1024);
     doc["status"] = "ok";
     doc["eqType"] = "pref";
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
-    
-    // Broadcast update
-    broadcastWebSocket(response);
+    char responseBuffer[1024]; // Adjust size as needed
+    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
+    if (len > 0 && len < sizeof(responseBuffer)) {
+        request->send(200, "application/json", responseBuffer);
+        // Broadcast update
+        broadcastWebSocket(responseBuffer);
+    } else {
+        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
+        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+    }
 }

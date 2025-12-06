@@ -260,15 +260,17 @@ void handlePutActivePreset(AsyncWebServerRequest *request) {
     request->send(200, "application/json", "{}"); // HTTP response
 
     // Prepare data for WebSocket broadcast
-        DynamicJsonDocument doc(1024);
+    DynamicJsonDocument doc(1024);
     doc["messageType"] = "activePresetChanged";
     doc["activePresetName"] = current_config.presets[current_config.active_preset_index].name;
     doc["activePresetIndex"] = current_config.active_preset_index;
-    
-    String ws_response;
-    serializeJson(doc, ws_response);
-
-    broadcastWebSocket(ws_response);
+    char responseBuffer[1024]; // Adjust size as needed
+    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
+    if (len > 0 && len < sizeof(responseBuffer)) {
+        broadcastWebSocket(responseBuffer);
+    } else {
+        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+    }
 }
 
 void handlePutPresetDelayEnabled(AsyncWebServerRequest *request) {
@@ -298,16 +300,19 @@ void handlePutPresetDelayEnabled(AsyncWebServerRequest *request) {
     sendOnOffToTeensy(CMD_SET_DELAY_ENABLED, enabled);
     
     // Prepare response
-        DynamicJsonDocument doc(1024);
+    DynamicJsonDocument doc(1024);
     doc["status"] = "ok";
     doc["enabled"] = enabled;
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
-    
-    // Broadcast update
-    broadcastWebSocket(response);
+    char responseBuffer[1024]; // Adjust size as needed
+    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
+    if (len > 0 && len < sizeof(responseBuffer)) {
+        request->send(200, "application/json", responseBuffer);
+        // Broadcast update
+        broadcastWebSocket(responseBuffer);
+    } else {
+        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
+        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+    }
 }
 
 void handlePutPresetDelayNamed(AsyncWebServerRequest *request) {
@@ -354,16 +359,19 @@ void handlePutPresetDelayNamed(AsyncWebServerRequest *request) {
         String(current_config.presets[presetIndex].delay.sub, 2));
     
     // Prepare response
-        DynamicJsonDocument doc(1024);
+    DynamicJsonDocument doc(1024);
     doc["status"] = "ok";
     doc["speaker"] = speaker;
     doc["delayUs"] = delayUs;
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
-    
-    // Broadcast update
-    broadcastWebSocket(response);
+    char responseBuffer[1024]; // Adjust size as needed
+    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
+    if (len > 0 && len < sizeof(responseBuffer)) {
+        request->send(200, "application/json", responseBuffer);
+        // Broadcast update
+        broadcastWebSocket(responseBuffer);
+    } else {
+        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
+        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+    }
 }
 

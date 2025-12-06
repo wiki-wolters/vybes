@@ -85,17 +85,20 @@ void handlePutPresetFir(AsyncWebServerRequest *request) {
     scheduleConfigWrite();
     
     // Prepare and send response
-        DynamicJsonDocument doc(1024);
+    DynamicJsonDocument doc(1024);
     doc["status"] = "ok";
     doc["speaker"] = speaker;
     doc["filename"] = filename;
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
-    
-    // Broadcast update
-    broadcastWebSocket(response);
+    char responseBuffer[1024]; // Adjust size as needed
+    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
+    if (len > 0 && len < sizeof(responseBuffer)) {
+        request->send(200, "application/json", responseBuffer);
+        // Broadcast update
+        broadcastWebSocket(responseBuffer);
+    } else {
+        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
+        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+    }
     
     loadFirFilters();
 }
@@ -136,14 +139,17 @@ void handlePutPresetFirEnabled(AsyncWebServerRequest *request) {
     }
     
     // Prepare and send response
-        DynamicJsonDocument doc(1024);
+    DynamicJsonDocument doc(1024);
     doc["status"] = "ok";
     doc["FIRFiltersEnabled"] = (state == "on");
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
-    
-    // Broadcast update
-    broadcastWebSocket(response);
+    char responseBuffer[1024]; // Adjust size as needed
+    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
+    if (len > 0 && len < sizeof(responseBuffer)) {
+        request->send(200, "application/json", responseBuffer);
+        // Broadcast update
+        broadcastWebSocket(responseBuffer);
+    } else {
+        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
+        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+    }
 }

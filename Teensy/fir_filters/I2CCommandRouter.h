@@ -3,6 +3,8 @@
 #pragma once
 
 #include <Arduino.h>
+// Increase I2C buffer size for Teensy
+#define WIRE_BUFFER_LENGTH 256
 #include <Wire.h>
 #include <map>
 #include <functional>
@@ -81,7 +83,7 @@ private:
     
     // Static constants for array sizes
     static const int MAX_COMMANDS = 20;
-    static const int I2C_BUFFER_SIZE = 32;
+    static const int I2C_BUFFER_SIZE = 256;
     static const int MAX_I2C_REQUESTS = 5;
     
     // Response status enum
@@ -119,7 +121,7 @@ private:
     volatile int8_t i2cRequestReadIndex;   // Points to next request to process
     
     // Response handling
-    char responseBuffer[256];
+    char responseBuffer[1024];
     size_t responseLength;
     volatile ResponseStatus lastStatus;
     

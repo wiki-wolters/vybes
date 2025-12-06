@@ -13,8 +13,17 @@ void handlePutVolume(AsyncWebServerRequest *request) {
             float volumeFloat = volume / 100.0f;
             sendFloatToTeensy(CMD_SET_VOLUME, volumeFloat);
             scheduleConfigWrite();
-            String message = "{\"messageType\":\"volumeChanged\",\"volume\": " + String(current_config.volume) + "}";
-            broadcastWebSocket(message);
+            // Prepare data for WebSocket broadcast
+            DynamicJsonDocument doc(128);
+            doc["messageType"] = "volumeChanged";
+            doc["volume"] = current_config.volume;
+            char messageBuffer[128]; // Adjust size as needed
+            size_t len = serializeJson(doc, messageBuffer, sizeof(messageBuffer));
+            if (len > 0 && len < sizeof(messageBuffer)) {
+                broadcastWebSocket(messageBuffer);
+            } else {
+                Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+            }
             
             AsyncResponseStream *response = request->beginResponseStream("application/json");
             DynamicJsonDocument json(128);
@@ -51,8 +60,17 @@ void increase_volume(int amount) {
         float volumeFloat = current_config.volume / 100.0f;
         sendFloatToTeensy(CMD_SET_VOLUME, volumeFloat);
         scheduleConfigWrite();
-        String message = "{\"messageType\":\"volumeChanged\",\"volume\": " + String(current_config.volume) + "}";
-        broadcastWebSocket(message);
+        // Prepare data for WebSocket broadcast
+        DynamicJsonDocument doc(128);
+        doc["messageType"] = "volumeChanged";
+        doc["volume"] = current_config.volume;
+        char messageBuffer[128]; // Adjust size as needed
+        size_t len = serializeJson(doc, messageBuffer, sizeof(messageBuffer));
+        if (len > 0 && len < sizeof(messageBuffer)) {
+            broadcastWebSocket(messageBuffer);
+        } else {
+            Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+        }
     }
 }
 
@@ -65,8 +83,17 @@ void decrease_volume(int amount) {
         float volumeFloat = current_config.volume / 100.0f;
         sendFloatToTeensy(CMD_SET_VOLUME, volumeFloat);
         scheduleConfigWrite();
-        String message = "{\"messageType\":\"volumeChanged\",\"volume\": " + String(current_config.volume) + "}";
-        broadcastWebSocket(message);
+        // Prepare data for WebSocket broadcast
+        DynamicJsonDocument doc(128);
+        doc["messageType"] = "volumeChanged";
+        doc["volume"] = current_config.volume;
+        char messageBuffer[128]; // Adjust size as needed
+        size_t len = serializeJson(doc, messageBuffer, sizeof(messageBuffer));
+        if (len > 0 && len < sizeof(messageBuffer)) {
+            broadcastWebSocket(messageBuffer);
+        } else {
+            Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+        }
     }
 }
 
@@ -74,6 +101,15 @@ void toggle_mute() {
     current_config.muted = !current_config.muted;
     sendOnOffToTeensy(CMD_SET_MUTE, current_config.muted);
     scheduleConfigWrite();
-    String message = "{\"messageType\":\"muteChanged\",\"muted\": " + String(current_config.muted) + "}";
-    broadcastWebSocket(message);
+    // Prepare data for WebSocket broadcast
+    DynamicJsonDocument doc(128);
+    doc["messageType"] = "muteChanged";
+    doc["muted"] = current_config.muted;
+    char messageBuffer[128]; // Adjust size as needed
+    size_t len = serializeJson(doc, messageBuffer, sizeof(messageBuffer));
+    if (len > 0 && len < sizeof(messageBuffer)) {
+        broadcastWebSocket(messageBuffer);
+    } else {
+        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+    }
 }

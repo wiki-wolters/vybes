@@ -198,9 +198,13 @@ void RemoteControl::apply_preset() {
         doc["activePresetName"] = current_config.presets[current_config.active_preset_index].name;
         doc["activePresetIndex"] = current_config.active_preset_index;
         
-        String ws_response;
-        serializeJson(doc, ws_response);
-        broadcastWebSocket(ws_response);
+        char ws_response_buffer[1024]; // Adjust size as needed
+        size_t len = serializeJson(doc, ws_response_buffer, sizeof(ws_response_buffer));
+        if (len > 0 && len < sizeof(ws_response_buffer)) {
+            broadcastWebSocket(ws_response_buffer);
+        } else {
+            Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+        }
     }
     _preset_selection_time = 0;
 }

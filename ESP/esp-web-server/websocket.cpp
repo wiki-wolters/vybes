@@ -37,7 +37,8 @@ void setupWebSocket() {
     Serial.println("WebSocket server started on /live-updates");
 }
 
-void broadcastWebSocket(String message) {
+void broadcastWebSocket(const char* message) {
     ws.textAll(message);
-    Serial.println("WebSocket broadcast: " + message);
+    Serial.print("WebSocket broadcast: ");
+    Serial.println(message);
 }

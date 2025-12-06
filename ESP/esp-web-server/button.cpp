@@ -102,14 +102,19 @@ void handleButton() {
             scheduleConfigWrite();
 
             // Prepare data for WebSocket broadcast
-                        DynamicJsonDocument doc(1024);
+            DynamicJsonDocument doc(1024);
             doc["messageType"] = "activePresetChanged";
             doc["activePresetName"] = current_config.presets[current_config.active_preset_index].name;
             doc["activePresetIndex"] = current_config.active_preset_index;
             
-            String ws_response;
-            serializeJson(doc, ws_response);
-            broadcastWebSocket(ws_response);
+            // Serialize JSON to a temporary buffer
+            char buffer[1024]; // Adjust size as needed
+            size_t len = serializeJson(doc, buffer, sizeof(buffer));
+            if (len > 0 && len < sizeof(buffer)) {
+                broadcastWebSocket(buffer);
+            } else {
+                Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+            }
         }
         lastButtonPressTime = 0;
     }

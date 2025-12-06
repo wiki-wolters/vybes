@@ -60,11 +60,15 @@ void handlePutMute(AsyncWebServerRequest *request) {
         DynamicJsonDocument doc(1024);
     doc["muted"] = current_config.muted;
 
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
-
-    broadcastWebSocket(response);
+    char responseBuffer[1024]; // Adjust size as needed
+    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
+    if (len > 0 && len < sizeof(responseBuffer)) {
+        request->send(200, "application/json", responseBuffer);
+        broadcastWebSocket(responseBuffer);
+    } else {
+        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
+        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+    }
 }
 
 void handlePutMutePercent(AsyncWebServerRequest *request) {
@@ -88,9 +92,13 @@ void handlePutMutePercent(AsyncWebServerRequest *request) {
         DynamicJsonDocument doc(1024);
     doc["mutePercent"] = current_config.mutePercent;
 
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
-
-    broadcastWebSocket(response);
+    char responseBuffer[1024]; // Adjust size as needed
+    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
+    if (len > 0 && len < sizeof(responseBuffer)) {
+        request->send(200, "application/json", responseBuffer);
+        broadcastWebSocket(responseBuffer);
+    } else {
+        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
+        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+    }
 }

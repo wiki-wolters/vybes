@@ -6,6 +6,6 @@
 extern AsyncWebSocket ws;
 
 void setupWebSocket();
-void broadcastWebSocket(String message);
+void broadcastWebSocket(const char* message);
 
 #endif

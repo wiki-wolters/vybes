@@ -34,11 +34,15 @@ void handlePutTone(AsyncWebServerRequest *request) {
     doc["toneFrequency"] = current_config.toneFrequency;
     doc["toneVolume"] = current_config.toneVolume;
 
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
-
-    broadcastWebSocket(response);
+    char responseBuffer[1024]; // Adjust size as needed
+    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
+    if (len > 0 && len < sizeof(responseBuffer)) {
+        request->send(200, "application/json", responseBuffer);
+        broadcastWebSocket(responseBuffer);
+    } else {
+        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
+        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+    }
 }
 
 void handlePutToneStop(AsyncWebServerRequest *request) {
@@ -52,11 +56,15 @@ void handlePutToneStop(AsyncWebServerRequest *request) {
     doc["toneFrequency"] = 0;
     doc["toneVolume"] = 0;
 
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
-
-    broadcastWebSocket(response);
+    char responseBuffer[1024]; // Adjust size as needed
+    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
+    if (len > 0 && len < sizeof(responseBuffer)) {
+        request->send(200, "application/json", responseBuffer);
+        broadcastWebSocket(responseBuffer);
+    } else {
+        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
+        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+    }
 }
 
 void handlePutNoise(AsyncWebServerRequest *request) {
@@ -80,11 +88,15 @@ void handlePutNoise(AsyncWebServerRequest *request) {
         DynamicJsonDocument doc(1024);
     doc["noiseVolume"] = current_config.noiseVolume;
 
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
-
-    broadcastWebSocket(response);
+    char responseBuffer[1024]; // Adjust size as needed
+    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
+    if (len > 0 && len < sizeof(responseBuffer)) {
+        request->send(200, "application/json", responseBuffer);
+        broadcastWebSocket(responseBuffer);
+    } else {
+        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
+        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+    }
 }
 
 void handlePutPulse(AsyncWebServerRequest *request) {
