@@ -181,6 +181,8 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, JsonVariant &json) 
 
     scheduleConfigWrite();
     
+request->send(204);
+
     // Prepare and send response
     DynamicJsonDocument responseDoc(1024);
     responseDoc["status"] = "ok";
@@ -190,11 +192,11 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, JsonVariant &json) 
     char responseBuffer[1024]; // Adjust size as needed
     size_t len = serializeJson(responseDoc, responseBuffer, sizeof(responseBuffer));
     if (len > 0 && len < sizeof(responseBuffer)) {
-        request->send(200, "application/json", responseBuffer);
+        // request->send(200, "application/json", responseBuffer);
         // Broadcast update
         broadcastWebSocket(responseBuffer);
     } else {
-        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
+        // request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
         Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
     }
 }

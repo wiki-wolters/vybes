@@ -43,30 +43,51 @@ void addPresetGainsHandler(AsyncWebServer* server) {
 }
 
 void handlePutSpeakerGain(AsyncWebServerRequest* request) {
-    if (!request->hasArg("plain")) {
-        request->send(400, "application/json", "{\"error\":\"Missing JSON body\"}");
-        return;
+    if (request->hasParam("speaker") && request->hasParam("value")) {
+        String speaker = request->getParam("speaker")->value();
+        float value = request->getParam("value")->value().toFloat();
+
+        if (speaker.equalsIgnoreCase("left")) {
+            current_config.speakerGains.left = value;
+        } else if (speaker.equalsIgnoreCase("right")) {
+            current_config.speakerGains.right = value;
+        } else if (speaker.equalsIgnoreCase("sub")) {
+            current_config.speakerGains.sub = value;
+        } else {
+            request->send(400, "application/json", "{\"error\":\"Invalid speaker\"}");
+            return;
+        }
+
+        save_config();
+        sendToTeensy(CMD_SET_SPEAKER_GAINS, String(current_config.speakerGains.left, 2), String(current_config.speakerGains.right, 2), String(current_config.speakerGains.sub, 2));
+        request->send(200, "application/json", "{\"success\":true}");
+    } else {
+        // Fallback to original JSON body handling
+        if (!request->hasArg("plain")) {
+            request->send(400, "application/json", "{\"error\":\"Missing JSON body or speaker/value parameters\"}");
+            return;
+        }
+
+        DynamicJsonDocument doc(256);
+        DeserializationError error = deserializeJson(doc, request->arg("plain"));
+
+        if (error) {
+            request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+            return;
+        }
+
+        float left = (doc["left"] | current_config.speakerGains.left * 100.0f) / 100.0f;
+        float right = (doc["right"] | current_config.speakerGains.right * 100.0f) / 100.0f;
+        float sub = (doc["sub"] | current_config.speakerGains.sub * 100.0f) / 100.0f;
+
+        current_config.speakerGains.left = left;
+        current_config.speakerGains.right = right;
+        current_config.speakerGains.sub = sub;
+
+        save_config();
+        sendToTeensy(CMD_SET_SPEAKER_GAINS, String(left, 2), String(right, 2), String(sub, 2));
+        request->send(200, "application/json", "{\"success\":true}");
     }
-
-    DynamicJsonDocument doc(256);
-    DeserializationError error = deserializeJson(doc, request->arg("plain"));
-
-    if (error) {
-        request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
-        return;
-    }
-
-    float left = (doc["left"] | current_config.speakerGains.left * 100.0f) / 100.0f;
-    float right = (doc["right"] | current_config.speakerGains.right * 100.0f) / 100.0f;
-    float sub = (doc["sub"] | current_config.speakerGains.sub * 100.0f) / 100.0f;
-
-    current_config.speakerGains.left = left;
-    current_config.speakerGains.right = right;
-    current_config.speakerGains.sub = sub;
-
-    save_config();
-    sendToTeensy(CMD_SET_SPEAKER_GAINS, String(left, 2), String(right, 2), String(sub, 2));
-    request->send(200, "application/json", "{\"success\":true}");
 }
 
 void handlePutInputGains(AsyncWebServerRequest* request, JsonVariant& json) {
