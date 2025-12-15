@@ -255,6 +255,8 @@ void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
     
     preset->EQEnabled = enabled;
     
+    sendOnOffToTeensy(CMD_SET_EQ_ENABLED, enabled);
+    
     scheduleConfigWrite();
     
     // Prepare and send response
