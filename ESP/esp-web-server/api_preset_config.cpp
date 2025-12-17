@@ -179,6 +179,13 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, JsonVariant &json) 
         }
     }
 
+    // Disable remaining filters
+    for (int i = pointsArray.size(); i < MAX_PEQ_POINTS; i++) {
+        char id_str[4];
+        snprintf(id_str, sizeof(id_str), "%d", i);
+        sendToTeensy(CMD_SET_EQ_FILTER, id_str, "0 0 0");
+    }
+
     scheduleConfigWrite();
     
 request->send(204);
@@ -199,6 +206,36 @@ request->send(204);
         // request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
         Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
     }
+}
+
+void handlePutPresetEQPoint(AsyncWebServerRequest *request, JsonVariant &json) {
+    if (!request->hasParam("preset_name")) {
+        request->send(400, "text/plain", "Missing required parameters");
+        return;
+    }
+    String presetName = request->getParam("preset_name")->value();
+    JsonObject point = json.as<JsonObject>();
+
+    int id = point["id"].as<int>();
+    if (id >= MAX_PEQ_POINTS) {
+        Serial.printf("Error: PEQ point ID %d is out of bounds. Max is %d.\n", id, MAX_PEQ_POINTS - 1);
+        request->send(400, "text/plain", "PEQ point ID out of bounds");
+        return;
+    }
+
+    float new_freq = point["freq"].as<float>();
+    float new_gain = point["gain"].as<float>();
+    float new_q = point["q"].as<float>();
+
+    char id_str[4];
+    snprintf(id_str, sizeof(id_str), "%d", id);
+
+    char pointData[32];
+    snprintf(pointData, sizeof(pointData), "%.1f %.2f %.2f", new_freq, new_q, new_gain);
+
+    sendToTeensy(CMD_SET_EQ_FILTER, id_str, pointData);
+
+    request->send(204);
 }
 
 void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
@@ -263,51 +300,6 @@ void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
     DynamicJsonDocument doc(1024);
     doc["status"] = "ok";
     doc["enabled"] = enabled;
-    char responseBuffer[1024]; // Adjust size as needed
-    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
-    if (len > 0 && len < sizeof(responseBuffer)) {
-        request->send(200, "application/json", responseBuffer);
-        // Broadcast update
-        broadcastWebSocket(responseBuffer);
-    } else {
-        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
-        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
-    }
-}
-
-void handleResetEQFilters(AsyncWebServerRequest *request) {
-    if (!request->hasParam("preset_name")) {
-        request->send(400, "text/plain", "Missing required parameters");
-        return;
-    }
-    String presetName = request->getParam("preset_name")->value();
-    
-    int presetIndex = find_preset_by_name(presetName.c_str());
-    if (presetIndex == -1) {
-        request->send(404, "text/plain", "Preset not found");
-        return;
-    }
-    
-    Preset* preset = &current_config.presets[presetIndex];
-    
-    // Reset preference curve
-    for (int i = 0; i < MAX_PEQ_SETS; i++) {
-        preset->preference_curve[i].spl = -1;
-        preset->preference_curve[i].num_points = 0;
-    }
-    // Add default set at 0dB SPL
-    preset->preference_curve[0].spl = 0;
-    preset->preference_curve[0].num_points = 0;
-    
-    scheduleConfigWrite();
-    
-    // Send command to Teensy to reset EQ filters
-    sendToTeensy(CMD_RESET_EQ_FILTERS, "pref");
-    
-    // Prepare and send response
-    DynamicJsonDocument doc(1024);
-    doc["status"] = "ok";
-    doc["eqType"] = "pref";
     char responseBuffer[1024]; // Adjust size as needed
     size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
     if (len > 0 && len < sizeof(responseBuffer)) {

@@ -543,8 +543,12 @@ void setDelayEnabled(bool enabled) {
 }
 
 void setVolume(float volume) {
-  Serial.println("Set volume: " + String(volume));
-  state.volume = volume;
+  // Apply a cubic curve to the volume for a more natural logarithmic response
+  // The input 'volume' is linear 0.0-1.0
+  float logVolume = volume * volume * volume;
+
+  Serial.println("Set volume: " + String(volume) + " (log: " + String(logVolume) + ")");
+  state.volume = logVolume;
   updateTargetVolume();
   state.isDirty = true;
   // Do NOT apply gain directly here. It will be smoothed in updateAudioVolume().

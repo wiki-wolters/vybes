@@ -236,7 +236,7 @@ const handleImport = () => {
     localEqPoints.length = 0;
     newPoints.forEach(point => localEqPoints.push(point));
     selectedPoint.value = 0;
-    requestUpdate();
+    requestUpdate(true);
   }
 
   showImportModal.value = false;
@@ -359,7 +359,7 @@ const sendUpdateToAPI = async () => {
   }
 };
 
-const requestUpdate = () => {
+const requestUpdate = (fullUpdate = false) => {
   // Set interaction flag and timeout to clear it
   isInteracting.value = true;
   if (interactionEndTimeout) {
@@ -375,7 +375,11 @@ const requestUpdate = () => {
   }
 
   // Immediately send the first update
-  sendUpdateToAPI();
+  if (fullUpdate) {
+    sendUpdateToAPI();
+  } else {
+    sendPointUpdateToAPI();
+  }
 
   // Set a throttle timeout
   throttleTimeout = setTimeout(() => {
@@ -383,9 +387,33 @@ const requestUpdate = () => {
     // If there was a trailing call during the throttle period, trigger it now
     if (trailingCall) {
       trailingCall = false;
-      requestUpdate(); // This will call sendUpdateToAPI again
+      if (fullUpdate) {
+        requestUpdate(true);
+      } else {
+        requestUpdate();
+      }
     }
   }, THROTTLE_DELAY);
+};
+
+const sendPointUpdateToAPI = async () => {
+  if (selectedPoint.value === null) return;
+
+  const point = localEqPoints[selectedPoint.value];
+  if (!point) return;
+
+  const pointToEmit = {
+    id: selectedPoint.value,
+    freq: point.freq,
+    gain: point.gain,
+    q: point.q
+  };
+
+  try {
+    await VybesAPI.updateEqPoint(props.presetName, pointToEmit);
+  } catch (error) {
+    console.error('Failed to update EQ point:', error);
+  }
 };
 
 // Frequency conversion (logarithmic scale)
@@ -478,7 +506,7 @@ const calculateBellFilter = (freq, centerFreq, gain, q) => {
 
   localEqPoints.push(newPoint);
   selectedPoint.value = localEqPoints.length - 1;
-  requestUpdate();
+  requestUpdate(true);
 };
 
 const removePoint = async (index) => {
@@ -486,38 +514,22 @@ const removePoint = async (index) => {
   if (localEqPoints.length <= 1) {
     if (localEqPoints[0]) {
       localEqPoints[0].gain = 0;
-      requestUpdate();
+      requestUpdate(true);
     }
     return;
   }
 
-  // Create a temporary list of points with the target point's gain set to 0.
-  const pointsWithZeroedGain = localEqPoints.map((p, i) => {
-    if (i === index) {
-      return { ...p, gain: 0 };
-    }
-    return p;
-  });
+  // Remove the point from the local array
+  localEqPoints.splice(index, 1);
 
-  try {
-    // Directly call the API to neutralize the filter on the hardware.
-    await VybesAPI.savePrefEqSet(props.presetName, pointsWithZeroedGain);
-
-    // Now, update the UI state by removing the point.
-    localEqPoints.splice(index, 1);
-
-    // Adjust the selected point if necessary.
-    if (selectedPoint.value >= localEqPoints.length) {
-      selectedPoint.value = localEqPoints.length - 1;
-    }
-
-    // Finally, send the new (shorter) list of points to the API to sync the backend.
-    await VybesAPI.savePrefEqSet(props.presetName, localEqPoints);
-
-  } catch (error) {
-    console.error('An error occurred while deleting the EQ point:', error);
-    // Consider adding user-facing error feedback here.
+  // Adjust the selected point if necessary
+  if (selectedPoint.value >= localEqPoints.length) {
+    selectedPoint.value = selectedPoint.value - 1;
   }
+
+  // Send the updated list of points to the API.
+  // The backend will handle disabling the unused filters.
+  requestUpdate(true);
 };
 
 // Drag functionality

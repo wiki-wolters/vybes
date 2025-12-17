@@ -85,6 +85,7 @@ void setupWebServer() {
     server.on("/preset/delay", HTTP_PUT, handlePutPresetDelayNamed);
 
     server.addHandler(new AsyncCallbackJsonWebHandler("/preset/eq", handlePutPresetEQPoints));
+    server.addHandler(new AsyncCallbackJsonWebHandler("/preset/eq/point", handlePutPresetEQPoint));
 
     // API Routes - Crossover and Equal Loudness
     server.on("/preset/crossover", HTTP_PUT, handlePutPresetCrossover);

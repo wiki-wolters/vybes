@@ -83,24 +83,41 @@ void RemoteControl::loop() {
         _last_volume_action = -1;
     }
 
-    if (_volume_button_held_time > 0 && millis() - _volume_button_held_time > 1000) {
-        if (millis() - _last_volume_increment_time > 500) {
-            if (_last_volume_action == VOLUME_UP) {
-                increase_volume(2);
-                 if (millis() - lastVolumeScreenUpdateTime > VOLUME_SCREEN_UPDATE_INTERVAL) {
-                    writeToScreen("Volume " + String(current_config.volume), 3000);
-                    lastVolumeScreenUpdateTime = millis();
+    // Volume button held logic
+    const unsigned long HOLD_START_TIME = 300; // ms to wait before starting repeat
+    const unsigned long RAMP_DURATION = 2000; // ms for ramp up
+    const int START_RATE = 3; // increments per second
+    const int END_RATE = 6; // increments per second
+    const int START_DELAY = 1000 / START_RATE; // 333ms
+    const int END_DELAY = 1000 / END_RATE; // 166ms
+    const int DELAY_RANGE = START_DELAY - END_DELAY;
+
+    if (_volume_button_held_time > 0) { // if a volume button is being held
+        unsigned long held_duration = millis() - _volume_button_held_time;
+
+        if (held_duration > HOLD_START_TIME) {
+            float ramp_progress = (float)min((unsigned long)held_duration - HOLD_START_TIME, RAMP_DURATION) / RAMP_DURATION;
+            int current_delay = START_DELAY - (int)(DELAY_RANGE * ramp_progress);
+
+            if (millis() - _last_volume_increment_time > current_delay) {
+                if (_last_volume_action == VOLUME_UP) {
+                    increase_volume(2);
+                    if (millis() - lastVolumeScreenUpdateTime > VOLUME_SCREEN_UPDATE_INTERVAL) {
+                        writeToScreen("Volume " + String(current_config.volume), 3000);
+                        lastVolumeScreenUpdateTime = millis();
+                    }
+                } else if (_last_volume_action == VOLUME_DOWN) {
+                    decrease_volume(2);
+                    if (millis() - lastVolumeScreenUpdateTime > VOLUME_SCREEN_UPDATE_INTERVAL) {
+                        writeToScreen("Volume " + String(current_config.volume), 3000);
+                        lastVolumeScreenUpdateTime = millis();
+                    }
                 }
-            } else if (_last_volume_action == VOLUME_DOWN) {
-                decrease_volume(2);
-                 if (millis() - lastVolumeScreenUpdateTime > VOLUME_SCREEN_UPDATE_INTERVAL) {
-                    writeToScreen("Volume " + String(current_config.volume), 3000);
-                    lastVolumeScreenUpdateTime = millis();
-                }
+                _last_volume_increment_time = millis();
             }
-            _last_volume_increment_time = millis();
         }
     }
+
 
     if (_preset_selection_time > 0 && millis() - _preset_selection_time > 1000) {
         apply_preset();

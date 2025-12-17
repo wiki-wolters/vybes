@@ -263,6 +263,10 @@ class VybesAPI {
     return this.request('PUT', `/preset/eq?preset_name=${encodeURIComponent(presetName)}`, peqPoints);
   }
 
+  async updateEqPoint(presetName, point) {
+    return this.request('PUT', `/preset/eq/point?preset_name=${encodeURIComponent(presetName)}`, point);
+  }
+
   /**
    * Create new preset
    * @param {string} name - Preset name (must be unique)
