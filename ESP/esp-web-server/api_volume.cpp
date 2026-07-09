@@ -1,3 +1,4 @@
+#include "globals.h"
 #include "api_volume.h"
 #include "config.h"
 #include "teensy_comm.h"

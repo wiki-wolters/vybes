@@ -1,3 +1,4 @@
+#include "globals.h"
 #include "button.h"
 #include "config.h"
 #include "screen.h"

@@ -1,3 +1,4 @@
+#include "globals.h"
 #include "remote_control.h"
 #include "config.h"
 #include "screen.h"

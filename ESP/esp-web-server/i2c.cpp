@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "globals.h"
 #include "i2c.h"
 #include <Wire.h>
 
