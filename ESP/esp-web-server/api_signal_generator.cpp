@@ -41,7 +41,7 @@ void handlePutTone(AsyncWebServerRequest *request) {
         broadcastWebSocket(responseBuffer);
     } else {
         request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
-        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+        DebugSerial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
     }
 }
 
@@ -63,7 +63,7 @@ void handlePutToneStop(AsyncWebServerRequest *request) {
         broadcastWebSocket(responseBuffer);
     } else {
         request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
-        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+        DebugSerial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
     }
 }
 
@@ -95,7 +95,7 @@ void handlePutNoise(AsyncWebServerRequest *request) {
         broadcastWebSocket(responseBuffer);
     } else {
         request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
-        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+        DebugSerial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
     }
 }
 

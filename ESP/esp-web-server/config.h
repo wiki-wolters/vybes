@@ -27,9 +27,9 @@ struct PEQPoint {
     float q = 1.0f;
 };
 
-// Represents a set of PEQs for a specific SPL
+// Represents a set of PEQs for a specific SPL. spl == -1 means the slot is unused.
 struct PEQSet {
-    int spl = 0;
+    int spl = -1;
     PEQPoint points[MAX_PEQ_POINTS];
     int num_points = 0; // Number of active PEQ points in this set
 };
@@ -115,6 +115,12 @@ void save_config();
  */
 bool load_config();
 
+/**
+ * @brief Loads a configuration from an arbitrary LittleFS path into
+ * current_config. Used to validate and apply restored backups.
+ */
+bool load_config_from(const char* path);
+
 
 
 
@@ -124,6 +130,9 @@ bool load_config();
 void reset_config_to_defaults();
 
 void updateTeensyWithActivePresetParameters();
+
+// Queue a single EQ point for the Teensy (band index + freq/q/gain)
+void sendEqPointToTeensy(int index, const PEQPoint& point);
 
 void loadFirFilters();
 

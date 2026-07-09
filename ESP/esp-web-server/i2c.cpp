@@ -2,9 +2,9 @@
 #include "i2c.h"
 #include <Wire.h>
 
+// I2C now only carries the PCF8574 LCD backpack; the Teensy link is UART.
 void initI2C() {
     Wire.begin(I2C_SDA, I2C_SCL);
-    Wire.setClockStretchLimit(1000);
     Wire.setClock(100000); //Standard
 }
 
@@ -12,7 +12,7 @@ void scanI2CBus() {
     byte error, address;
     int nDevices;
 
-    Serial.println("Scanning...");
+    DebugSerial.println("Scanning...");
 
     nDevices = 0;
     for(address = 1; address < 127; address++ ) {
@@ -23,23 +23,23 @@ void scanI2CBus() {
         error = Wire.endTransmission();
 
         if (error == 0) {
-        Serial.print("I2C device found at address 0x");
+        DebugSerial.print("I2C device found at address 0x");
         if (address<16)
-            Serial.print("0");
-            Serial.print(address,HEX);
-            Serial.println(" !");
+            DebugSerial.print("0");
+            DebugSerial.print(address,HEX);
+            DebugSerial.println(" !");
 
             nDevices++;
         }
         else if (error==4) {
-            Serial.print("Unknown error at address 0x");
+            DebugSerial.print("Unknown error at address 0x");
             if (address<16)
-                Serial.print("0");
-            Serial.println(address,HEX);
+                DebugSerial.print("0");
+            DebugSerial.println(address,HEX);
         }
     }
     if (nDevices == 0)
-        Serial.println("No I2C devices found\n");
+        DebugSerial.println("No I2C devices found\n");
     else
-        Serial.println("done\n");
+        DebugSerial.println("done\n");
 }

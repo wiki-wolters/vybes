@@ -196,12 +196,17 @@
     return `M ${points.join(' L ')}`;
   });
   
-  // Bell filter calculation (peaking EQ)
+  // Exact bell (peaking EQ) magnitude in dB, from the RBJ analog prototype.
+  // This is the same math the Teensy uses, so the drawn curve matches the
+  // audible response.
   const calculateBellFilter = (freq, centerFreq, gain, q) => {
-    const ratio = freq / centerFreq;
-    const bandwidth = 1 / q;
-    const response = gain / (1 + Math.pow((ratio - 1/ratio) / bandwidth, 2));
-    return response;
+    if (!gain || q <= 0 || centerFreq <= 0 || freq <= 0) return 0;
+    const A = Math.pow(10, gain / 40);
+    const O = freq / centerFreq;
+    const c = (1 - O * O) ** 2;
+    const num = c + (A * O / q) ** 2;
+    const den = c + (O / (A * q)) ** 2;
+    return 10 * Math.log10(num / den);
   };
   
   // Event listeners

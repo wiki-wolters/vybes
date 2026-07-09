@@ -4,6 +4,7 @@
 #include "websocket.h"
 #include "teensy_comm.h"
 #include "utilities.h"
+#include "api_helpers.h"
 
 void handleGetStatus(AsyncWebServerRequest *request) {
     DynamicJsonDocument doc(1024);
@@ -45,7 +46,7 @@ void handlePutMute(AsyncWebServerRequest *request) {
     }
     String state = request->getParam("state")->value();
     
-    Serial.print("Put Mute: ");Serial.println(state);
+    DebugSerial.print("Put Mute: ");DebugSerial.println(state);
 
     if (state != "on" && state != "off") {
         request->send(400, "text/plain", "Invalid state");
@@ -57,18 +58,11 @@ void handlePutMute(AsyncWebServerRequest *request) {
 
     sendOnOffToTeensy(CMD_SET_MUTE, current_config.muted);
 
-        DynamicJsonDocument doc(1024);
+    // Same shape as the broadcast sent by toggle_mute (IR remote path)
+    StaticJsonDocument<96> doc;
+    doc["messageType"] = "muteChanged";
     doc["muted"] = current_config.muted;
-
-    char responseBuffer[1024]; // Adjust size as needed
-    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
-    if (len > 0 && len < sizeof(responseBuffer)) {
-        request->send(200, "application/json", responseBuffer);
-        broadcastWebSocket(responseBuffer);
-    } else {
-        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
-        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
-    }
+    sendJsonAndBroadcast(request, doc);
 }
 
 void handlePutMutePercent(AsyncWebServerRequest *request) {
@@ -89,16 +83,8 @@ void handlePutMutePercent(AsyncWebServerRequest *request) {
 
     sendFloatToTeensy(CMD_SET_MUTE_PERCENT, percent);
 
-        DynamicJsonDocument doc(1024);
+    StaticJsonDocument<96> doc;
+    doc["messageType"] = "mutePercentChanged";
     doc["mutePercent"] = current_config.mutePercent;
-
-    char responseBuffer[1024]; // Adjust size as needed
-    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
-    if (len > 0 && len < sizeof(responseBuffer)) {
-        request->send(200, "application/json", responseBuffer);
-        broadcastWebSocket(responseBuffer);
-    } else {
-        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
-        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
-    }
+    sendJsonAndBroadcast(request, doc);
 }

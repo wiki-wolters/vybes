@@ -9,31 +9,34 @@
 #include "screen.h"
 #include "button.h"
 #include "remote_control.h"
+#include <WiFiManager.h>
+#include <ESP8266mDNS.h>
 
 // Define global objects
-WebSocketsServer webSocket(8080);
-WiFiManager wifiManager;
 RemoteControl remoteControl;
-// SystemSettings systemSettings; // This is now replaced by the global 'current_config' object.
 bool configChanged = false;
 unsigned long lastConfigChange = 0;
 const unsigned long WRITE_DELAY = 5000;
 
 void setupWiFi() {
+    // Scoped locally so its RAM is released once WiFi is up
+    WiFiManager wifiManager;
+    // WiFiManager logs to Serial by default - that's the Teensy link now
+    wifiManager.setDebugOutput(false);
     wifiManager.setConnectTimeout(20); // 20 seconds
     wifiManager.setAPCallback([](WiFiManager * myWiFiManager) {
-        Serial.println("Entered config mode");
+        DebugSerial.println("Entered config mode");
     });
     wifiManager.setConfigPortalTimeout(300);
     if (!wifiManager.autoConnect("Vybes-Config")) {
         ESP.restart();
     }
-    Serial.println("WiFi connected!");
+    DebugSerial.println("WiFi connected!");
 }
 
 void handleDebounceWrite() {
     if (configChanged && (millis() - lastConfigChange > WRITE_DELAY)) {
-        Serial.println("Debouncing: Saving configuration ...");
+        DebugSerial.println("Debouncing: Saving configuration ...");
         save_config();
         configChanged = false;
     }
@@ -45,37 +48,45 @@ void scheduleConfigWrite() {
 }
 
 void setup() {
-    Serial.begin(115200);
+    // UART0 is the Teensy link: begin on the default pins, then swap it to
+    // GPIO15 (D8, TX) / GPIO13 (D7, RX). See docs/WIRING.md.
+    TeensySerial.begin(TEENSY_BAUD);
+    TeensySerial.swap();
+
+    // Debug output: Serial1, TX-only on GPIO2 (D4)
+    DebugSerial.begin(115200);
+    DebugSerial.println("\nVybes ESP starting");
+
     setupButton();
     initLittleFS(); // For serving web files
 
     remoteControl.setup();
 
     setupWiFi();
-    initI2C();
+    initI2C(); // LCD only - the Teensy link is UART now
     setupScreen();
     writeToScreen("Vybes DSP");
 
     if (MDNS.begin("vybes")) {
         MDNS.addService("http", "tcp", 80);
-        Serial.println("mDNS responder started: vybes.local");
+        DebugSerial.println("mDNS responder started: vybes.local");
     }
 
     setupWebServer();
     setupWebSocket();
 
+    initTeensyComm();
     init_config();  // Load configuration
 
-    Serial.println("Vybes DSP ready!");
-    Serial.println(WiFi.localIP());
-    Serial.printf("Free heap: %d\n", ESP.getFreeHeap());
-    Serial.print("HTTP_PUT: ");Serial.println((int) HTTP_PUT);
+    DebugSerial.println("Vybes DSP ready!");
+    DebugSerial.println(WiFi.localIP());
+    DebugSerial.printf("Free heap: %d\n", ESP.getFreeHeap());
 }
 
 void loop() {
     remoteControl.loop();
-    webSocket.loop();
     MDNS.update();
+    teensyCommLoop();     // Drain queued Teensy commands, read replies/events
     handleDebounceWrite();
     handleButton();
     loopScreen();

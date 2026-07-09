@@ -7,7 +7,7 @@
 #include <ArduinoJson.h>
 #include <string.h>
 
-const int BUTTON_PIN = 13; //D7
+const int BUTTON_PIN = 14; //D5 (moved from D7/GPIO13, which is now the UART RX from the Teensy)
 const int BLUETOOTH_PAIRING_PIN = 12; //D6, for output
 
 unsigned long pressStart = 0;
@@ -65,7 +65,7 @@ void handleShortPress() {
 void handleButton() {
     if (digitalRead(BUTTON_PIN) == LOW) {
         if (pressStart == 0) {
-            Serial.println("Button pressed down");
+            DebugSerial.println("Button pressed down");
             pressStart = millis();
         }
 
@@ -85,7 +85,7 @@ void handleButton() {
     } else {
         if (pressStart > 0) {
             if (millis() - pressStart <= 500) {
-                Serial.println("Button short pressed");
+                DebugSerial.println("Button short pressed");
                 handleShortPress();
             }
 
@@ -102,18 +102,18 @@ void handleButton() {
             scheduleConfigWrite();
 
             // Prepare data for WebSocket broadcast
-            DynamicJsonDocument doc(1024);
+            StaticJsonDocument<192> doc;
             doc["messageType"] = "activePresetChanged";
             doc["activePresetName"] = current_config.presets[current_config.active_preset_index].name;
             doc["activePresetIndex"] = current_config.active_preset_index;
-            
+
             // Serialize JSON to a temporary buffer
-            char buffer[1024]; // Adjust size as needed
+            char buffer[192];
             size_t len = serializeJson(doc, buffer, sizeof(buffer));
             if (len > 0 && len < sizeof(buffer)) {
                 broadcastWebSocket(buffer);
             } else {
-                Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+                DebugSerial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
             }
         }
         lastButtonPressTime = 0;

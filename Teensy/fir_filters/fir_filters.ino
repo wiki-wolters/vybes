@@ -4,13 +4,18 @@
 #include <SerialFlash.h>
 #include "FIRLoader.h"
 #include "PEQProcessor.h"
-#include "I2CCommandRouter.h"
+#include "SerialCommandRouter.h"
 #include "OutputStream.h"
 #include "AudioFilterFIRFloat.h"
 #include "IntervalTimer.h"
 
-// Create router instance (I2C address 18)
-I2CCommandRouter router(0x12);
+// Command link to the ESP8266: Serial1 = pins 0 (RX1) and 1 (TX1).
+// See docs/WIRING.md in the repo root.
+#define ESP_LINK_BAUD 115200
+SerialCommandRouter router(Serial1);
+
+// Duration of the smooth morph applied to EQ changes (ms)
+#define EQ_MORPH_MS 50
 
 #define MAX_FILENAME_LEN 64 // Maximum length for FIR filenames
 #define MAX_FIR_TAPS 2048
@@ -238,23 +243,16 @@ struct State {
   int delayRightMicroSeconds = 0;
   int delaySubMicroSeconds = 0;
 
-  // an array of biquad filters for the left, right, and subwoofer
+  // Loaded FIR tap counts, used to compensate for FIR group delay
+  uint16_t firTapsLeft = 0;
+  uint16_t firTapsRight = 0;
+  uint16_t firTapsSub = 0;
+
+  // an array of PEQ bands shared by the left and right channels
   PEQBand filters[MAX_PEQ_BANDS];
 };
 
 State state;
-
-size_t getConsecutiveActiveFilterCount() {
-  size_t count = 0;
-  for (int i = 0; i < MAX_PEQ_BANDS; i++) {
-    if (state.filters[i].enabled) {
-      count++;
-    } else {
-      break; // Stop at first disabled filter
-    }
-  }
-  return count;
-}
 
 void setup() {
   Serial.begin(9600);
@@ -278,9 +276,10 @@ void setup() {
     sdCardInitialized = false;
   }
   
-  // Audio connections require memory to work
+  // Audio connections require memory to work. The delay lines need headroom
+  // for FIR group-delay compensation (up to ~23ms/channel at 2048 taps).
   Serial.println("Allocating audio memory");
-  AudioMemory(60);
+  AudioMemory(120);
   Serial.println("=== Audio Memory Debug ===");
   Serial.print("AudioMemoryUsage(): ");
   Serial.println(AudioMemoryUsage());
@@ -311,7 +310,7 @@ void setup() {
   setEQEnabled(state.eqEnabled);
   setFIREnabled(state.firEnabled);
   setDelayEnabled(state.delayEnabled);
-  setEQFilters(state.filters, getConsecutiveActiveFilterCount());
+  applyEQFilters(0);
   setCrossoverFrequency(state.crossoverFrequency);
   setCrossoverEnabled(state.crossoverEnabled);
   setFIR(state.firFileLeft, state.firFileRight, state.firFileSub);
@@ -336,8 +335,8 @@ void setup() {
   Serial.println(AudioMemoryUsageMax());
   Serial.println("================================");
 
-  //Register handlers for I2C commands
-  Serial.println("Registering I2C handlers");
+  //Register handlers for commands arriving over the ESP serial link
+  Serial.println("Registering command handlers");
   router.on("setSpeakerGains", handleSetSpeakerGains);
   router.on("setMute", handleSetMute);
   router.on("setMutePercent", handleSetMutePercent);
@@ -354,7 +353,11 @@ void setup() {
   router.on("setDelays", handleSetDelays);
   router.on("setEq", handleSetEQFilter);
   router.on("resetEqFilters", handleResetEQFilters);
-  router.begin();
+  router.on("ping", handlePing);
+  router.begin(ESP_LINK_BAUD);
+
+  // Tell the ESP we (re)booted so it pushes the full DSP state
+  router.sendEvent("boot");
 }
 
 void loop() {
@@ -397,48 +400,42 @@ void loop() {
   updateAudioVolume(); // Call this frequently to smooth volume changes
 }
 
+// Move 'current' toward 'target' with an exponential ramp whose speed is
+// independent of how fast loop() runs. Returns true if the value changed.
+static bool slewToward(float& current, float target, float alpha) {
+  const float MIN_CHANGE = 0.001f;
+  if (fabsf(target - current) > MIN_CHANGE) {
+    current += (target - current) * alpha;
+    return true;
+  }
+  if (current != target) {
+    current = target;
+    return true;
+  }
+  return false;
+}
+
 // Function to smoothly update the audio volume
 void updateAudioVolume() {
-  const float SMOOTHING_FACTOR = 0.01; // Adjust this for faster/slower ramp
-  const float MIN_CHANGE = 0.001; // Minimum change to apply
+  // Time constant of the ramp: ~63% of the way in RAMP_TAU_MS, settled in
+  // roughly 3x that. Time-based so SD reads etc. don't change the ramp speed.
+  const float RAMP_TAU_MS = 60.0f;
 
-  bool volumeChanged = false;
-  if (abs(state.targetVolume - state.currentVolume) > MIN_CHANGE) {
-    state.currentVolume = state.currentVolume * (1.0 - SMOOTHING_FACTOR) + state.targetVolume * SMOOTHING_FACTOR;
-    volumeChanged = true;
-  } else if (state.currentVolume != state.targetVolume) {
-    state.currentVolume = state.targetVolume;
-    volumeChanged = true;
-  }
+  static unsigned long lastUpdate = 0;
+  unsigned long now = millis();
+  float dt = (float)(now - lastUpdate);
+  lastUpdate = now;
+  if (dt <= 0) return;
+  float alpha = dt / RAMP_TAU_MS;
+  if (alpha > 1.0f) alpha = 1.0f;
 
-  bool gainLeftChanged = false;
-  if (abs(state.gainLeft - state.currentGainLeft) > MIN_CHANGE) {
-    state.currentGainLeft = state.currentGainLeft * (1.0 - SMOOTHING_FACTOR) + state.gainLeft * SMOOTHING_FACTOR;
-    gainLeftChanged = true;
-  } else if (state.currentGainLeft != state.gainLeft) {
-    state.currentGainLeft = state.gainLeft;
-    gainLeftChanged = true;
-  }
+  bool changed = false;
+  changed |= slewToward(state.currentVolume, state.targetVolume, alpha);
+  changed |= slewToward(state.currentGainLeft, state.gainLeft, alpha);
+  changed |= slewToward(state.currentGainRight, state.gainRight, alpha);
+  changed |= slewToward(state.currentGainSub, state.gainSub, alpha);
 
-  bool gainRightChanged = false;
-  if (abs(state.gainRight - state.currentGainRight) > MIN_CHANGE) {
-    state.currentGainRight = state.currentGainRight * (1.0 - SMOOTHING_FACTOR) + state.gainRight * SMOOTHING_FACTOR;
-    gainRightChanged = true;
-  } else if (state.currentGainRight != state.gainRight) {
-    state.currentGainRight = state.gainRight;
-    gainRightChanged = true;
-  }
-
-  bool gainSubChanged = false;
-  if (abs(state.gainSub - state.currentGainSub) > MIN_CHANGE) {
-    state.currentGainSub = state.currentGainSub * (1.0 - SMOOTHING_FACTOR) + state.gainSub * SMOOTHING_FACTOR;
-    gainSubChanged = true;
-  } else if (state.currentGainSub != state.gainSub) {
-    state.currentGainSub = state.gainSub;
-    gainSubChanged = true;
-  }
-
-  if (volumeChanged || gainLeftChanged || gainRightChanged || gainSubChanged) {
+  if (changed) {
     Left_Post_Delay_amp.gain(state.currentGainLeft * state.currentVolume);
     Right_Post_Delay_amp.gain(state.currentGainRight * state.currentVolume);
     Sub_Post_Delay_amp.gain(state.currentGainSub * state.currentVolume);
@@ -480,7 +477,7 @@ void setEQEnabled(bool enabled) {
 
   if (enabled) {
     // EQ is enabled, so apply the filters and the gain compensation
-    setEQFilters(state.filters, 0);
+    applyEQFilters(EQ_MORPH_MS);
   } else {
     // EQ is disabled, so set the pre-amp gain to 1.0
     Left_Pre_EQ_amp.gain(1.0);
@@ -496,6 +493,9 @@ void setCrossoverEnabled(bool enabled) {
   AudioConnection** enableConnections = enabled ? crossoverConnections : bypassCrossoverConnections;
   const size_t disableConnections_len = enabled ? bypassCrossoverConnections_len : crossoverConnections_len;
   const size_t enableConnections_len = enabled ? crossoverConnections_len : bypassCrossoverConnections_len;
+  // Swap the whole subgraph between audio interrupts so no block is ever
+  // processed by a half-connected graph (that's an audible click)
+  AudioNoInterrupts();
   for (size_t i = 0; i < disableConnections_len; ++i) {
     AudioConnection* connection = disableConnections[i];
     if (connection) {
@@ -508,6 +508,7 @@ void setCrossoverEnabled(bool enabled) {
       connection->connect();
     }
   }
+  AudioInterrupts();
 }
 
 void setFIREnabled(bool enabled) {
@@ -518,6 +519,9 @@ void setFIREnabled(bool enabled) {
   Left_FIR_Filter.setEnabled(enabled);
   Right_FIR_Filter.setEnabled(enabled);
   Sub_FIR_Filter.setEnabled(enabled);
+
+  // FIR latency compensation only applies while the filters are active
+  applyDelays();
 }
 
 void setDelayEnabled(bool enabled) {
@@ -528,6 +532,8 @@ void setDelayEnabled(bool enabled) {
   AudioConnection** enableConnections = enabled ? delayConnections : bypassDelayConnections;
   const size_t disableConnections_len = enabled ? bypassDelayConnections_len : delayConnections_len;
   const size_t enableConnections_len = enabled ? delayConnections_len : bypassDelayConnections_len;
+  // Swap the whole subgraph between audio interrupts (see setCrossoverEnabled)
+  AudioNoInterrupts();
   for (size_t i = 0; i < disableConnections_len; ++i) {
     AudioConnection* connection = disableConnections[i];
     if (connection) {
@@ -540,6 +546,7 @@ void setDelayEnabled(bool enabled) {
       connection->connect();
     }
   }
+  AudioInterrupts();
 }
 
 void setVolume(float volume) {
@@ -580,14 +587,19 @@ void setSpeakerGains(float leftGain, float rightGain, float subGain) {
   // Do NOT apply gain directly here. It will be smoothed in updateAudioVolume().
 }
 
-void setEQFilters(PEQBand filters[], int animationDuration) {
-  int8_t nBands = getConsecutiveActiveFilterCount();
-  peqLeft.animateToBands(filters, nBands, animationDuration);
-  peqRight.animateToBands(filters, nBands, animationDuration);
-
-  // Calculate max boost from current EQ filters and apply pre-EQ gain compensation
-  float maxBoost = peqLeft.calculateMaxEqBoost(state.filters, nBands);
+// Attenuate the pre-EQ amps to compensate for the maximum boost of the
+// current EQ curve, so boosted bands can't clip.
+void applyPreEQGainCompensation() {
+  float maxBoost = peqLeft.calculateMaxEqBoost(state.filters, MAX_PEQ_BANDS);
   peqLeft.applyPreEQGain(maxBoost, Left_Pre_EQ_amp, Right_Pre_EQ_amp);
+}
+
+// Apply all bands in state.filters to both PEQ processors. Disabled bands
+// are passed through too - the processors bypass them individually.
+void applyEQFilters(unsigned long animationDurationMs) {
+  peqLeft.animateToBands(state.filters, MAX_PEQ_BANDS, animationDurationMs);
+  peqRight.animateToBands(state.filters, MAX_PEQ_BANDS, animationDurationMs);
+  applyPreEQGainCompensation();
 }
 
 void setCrossoverFrequency(uint16_t frequency) {
@@ -632,74 +644,73 @@ void setFIR(String leftFile, String rightFile, String subFile) {
   state.isDirty = true;
 }
 
-void loadFirFiles() {
-  router.detachInterrupts();
+// Load one channel's FIR file into its filter. Returns the tap count
+// (0 = no filter loaded).
+static uint16_t loadFirChannel(const char* filename, AudioFilterFIRFloat& filter, const char* label) {
+  if (strlen(filename) == 0) {
+    filter.loadCoefficients(nullptr, 0);
+    return 0;
+  }
+  uint16_t actualTaps = 0;
+  float* coeffs = FIRLoader::loadCoefficients(filename, actualTaps, MAX_FIR_TAPS);
+  if (!coeffs) {
+    filter.loadCoefficients(nullptr, 0);
+    return 0;
+  }
+  filter.loadCoefficients(coeffs, actualTaps);
+  delete[] coeffs;
+  Serial.printf("%s FIR file loaded, taps: %u\n", label, actualTaps);
+  return actualTaps;
+}
 
+void loadFirFiles() {
+  // Note: incoming serial commands are buffered by the UART while we read
+  // from the SD card, so no special handling is needed here anymore.
   if (!sdCardInitialized) {
     Serial.println("SD not initialized - can't load FIR files");
     // Clear any existing FIR filters to ensure no stale filters are used
     Left_FIR_Filter.loadCoefficients(nullptr, 0);
     Right_FIR_Filter.loadCoefficients(nullptr, 0);
     Sub_FIR_Filter.loadCoefficients(nullptr, 0);
-    
-    // Re-enable I2C before returning
-    router.reattachInterrupts();
+    state.firTapsLeft = state.firTapsRight = state.firTapsSub = 0;
+    applyDelays();
     return;
   }
-  
-  uint16_t actualTaps = 0;
-  
-  // Load left channel FIR
-  if (strlen(state.firFileLeft) > 0) {
-    actualTaps = 0;
-    float* coeffs = FIRLoader::loadCoefficients(state.firFileLeft, actualTaps, MAX_FIR_TAPS);
-    if (coeffs) {
-      Left_FIR_Filter.loadCoefficients(coeffs, actualTaps);
-      Serial.print("Left FIR file loaded, taps: ");
-      Serial.println(actualTaps);
-      delete[] coeffs;
-    } else {
-      Left_FIR_Filter.loadCoefficients(nullptr, 0);
-    }
-  } else {
-    Left_FIR_Filter.loadCoefficients(nullptr, 0);
-  }
-  
-  // Load right channel FIR
-  if (strlen(state.firFileRight) > 0) {
-    actualTaps = 0;
-    float* coeffs = FIRLoader::loadCoefficients(state.firFileRight, actualTaps, MAX_FIR_TAPS);
-    if (coeffs) {
-      Right_FIR_Filter.loadCoefficients(coeffs, actualTaps);
-      Serial.print("Right FIR file loaded, taps: ");
-      Serial.println(actualTaps);
-      delete[] coeffs;
-    } else {
-      Right_FIR_Filter.loadCoefficients(nullptr, 0);
-    }
-  }
-  else {
-    Right_FIR_Filter.loadCoefficients(nullptr, 0);
-  }
-  
-  // Load subwoofer FIR
-  if (strlen(state.firFileSub) > 0) {
-    actualTaps = 0;
-    float* coeffs = FIRLoader::loadCoefficients(state.firFileSub, actualTaps, MAX_FIR_TAPS);
-    if (coeffs) {
-      Sub_FIR_Filter.loadCoefficients(coeffs, actualTaps);
-      Serial.print("Sub FIR file loaded, taps: ");
-      Serial.println(actualTaps);
-      delete[] coeffs;
-    } else {
-      Sub_FIR_Filter.loadCoefficients(nullptr, 0);
-    }
-  } else {
-    Sub_FIR_Filter.loadCoefficients(nullptr, 0);
-  }
 
-  // Re-enable I2C communication
-  router.reattachInterrupts();
+  state.firTapsLeft = loadFirChannel(state.firFileLeft, Left_FIR_Filter, "Left");
+  state.firTapsRight = loadFirChannel(state.firFileRight, Right_FIR_Filter, "Right");
+  state.firTapsSub = loadFirChannel(state.firFileSub, Sub_FIR_Filter, "Sub");
+
+  // FIR latencies may have changed - realign the channels
+  applyDelays();
+}
+
+// Group delay of a linear-phase FIR filter in microseconds: (N-1)/2 samples.
+// (For minimum-phase FIR files this over-compensates; see docs/WIRING.md.)
+static float firGroupDelayUs(uint16_t taps) {
+  if (taps == 0) return 0.0f;
+  return ((taps - 1) / 2.0f) * (1000000.0f / AUDIO_SAMPLE_RATE_EXACT);
+}
+
+// Apply user delays plus automatic FIR latency alignment: every channel is
+// padded so all three share the latency of the slowest FIR filter.
+void applyDelays() {
+  float compL = 0.0f, compR = 0.0f, compS = 0.0f;
+  if (state.firEnabled) {
+    float latL = firGroupDelayUs(state.firTapsLeft);
+    float latR = firGroupDelayUs(state.firTapsRight);
+    float latS = firGroupDelayUs(state.firTapsSub);
+    float maxLat = max(latL, max(latR, latS));
+    compL = maxLat - latL;
+    compR = maxLat - latR;
+    compS = maxLat - latS;
+    if (maxLat > 0.0f) {
+      Serial.printf("FIR latency compensation (us): L=%.0f R=%.0f S=%.0f\n", compL, compR, compS);
+    }
+  }
+  Left_delay.delay(0, (state.delayLeftMicroSeconds + compL) / 1000.0f); // milliseconds
+  Right_delay.delay(0, (state.delayRightMicroSeconds + compR) / 1000.0f);
+  Sub_delay.delay(0, (state.delaySubMicroSeconds + compS) / 1000.0f);
 }
 
 void setDelays(int delayL_us, int delayR_us, int delayS_us) {
@@ -707,12 +718,11 @@ void setDelays(int delayL_us, int delayR_us, int delayS_us) {
   state.delayRightMicroSeconds = delayR_us;
   state.delaySubMicroSeconds = delayS_us;
   state.isDirty = true;
-  Left_delay.delay(0, delayL_us / 1000.0f); // delay time in milliseconds
-  Right_delay.delay(0, delayR_us / 1000.0f);
-  Sub_delay.delay(0, delayS_us / 1000.0f);
+  applyDelays();
 }
 
 void resetEQFilters(int fromIndex) {
+  if (fromIndex < 0) fromIndex = 0;
   for (int i = fromIndex; i < MAX_PEQ_BANDS; i++) {
     state.filters[i].enabled = false;
     state.filters[i].frequency = 1000.0f;
@@ -720,11 +730,11 @@ void resetEQFilters(int fromIndex) {
     state.filters[i].q = 1.0f;
   }
   state.isDirty = true;
-  setEQFilters(state.filters, getConsecutiveActiveFilterCount());
+  applyEQFilters(EQ_MORPH_MS);
 }
 
 /*
- * Define I2C command handlers
+ * Define command handlers (invoked by the serial command router)
  */
 
 void handleSetSpeakerGains(const String& command, String* args, int argCount, OutputStream& stream) {
@@ -756,40 +766,32 @@ void handleSetVolume(const String& command, String* args, int argCount, OutputSt
   }
 }
 
+// Replies with the SD file list, framed as:
+//   FILES
+//   <one filename per line>
+//   EOT
 void handleGetFiles(const String& command, String* args, int argCount, OutputStream& stream) {
-  if (!sdCardInitialized) {
-    stream.write("ERROR: SD not initialized\n", 26);
-    return;
-  }
-  File root = SD.open("/");
+  stream.print("FILES\n");
 
-  if (!root) {
-    stream.write("ERROR: No SD card\n", 19);
-    return;
-  }
-  if (!root.isDirectory()) {
-    stream.write("ERROR: Not a directory\n", 24);
-    root.close();
-    return;
-  }
-
-  bool firstFile = true;
-  File file = root.openNextFile();
-  while (file) {
-    if (!file.isDirectory()) {
-      if (!firstFile) {
-        stream.write("\n", 1);
+  if (sdCardInitialized) {
+    File root = SD.open("/");
+    if (root && root.isDirectory()) {
+      File file = root.openNextFile();
+      while (file) {
+        if (!file.isDirectory()) {
+          stream.print(file.name());
+          stream.print("\n");
+        }
+        file.close();
+        file = root.openNextFile();
       }
-      stream.write(file.name(), strlen(file.name()));
-      firstFile = false;
     }
-    file.close();
-    file = root.openNextFile();
+    if (root) root.close();
+  } else {
+    Serial.println("getFiles: SD not initialized");
   }
-  root.close();
-  
-  // Add a final newline to mark the end of the file list
-  stream.write("\n", 1);
+
+  stream.print("EOT\n");
 }
 
 void handleSetInputGains(const String& command, String* args, int argCount, OutputStream& stream) {
@@ -906,19 +908,26 @@ void handleSetEQFilter(const String& command, String* args, int argCount, Output
     float gain = args[3].toFloat();
 
     if (index >= 0 && index < MAX_PEQ_BANDS) {
+      // A frequency of 0 (i.e. "setEq n 0 0 0") disables the band
+      bool enabled = frequency > 0.0f;
+
       // Update the central state
-      state.filters[index].enabled = true;
+      state.filters[index].enabled = enabled;
       state.filters[index].frequency = frequency;
       state.filters[index].q = q;
       state.filters[index].gain = gain;
       state.isDirty = true;
 
-      // Directly apply the change to the PEQ processors
-      peqLeft.setBand(index, frequency, gain, q, true);
-      peqRight.setBand(index, frequency, gain, q, true);
-
-      // Re-evaluate pre-EQ gain after a band is updated
-      setEQFilters(state.filters, 0);
+      // Morph smoothly to the new curve
+      applyEQFilters(EQ_MORPH_MS);
     }
   }
+}
+
+// Replies with the Teensy's uptime. The ESP polls this and re-syncs the DSP
+// state when uptime goes backwards (i.e. the Teensy rebooted).
+void handlePing(const String& command, String* args, int argCount, OutputStream& stream) {
+  char buffer[24];
+  int len = snprintf(buffer, sizeof(buffer), "PONG %lu\n", (unsigned long)millis());
+  stream.write(buffer, len);
 }

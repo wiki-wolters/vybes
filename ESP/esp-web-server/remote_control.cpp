@@ -127,10 +127,11 @@ void RemoteControl::loop() {
 void RemoteControl::handle_ir_code(uint64_t code) {
     IRACTION action = getAction(code);
     _last_ir_code_time = millis();
-    Serial.print("Received IR code: ");
-    serialPrintUint64(code, HEX);
-    Serial.print(", Action: ");
-    Serial.println(actionToString(action));
+    // Note: don't use IRutils' serialPrintUint64 here - it writes to Serial,
+    // which is the Teensy link now.
+    DebugSerial.printf("Received IR code: %08lX%08lX, Action: %s\n",
+                       (unsigned long)(code >> 32), (unsigned long)code,
+                       actionToString(action));
 
     switch (action) {
         case VOLUME_UP:
@@ -210,17 +211,17 @@ void RemoteControl::apply_preset() {
         scheduleConfigWrite();
 
         // Prepare data for WebSocket broadcast
-        DynamicJsonDocument doc(1024);
+        StaticJsonDocument<192> doc;
         doc["messageType"] = "activePresetChanged";
         doc["activePresetName"] = current_config.presets[current_config.active_preset_index].name;
         doc["activePresetIndex"] = current_config.active_preset_index;
-        
-        char ws_response_buffer[1024]; // Adjust size as needed
+
+        char ws_response_buffer[192];
         size_t len = serializeJson(doc, ws_response_buffer, sizeof(ws_response_buffer));
         if (len > 0 && len < sizeof(ws_response_buffer)) {
             broadcastWebSocket(ws_response_buffer);
         } else {
-            Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+            DebugSerial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
         }
     }
     _preset_selection_time = 0;

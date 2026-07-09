@@ -3,6 +3,11 @@
 
 #include <Arduino.h>
 
+// The Teensy link is UART0 (swapped to GPIO15/TX + GPIO13/RX in setup).
+// Debug output moves to Serial1 (GPIO2 / D4, TX only) - see docs/WIRING.md.
+#define TeensySerial Serial
+#define TEENSY_BAUD 115200
+
 // Speaker and Gain Commands
 #define CMD_SET_SPEAKER_GAINS "setSpeakerGains"
 #define CMD_SET_INPUT_GAINS "setInputGains"
@@ -32,32 +37,43 @@
 #define CMD_SET_BYPASS "setBypass"
 #define CMD_SET_MUTE "setMute"
 #define CMD_SET_MUTE_PERCENT "setMutePercent"
+#define CMD_PING "ping"
 
-// Global buffer for storing the last response from Teensy
-extern char teensyResponse[1024];
+// Maximum length of a single message, including trailing newline and null.
+// Longest realistic message is "setFir right <63-char filename>\n".
+#define TEENSY_MSG_MAX 80
 
-// Send a command to the Teensy
-// command: The command name (use the CMD_* constants from this file)
-// param1: First parameter (optional)
-// param2: Second parameter (optional)
-// param3: Third parameter (optional)
-// Returns: true if successful, false otherwise
-// Response is stored in the teensyResponse global variable
-bool sendToTeensy(const char* command, const String& param1 = "", 
-                 const String& param2 = "", const String& param3 = "", const String& param4 = "");
+// Initialise the UART link. Call once from setup() after TeensySerial is up.
+void initTeensyComm();
 
-// New overload for C-style strings to avoid String allocations
-bool sendToTeensy(const char* command, const char* param1 = nullptr, 
-                 const char* param2 = nullptr, const char* param3 = nullptr, const char* param4 = nullptr);
+// Queue a command for the Teensy. Never blocks: messages are drained from
+// loop() by teensyCommLoop() as UART buffer space allows. Commands that set
+// the same parameter (same command, and same slot for setEq/setFir)
+// coalesce, so rapid UI updates don't flood the link.
+// Returns false only if the queue is full.
+bool sendToTeensy(const char* command, const char* param1 = nullptr,
+                  const char* param2 = nullptr, const char* param3 = nullptr,
+                  const char* param4 = nullptr);
 
+// Overload for String parameters. Empty strings are treated as absent.
+bool sendToTeensy(const char* command, const String& param1,
+                  const String& param2 = "", const String& param3 = "", const String& param4 = "");
 
 // Helper functions for common command types
 void sendOnOffToTeensy(const char* command, bool on);
 void sendIntToTeensy(const char* command, int value);
 void sendFloatToTeensy(const char* command, float value);
-void sendStringToTeensy(const char* command, const char* value); // Changed to const char*
-void sendStringToTeensy(const char* command, const String& value); // Keep overload for compatibility
+void sendStringToTeensy(const char* command, const char* value);
+void sendStringToTeensy(const char* command, const String& value);
 
-char* requestFromTeensy(const char* command);
+// Drains the outgoing queue, reads incoming lines (events, ping replies,
+// file lists) and handles Teensy reboot detection. Call from loop() only.
+void teensyCommLoop();
+
+// The SD file list is fetched asynchronously and cached (requested at boot,
+// when the Teensy reboots, and by requestFirFilesRefresh). Returns a
+// newline-separated list; empty string if nothing cached yet.
+const char* getCachedFirFiles();
+void requestFirFilesRefresh();
 
 #endif // TEENSY_COMM_H

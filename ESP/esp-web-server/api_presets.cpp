@@ -68,7 +68,7 @@ void handleGetPreset(AsyncWebServerRequest *request) {
     doc["isPreferenceEQEnabled"] = preset.EQEnabled;
     JsonArray preferenceCurve = doc.createNestedArray("preferenceEQ");
     for(int i=0; i < MAX_PEQ_SETS; i++) {
-        if(preset.preference_curve[i].spl > 0 || i == 0) {
+        if(preset.preference_curve[i].spl != -1) {
             JsonObject peqSet = preferenceCurve.createNestedObject();
             peqSet["spl"] = preset.preference_curve[i].spl;
             JsonArray peqs = peqSet.createNestedArray("peqs");
@@ -260,16 +260,16 @@ void handlePutActivePreset(AsyncWebServerRequest *request) {
     request->send(200, "application/json", "{}"); // HTTP response
 
     // Prepare data for WebSocket broadcast
-    DynamicJsonDocument doc(1024);
+    StaticJsonDocument<192> doc;
     doc["messageType"] = "activePresetChanged";
     doc["activePresetName"] = current_config.presets[current_config.active_preset_index].name;
     doc["activePresetIndex"] = current_config.active_preset_index;
-    char responseBuffer[1024]; // Adjust size as needed
+    char responseBuffer[192];
     size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
     if (len > 0 && len < sizeof(responseBuffer)) {
         broadcastWebSocket(responseBuffer);
     } else {
-        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+        DebugSerial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
     }
 }
 
@@ -295,24 +295,19 @@ void handlePutPresetDelayEnabled(AsyncWebServerRequest *request) {
     bool enabled = (state == "on");
     current_config.presets[presetIndex].delayEnabled = enabled;
     scheduleConfigWrite();
-    
-    // Send command to Teensy
-    sendOnOffToTeensy(CMD_SET_DELAY_ENABLED, enabled);
-    
+
+    // Send command to Teensy only when editing the active preset
+    if (presetIndex == current_config.active_preset_index) {
+        sendOnOffToTeensy(CMD_SET_DELAY_ENABLED, enabled);
+    }
+
     // Prepare response
-    DynamicJsonDocument doc(1024);
+    StaticJsonDocument<192> doc;
+    doc["messageType"] = "delayEnabledChanged";
+    doc["presetName"] = presetName;
     doc["status"] = "ok";
     doc["enabled"] = enabled;
-    char responseBuffer[1024]; // Adjust size as needed
-    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
-    if (len > 0 && len < sizeof(responseBuffer)) {
-        request->send(200, "application/json", responseBuffer);
-        // Broadcast update
-        broadcastWebSocket(responseBuffer);
-    } else {
-        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
-        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
-    }
+    sendJsonAndBroadcast(request, doc);
 }
 
 void handlePutPresetDelayNamed(AsyncWebServerRequest *request) {
@@ -351,27 +346,22 @@ void handlePutPresetDelayNamed(AsyncWebServerRequest *request) {
     }
     
     scheduleConfigWrite();
-    
-    // Send command to Teensy
-    sendToTeensy(CMD_SET_DELAYS,
-        String(current_config.presets[presetIndex].delay.left, 2),
-        String(current_config.presets[presetIndex].delay.right, 2),
-        String(current_config.presets[presetIndex].delay.sub, 2));
-    
+
+    // Send command to Teensy only when editing the active preset
+    if (presetIndex == current_config.active_preset_index) {
+        sendToTeensy(CMD_SET_DELAYS,
+            String((int)current_config.presets[presetIndex].delay.left),
+            String((int)current_config.presets[presetIndex].delay.right),
+            String((int)current_config.presets[presetIndex].delay.sub));
+    }
+
     // Prepare response
-    DynamicJsonDocument doc(1024);
+    StaticJsonDocument<192> doc;
+    doc["messageType"] = "delayChanged";
+    doc["presetName"] = presetName;
     doc["status"] = "ok";
     doc["speaker"] = speaker;
     doc["delayUs"] = delayUs;
-    char responseBuffer[1024]; // Adjust size as needed
-    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
-    if (len > 0 && len < sizeof(responseBuffer)) {
-        request->send(200, "application/json", responseBuffer);
-        // Broadcast update
-        broadcastWebSocket(responseBuffer);
-    } else {
-        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
-        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
-    }
+    sendJsonAndBroadcast(request, doc);
 }
 

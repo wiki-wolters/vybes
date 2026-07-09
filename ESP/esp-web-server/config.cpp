@@ -1,3 +1,4 @@
+#include "globals.h"
 #include "config.h"
 #include "teensy_comm.h"
 #include "screen.h"
@@ -10,21 +11,25 @@ Config current_config;
 const char* CONFIG_FILE = "/config.msgpack";
 
 bool load_config() {
-    if (!LittleFS.exists(CONFIG_FILE)) {
-        Serial.println("Config file not found, using defaults");
+    return load_config_from(CONFIG_FILE);
+}
+
+bool load_config_from(const char* path) {
+    if (!LittleFS.exists(path)) {
+        DebugSerial.println("Config file not found, using defaults");
         return false;
     }
 
-    File file = LittleFS.open(CONFIG_FILE, "r");
+    File file = LittleFS.open(path, "r");
     if (!file) {
-        Serial.println("Failed to open config file for reading");
+        DebugSerial.println("Failed to open config file for reading");
         return false;
     }
 
     // Create a buffer to hold the MessagePack data
     size_t fileSize = file.size();
     if (fileSize == 0) {
-        Serial.println("Config file is empty");
+        DebugSerial.println("Config file is empty");
         file.close();
         return false;
     }
@@ -38,15 +43,15 @@ bool load_config() {
     DeserializationError error = deserializeMsgPack(doc, buffer.get(), fileSize);
     
     if (error) {
-        Serial.print("Failed to deserialize config: ");
-        Serial.println(error.c_str());
+        DebugSerial.print("Failed to deserialize config: ");
+        DebugSerial.println(error.c_str());
         return false;
     }
 
     // Load version and check compatibility
     uint8_t file_version = doc["version"] | 1; // Default to version 1 if not present
     if (file_version > CONFIG_CURRENT_VERSION) {
-        Serial.println("Config file version is newer than supported, using defaults");
+        DebugSerial.println("Config file version is newer than supported, using defaults");
         return false;
     }
 
@@ -78,6 +83,15 @@ bool load_config() {
         JsonObject gains = doc["inputGains"];
         current_config.inputGains.spdif = gains["spdif"] | 1.0f;
         current_config.inputGains.bluetooth = gains["bluetooth"] | 1.0f;
+        current_config.inputGains.usb = gains["usb"] | 1.0f;
+        current_config.inputGains.tone = gains["tone"] | 0.0f;
+    }
+
+    // Reset all presets to defaults so fields absent from the file (and
+    // stale state from a previous config, e.g. during a restore) don't leak through
+    for (int i = 0; i < MAX_PRESETS; i++) {
+        current_config.presets[i] = Preset();
+        current_config.presets[i].name[0] = '\0';
     }
 
     // Load presets
@@ -85,7 +99,7 @@ bool load_config() {
         JsonArray presets = doc["presets"];
         for (int i = 0; i < MAX_PRESETS && i < presets.size(); i++) {
             JsonObject preset = presets[i];
-            
+
             // Load preset name
             const char* name = preset["name"];
             if (name) {
@@ -130,7 +144,10 @@ bool load_config() {
                     for (int j = 0; j < MAX_PEQ_SETS && j < peqSets.size(); j++) {
                         JsonObject peqSet = peqSets[j];
                         current_config.presets[i].preference_curve[j].spl = peqSet["spl"] | 0;
-                        current_config.presets[i].preference_curve[j].num_points = peqSet["num_points"] | 0;
+                        int num_points = peqSet["num_points"] | 0;
+                        if (num_points < 0) num_points = 0;
+                        if (num_points > MAX_PEQ_POINTS) num_points = MAX_PEQ_POINTS;
+                        current_config.presets[i].preference_curve[j].num_points = num_points;
                         
                         if (peqSet.containsKey("points")) {
                             JsonArray points = peqSet["points"];
@@ -156,12 +173,12 @@ bool load_config() {
         }
     }
 
-    Serial.println("Config loaded successfully");
+    DebugSerial.println("Config loaded successfully");
     return true;
 }
 
 void save_config() {
-    Serial.println("Saving configuration to LittleFS...");
+    DebugSerial.println("Saving configuration to LittleFS...");
     
     // Create JSON document
     DynamicJsonDocument doc(8192); // Adjust size as needed
@@ -186,6 +203,8 @@ void save_config() {
     JsonObject inputGains = doc.createNestedObject("inputGains");
     inputGains["spdif"] = current_config.inputGains.spdif;
     inputGains["bluetooth"] = current_config.inputGains.bluetooth;
+    inputGains["usb"] = current_config.inputGains.usb;
+    inputGains["tone"] = current_config.inputGains.tone;
 
     // Save presets
     JsonArray presets = doc.createNestedArray("presets");
@@ -241,27 +260,40 @@ void save_config() {
         }
     }
 
-    // Serialize to MessagePack
-    File file = LittleFS.open(CONFIG_FILE, "w");
+    // Serialize to MessagePack. Write to a temp file first, then rename over
+    // the live config so a power loss mid-write can't corrupt it.
+    const char* tmpFile = "/config.tmp";
+    File file = LittleFS.open(tmpFile, "w");
     if (!file) {
-        Serial.println("Failed to open config file for writing");
+        DebugSerial.println("Failed to open temp config file for writing");
         return;
     }
 
     size_t bytesWritten = serializeMsgPack(doc, file);
     file.close();
-    
-    if (bytesWritten > 0) {
-        Serial.print("Config saved successfully, ");
-        Serial.print(bytesWritten);
-        Serial.println(" bytes written");
-    } else {
-        Serial.println("Failed to write config file");
+
+    if (bytesWritten == 0) {
+        DebugSerial.println("Failed to write config file");
+        LittleFS.remove(tmpFile);
+        return;
     }
+
+    if (!LittleFS.rename(tmpFile, CONFIG_FILE)) {
+        // Some FS implementations refuse to rename over an existing file
+        LittleFS.remove(CONFIG_FILE);
+        if (!LittleFS.rename(tmpFile, CONFIG_FILE)) {
+            DebugSerial.println("Failed to move temp config into place");
+            return;
+        }
+    }
+
+    DebugSerial.print("Config saved successfully, ");
+    DebugSerial.print(bytesWritten);
+    DebugSerial.println(" bytes written");
 }
 
 void reset_config_to_defaults() {
-    Serial.println("Resetting configuration to defaults...");
+    DebugSerial.println("Resetting configuration to defaults...");
     
     current_config.version = CONFIG_CURRENT_VERSION;
     current_config.active_preset_index = 0;
@@ -278,6 +310,8 @@ void reset_config_to_defaults() {
     current_config.speakerGains.sub = 1.0f;
     current_config.inputGains.spdif = 1.0f;
     current_config.inputGains.bluetooth = 1.0f;
+    current_config.inputGains.usb = 1.0f;
+    current_config.inputGains.tone = 0.0f;
 
     // Initialize the first preset as 'Default'
     strcpy(current_config.presets[0].name, "Default");
@@ -290,12 +324,13 @@ void reset_config_to_defaults() {
     current_config.presets[0].FIRFiltersEnabled = false;
     current_config.presets[0].FIRFilters = FIRFilter();
     
-    // Initialize PEQ sets for the default preset
+    // Initialize PEQ sets for the default preset (spl == -1 means unused)
     for (int j = 0; j < MAX_PEQ_SETS; j++) {
         current_config.presets[0].preference_curve[j] = PEQSet();
     }
-    
-    // Set first 3 default points
+
+    // Set first 3 default points in the spl=0 set
+    current_config.presets[0].preference_curve[0].spl = 0;
     for (int k = 0; k < 3; k++) {
         current_config.presets[0].preference_curve[0].points[k] = PEQPoint();
         current_config.presets[0].preference_curve[0].points[k].freq = 100 * pow(10, k);
@@ -311,7 +346,7 @@ void reset_config_to_defaults() {
 void init_config() {
     // Initialize LittleFS
     if (!LittleFS.begin()) {
-        Serial.println("Failed to initialize LittleFS");
+        DebugSerial.println("Failed to initialize LittleFS");
         reset_config_to_defaults();
         return;
     }
@@ -329,49 +364,69 @@ void init_config() {
 
 
 
+void sendEqPointToTeensy(int index, const PEQPoint& point) {
+    char idStr[8];
+    snprintf(idStr, sizeof(idStr), "%d", index);
+    char pointData[40];
+    snprintf(pointData, sizeof(pointData), "%.1f %.2f %.2f", point.freq, point.q, point.gain);
+    sendToTeensy(CMD_SET_EQ_FILTER, idStr, pointData);
+}
+
 void updateTeensyWithActivePresetParameters() {
     Preset* activePreset = &current_config.presets[current_config.active_preset_index];
 
     //Update displayed preset name
-    Serial.print("Updating screen: ");Serial.print(current_config.active_preset_index);Serial.print(" ");Serial.println(activePreset->name);
+    DebugSerial.print("Updating screen: ");DebugSerial.print(current_config.active_preset_index);DebugSerial.print(" ");DebugSerial.println(activePreset->name);
     writeToScreen(activePreset->name);
 
-    // Send delay settings
-    sendToTeensy(CMD_SET_DELAYS, 
-        String((int)activePreset->delay.left),
-        String((int)activePreset->delay.right),
-        String((int)activePreset->delay.sub));
+    char a[16], b[16], c[16], d[16];
+
+    // Send delay settings (microseconds)
+    snprintf(a, sizeof(a), "%d", (int)activePreset->delay.left);
+    snprintf(b, sizeof(b), "%d", (int)activePreset->delay.right);
+    snprintf(c, sizeof(c), "%d", (int)activePreset->delay.sub);
+    sendToTeensy(CMD_SET_DELAYS, a, b, c);
     sendOnOffToTeensy(CMD_SET_DELAY_ENABLED, activePreset->delayEnabled);
-    
+
     // Send crossover settings
     sendFloatToTeensy(CMD_SET_CROSSOVER_FREQ, activePreset->crossoverFreq);
     sendOnOffToTeensy(CMD_SET_CROSSOVER_ENABLED, activePreset->crossoverEnabled);
-    
-    // Send EQ settings
+
+    // Send EQ settings. Points are always sent (even when EQ is disabled) so
+    // the Teensy has the right curve the moment EQ is enabled.
     sendOnOffToTeensy(CMD_SET_EQ_ENABLED, activePreset->EQEnabled);
-    if (activePreset->EQEnabled) {
-        // Send preference curve EQ points for all SPL sets
-        for (int i = 0; i < MAX_PEQ_SETS; i++) {
-            if (activePreset->preference_curve[i].spl != -1) {
-                // Send all EQ points for this SPL set
-                for (int j = 0; j < activePreset->preference_curve[i].num_points; j++) {
-                    String pointData = String(activePreset->preference_curve[i].points[j].freq, 1) + " " +
-                                     String(activePreset->preference_curve[i].points[j].q, 2) + " " +
-                                     String(activePreset->preference_curve[i].points[j].gain, 2);
-                    sendToTeensy(CMD_SET_EQ_FILTER, String(j), pointData);
-                }
+    int num_points = 0;
+    for (int i = 0; i < MAX_PEQ_SETS; i++) {
+        if (activePreset->preference_curve[i].spl == 0) {
+            const PEQSet& set = activePreset->preference_curve[i];
+            for (int j = 0; j < set.num_points; j++) {
+                sendEqPointToTeensy(j, set.points[j]);
             }
+            num_points = set.num_points;
+            break;
         }
     }
-    
-    // Send volume
+    // Disable all bands beyond the active points
+    snprintf(a, sizeof(a), "%d", num_points);
+    sendToTeensy(CMD_RESET_EQ_FILTERS, a);
+
+    // Send volume and mute state
     sendFloatToTeensy(CMD_SET_VOLUME, current_config.volume / 100.0f);
+    sendOnOffToTeensy(CMD_SET_MUTE, current_config.muted);
+    sendFloatToTeensy(CMD_SET_MUTE_PERCENT, current_config.mutePercent);
 
     // Send preset gains
-    sendToTeensy(CMD_SET_SPEAKER_GAINS, 
-        String(activePreset->gains.left, 2),
-        String(activePreset->gains.right, 2),
-        String(activePreset->gains.sub, 2));
+    snprintf(a, sizeof(a), "%.2f", activePreset->gains.left);
+    snprintf(b, sizeof(b), "%.2f", activePreset->gains.right);
+    snprintf(c, sizeof(c), "%.2f", activePreset->gains.sub);
+    sendToTeensy(CMD_SET_SPEAKER_GAINS, a, b, c);
+
+    // Send input gains (order matches Teensy handler: bluetooth, spdif/optical, usb, tone)
+    snprintf(a, sizeof(a), "%.2f", current_config.inputGains.bluetooth);
+    snprintf(b, sizeof(b), "%.2f", current_config.inputGains.spdif);
+    snprintf(c, sizeof(c), "%.2f", current_config.inputGains.usb);
+    snprintf(d, sizeof(d), "%.2f", current_config.inputGains.tone);
+    sendToTeensy(CMD_SET_INPUT_GAINS, a, b, c, d);
 
     // Send FIR filter settings
     sendOnOffToTeensy(CMD_SET_FIR_ENABLED, activePreset->FIRFiltersEnabled);
@@ -405,7 +460,7 @@ bool config_set_preset_gains(const String& presetName, const JsonObject& gains) 
             current_config.presets[i].gains.left = gains["left"].as<float>() / 100.0f;
             current_config.presets[i].gains.right = gains["right"].as<float>() / 100.0f;
             current_config.presets[i].gains.sub = gains["sub"].as<float>() / 100.0f;
-            save_config();
+            scheduleConfigWrite();
             if (i == current_config.active_preset_index) {
                 Preset* activePreset = &current_config.presets[current_config.active_preset_index];
                 sendToTeensy(CMD_SET_SPEAKER_GAINS, 

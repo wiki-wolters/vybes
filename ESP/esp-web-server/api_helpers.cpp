@@ -1,4 +1,7 @@
+#include "globals.h"
 #include "config.h"
+#include "api_helpers.h"
+#include "websocket.h"
 #include <string.h>
 
 /**
@@ -26,4 +29,16 @@ int find_empty_preset_slot() {
         }
     }
     return -1;
+}
+
+void sendJsonAndBroadcast(AsyncWebServerRequest* request, const JsonDocument& doc) {
+    char buffer[256];
+    size_t len = serializeJson(doc, buffer, sizeof(buffer));
+    if (len > 0 && len < sizeof(buffer)) {
+        request->send(200, "application/json", buffer);
+        broadcastWebSocket(buffer);
+    } else {
+        request->send(500, "application/json", "{\"error\":\"Response buffer too small\"}");
+        DebugSerial.println("Error serializing JSON response: buffer too small.");
+    }
 }

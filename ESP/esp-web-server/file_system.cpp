@@ -23,10 +23,10 @@ void copyFile(const char* sourcePath, const char* destPath) {
 
 void initLittleFS() {
     if (!LittleFS.begin()) {
-        Serial.println("LittleFS mount failed, formatting...");
+        DebugSerial.println("LittleFS mount failed, formatting...");
         LittleFS.format();
         if (!LittleFS.begin()) {
-            Serial.println("LittleFS format failed!");
+            DebugSerial.println("LittleFS format failed!");
             ESP.restart();
         }
     }

@@ -24,20 +24,25 @@ void handleBackup(AsyncWebServerRequest *request) {
 }
 
 void handleRestoreUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+    static const char* RESTORE_TMP = "/config.restore";
     static File restoreFile;
+    static bool restoreError;
+
     if (!index) {
-        Serial.printf("Restore started: %s\n", filename.c_str());
-        restoreFile = LittleFS.open(CONFIG_FILE, "w");
+        DebugSerial.printf("Restore started: %s\n", filename.c_str());
+        restoreError = false;
+        // Upload into a temp file so a bad/aborted upload can't destroy the live config
+        restoreFile = LittleFS.open(RESTORE_TMP, "w");
         if (!restoreFile) {
-            request->send(500, "text/plain", "Error opening file for writing");
-            return;
+            restoreError = true;
         }
     }
 
-    if (len) {
+    if (!restoreError && len) {
         if (restoreFile.write(data, len) != len) {
-            request->send(500, "text/plain", "Error writing to file");
-            return;
+            restoreError = true;
+            restoreFile.close();
+            LittleFS.remove(RESTORE_TMP);
         }
     }
 
@@ -45,9 +50,32 @@ void handleRestoreUpload(AsyncWebServerRequest *request, String filename, size_t
         if (restoreFile) {
             restoreFile.close();
         }
-        Serial.printf("Restore finished: %s, %u B\n", filename.c_str(), index + len);
+        if (restoreError) {
+            request->send(500, "text/plain", "Error writing uploaded configuration");
+            return;
+        }
+        DebugSerial.printf("Restore finished: %s, %u B\n", filename.c_str(), index + len);
+
+        // Validate by loading it. On failure the previous config file is
+        // untouched; reload it to undo any partial changes to current_config.
+        if (!load_config_from(RESTORE_TMP)) {
+            LittleFS.remove(RESTORE_TMP);
+            load_config();
+            request->send(400, "text/plain", "Invalid configuration file - restore aborted");
+            return;
+        }
+
+        // Valid: make it the live config file
+        if (!LittleFS.rename(RESTORE_TMP, CONFIG_FILE)) {
+            LittleFS.remove(CONFIG_FILE);
+            LittleFS.rename(RESTORE_TMP, CONFIG_FILE);
+        }
+
+        // Apply the restored state to the DSP
+        updateTeensyWithActivePresetParameters();
+        loadFirFilters();
+
         request->send(200, "text/plain", "Configuration restored successfully.");
-        load_config();
     }
 }
 
@@ -140,5 +168,5 @@ void setupWebServer() {
     });
 
     server.begin();
-    Serial.println("HTTP server started on port 80");
+    DebugSerial.println("HTTP server started on port 80");
 }

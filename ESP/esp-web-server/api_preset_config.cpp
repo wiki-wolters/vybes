@@ -5,9 +5,33 @@
 #include "teensy_comm.h"
 #include "config.h"
 #include "api_helpers.h"
-#include "config.h"
 #include <string.h>
 #include <ArduinoJson.h>
+
+// Find the preference-curve set for spl=0, creating it in a free slot if
+// needed. Returns nullptr when all slots are taken by other SPL values.
+static PEQSet* getOrCreateSpl0Set(Preset* preset) {
+    PEQSet* sets = preset->preference_curve;
+    for (int i = 0; i < MAX_PEQ_SETS; i++) {
+        if (sets[i].spl == 0) {
+            return &sets[i];
+        }
+    }
+    for (int i = 0; i < MAX_PEQ_SETS; i++) {
+        if (sets[i].spl == -1) { // free slot
+            sets[i].spl = 0;
+            sets[i].num_points = 0;
+            return &sets[i];
+        }
+    }
+    return nullptr;
+}
+
+static float clampf(float value, float lo, float hi) {
+    if (value < lo) return lo;
+    if (value > hi) return hi;
+    return value;
+}
 
 void handlePutPresetCrossover(AsyncWebServerRequest *request) {
     if (!request->hasParam("preset_name") || !request->hasParam("frequency")) {
@@ -33,24 +57,18 @@ void handlePutPresetCrossover(AsyncWebServerRequest *request) {
     // Update the preset
     current_config.presets[presetIndex].crossoverFreq = freq;
     scheduleConfigWrite();
-    
-    // Send crossover frequency to Teensy
-    sendFloatToTeensy(CMD_SET_CROSSOVER_FREQ, freq);
-    
-    // Prepare and send response
-    DynamicJsonDocument doc(1024);
+
+    // Only push to the Teensy when the edited preset is the active one
+    if (presetIndex == current_config.active_preset_index) {
+        sendFloatToTeensy(CMD_SET_CROSSOVER_FREQ, freq);
+    }
+
+    StaticJsonDocument<192> doc;
+    doc["messageType"] = "crossoverChanged";
+    doc["presetName"] = presetName;
     doc["status"] = "ok";
     doc["crossoverFreq"] = freq;
-    char responseBuffer[1024]; // Adjust size as needed
-    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
-    if (len > 0 && len < sizeof(responseBuffer)) {
-        request->send(200, "application/json", responseBuffer);
-        // Broadcast update
-        broadcastWebSocket(responseBuffer);
-    } else {
-        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
-        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
-    }
+    sendJsonAndBroadcast(request, doc);
 }
 
 void handlePutPresetCrossoverEnabled(AsyncWebServerRequest *request) {
@@ -60,12 +78,12 @@ void handlePutPresetCrossoverEnabled(AsyncWebServerRequest *request) {
     }
     String presetName = request->getParam("preset_name")->value();
     String state = request->getParam("enabled")->value();
-    
+
     if (state != "on" && state != "off") {
         request->send(400, "text/plain", "Invalid state");
         return;
     }
-    
+
     bool enabled = (state == "on");
 
     int presetIndex = find_preset_by_name(presetName.c_str());
@@ -77,24 +95,17 @@ void handlePutPresetCrossoverEnabled(AsyncWebServerRequest *request) {
     // Update the preset
     current_config.presets[presetIndex].crossoverEnabled = enabled;
     scheduleConfigWrite();
-    
-    // Send crossover enable/disable to Teensy
-    sendOnOffToTeensy(CMD_SET_CROSSOVER_ENABLED, enabled);
-    
-    // Prepare and send response
-    DynamicJsonDocument doc(1024);
+
+    if (presetIndex == current_config.active_preset_index) {
+        sendOnOffToTeensy(CMD_SET_CROSSOVER_ENABLED, enabled);
+    }
+
+    StaticJsonDocument<192> doc;
+    doc["messageType"] = "crossoverEnabledChanged";
+    doc["presetName"] = presetName;
     doc["status"] = "ok";
     doc["crossoverEnabled"] = enabled;
-    char responseBuffer[1024]; // Adjust size as needed
-    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
-    if (len > 0 && len < sizeof(responseBuffer)) {
-        request->send(200, "application/json", responseBuffer);
-        // Broadcast update
-        broadcastWebSocket(responseBuffer);
-    } else {
-        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
-        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
-    }
+    sendJsonAndBroadcast(request, doc);
 }
 
 void handlePutPresetEQPoints(AsyncWebServerRequest *request, JsonVariant &json) {
@@ -103,7 +114,6 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, JsonVariant &json) 
         return;
     }
     String presetName = request->getParam("preset_name")->value();
-    const int spl = 0; // Hardcoded SPL
 
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
@@ -112,99 +122,71 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, JsonVariant &json) 
     }
 
     Preset* preset = &current_config.presets[presetIndex];
-    PEQSet* sets = preset->preference_curve;
-
-    int set_index = -1;
-    for (int i = 0; i < MAX_PEQ_SETS; i++) {
-        if (sets[i].spl == spl) {
-            set_index = i;
-            break;
-        }
-    }
-
-    // If spl=0 set doesn't exist, create it.
-    if (set_index == -1) {
-        for (int i = 0; i < MAX_PEQ_SETS; i++) {
-            if (sets[i].spl == -1) { // find empty slot
-                set_index = i;
-                sets[i].spl = spl;
-                sets[i].num_points = 0;
-                break;
-            }
-        }
-    }
-
-    if (set_index == -1) {
+    PEQSet* target_set = getOrCreateSpl0Set(preset);
+    if (target_set == nullptr) {
         request->send(507, "text/plain", "No available EQ set slots to create default spl=0 set.");
         return;
     }
 
-    PEQSet* target_set = &sets[set_index];
-
     JsonArray pointsArray = json.as<JsonArray>();
-    if (pointsArray.size() > MAX_PEQ_POINTS) {
+    if (pointsArray.isNull()) {
+        request->send(400, "text/plain", "Expected a JSON array of PEQ points");
+        return;
+    }
+    if ((int)pointsArray.size() > MAX_PEQ_POINTS) {
         request->send(400, "text/plain", "Too many PEQ points");
         return;
     }
-    
-    target_set->num_points = pointsArray.size();
+
+    // Points are stored sequentially: array order defines the band index.
+    int prev_num_points = target_set->num_points;
+    int count = 0;
+    bool changed[MAX_PEQ_POINTS];
 
     for (JsonObject point : pointsArray) {
-        int id = point["id"].as<int>();
-        if (id >= MAX_PEQ_POINTS) {
-            Serial.printf("Error: PEQ point ID %d is out of bounds. Max is %d.\n", id, MAX_PEQ_POINTS - 1);
-            continue; 
-        }
+        float new_freq = clampf(point["freq"] | 1000.0f, 20.0f, 20000.0f);
+        float new_gain = clampf(point["gain"] | 0.0f, -15.0f, 15.0f);
+        float new_q    = clampf(point["q"] | 1.0f, 0.1f, 10.0f);
 
-        float new_freq = point["freq"].as<float>();
-        float new_gain = point["gain"].as<float>();
-        float new_q = point["q"].as<float>();
-
-        if (new_freq != target_set->points[id].freq ||
-            new_gain != target_set->points[id].gain ||
-            new_q != target_set->points[id].q
-        ) {
-            target_set->points[id].freq = new_freq;
-            target_set->points[id].gain = new_gain;
-            target_set->points[id].q    = new_q;
-            
-            char id_str[4];
-            snprintf(id_str, sizeof(id_str), "%d", id);
-
-            char pointData[32];
-            // Use snprintf to format the point data into a single buffer
-            snprintf(pointData, sizeof(pointData), "%.1f %.2f %.2f", new_freq, new_q, new_gain);
-
-            sendToTeensy(CMD_SET_EQ_FILTER, id_str, pointData);
-        }
+        PEQPoint& stored = target_set->points[count];
+        changed[count] = (count >= prev_num_points) ||
+                         (new_freq != stored.freq) ||
+                         (new_gain != stored.gain) ||
+                         (new_q != stored.q);
+        stored.freq = new_freq;
+        stored.gain = new_gain;
+        stored.q = new_q;
+        count++;
     }
-
-    // Disable remaining filters
-    for (int i = pointsArray.size(); i < MAX_PEQ_POINTS; i++) {
-        char id_str[4];
-        snprintf(id_str, sizeof(id_str), "%d", i);
-        sendToTeensy(CMD_SET_EQ_FILTER, id_str, "0 0 0");
-    }
-
+    target_set->num_points = count;
     scheduleConfigWrite();
-    
-request->send(204);
 
-    // Prepare and send response
-    DynamicJsonDocument responseDoc(1024);
+    if (presetIndex == current_config.active_preset_index) {
+        // Queue only the points that actually changed...
+        for (int i = 0; i < count; i++) {
+            if (changed[i]) {
+                sendEqPointToTeensy(i, target_set->points[i]);
+            }
+        }
+        // ...and disable every band beyond the active points with a single command
+        char fromIndex[8];
+        snprintf(fromIndex, sizeof(fromIndex), "%d", count);
+        sendToTeensy(CMD_RESET_EQ_FILTERS, fromIndex);
+    }
+
+    request->send(204);
+
+    StaticJsonDocument<192> responseDoc;
+    responseDoc["messageType"] = "eqPointsChanged";
+    responseDoc["presetName"] = presetName;
     responseDoc["status"] = "ok";
-    responseDoc["eqType"] = "pref"; // Hardcoded
-    responseDoc["spl"] = spl;
+    responseDoc["eqType"] = "pref";
+    responseDoc["spl"] = 0;
     responseDoc["numPoints"] = target_set->num_points;
-    char responseBuffer[1024]; // Adjust size as needed
-    size_t len = serializeJson(responseDoc, responseBuffer, sizeof(responseBuffer));
-    if (len > 0 && len < sizeof(responseBuffer)) {
-        // request->send(200, "application/json", responseBuffer);
-        // Broadcast update
-        broadcastWebSocket(responseBuffer);
-    } else {
-        // request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
-        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+    char buffer[192];
+    size_t len = serializeJson(responseDoc, buffer, sizeof(buffer));
+    if (len > 0 && len < sizeof(buffer)) {
+        broadcastWebSocket(buffer);
     }
 }
 
@@ -214,26 +196,44 @@ void handlePutPresetEQPoint(AsyncWebServerRequest *request, JsonVariant &json) {
         return;
     }
     String presetName = request->getParam("preset_name")->value();
-    JsonObject point = json.as<JsonObject>();
 
-    int id = point["id"].as<int>();
-    if (id >= MAX_PEQ_POINTS) {
-        Serial.printf("Error: PEQ point ID %d is out of bounds. Max is %d.\n", id, MAX_PEQ_POINTS - 1);
+    int presetIndex = find_preset_by_name(presetName.c_str());
+    if (presetIndex == -1) {
+        request->send(404, "text/plain", "Preset not found");
+        return;
+    }
+
+    JsonObject point = json.as<JsonObject>();
+    if (point.isNull()) {
+        request->send(400, "text/plain", "Expected a JSON PEQ point object");
+        return;
+    }
+
+    int id = point["id"] | -1;
+    if (id < 0 || id >= MAX_PEQ_POINTS) {
         request->send(400, "text/plain", "PEQ point ID out of bounds");
         return;
     }
 
-    float new_freq = point["freq"].as<float>();
-    float new_gain = point["gain"].as<float>();
-    float new_q = point["q"].as<float>();
+    Preset* preset = &current_config.presets[presetIndex];
+    PEQSet* target_set = getOrCreateSpl0Set(preset);
+    if (target_set == nullptr) {
+        request->send(507, "text/plain", "No available EQ set slots to create default spl=0 set.");
+        return;
+    }
 
-    char id_str[4];
-    snprintf(id_str, sizeof(id_str), "%d", id);
+    PEQPoint& stored = target_set->points[id];
+    stored.freq = clampf(point["freq"] | 1000.0f, 20.0f, 20000.0f);
+    stored.gain = clampf(point["gain"] | 0.0f, -15.0f, 15.0f);
+    stored.q    = clampf(point["q"] | 1.0f, 0.1f, 10.0f);
+    if (id >= target_set->num_points) {
+        target_set->num_points = id + 1;
+    }
+    scheduleConfigWrite();
 
-    char pointData[32];
-    snprintf(pointData, sizeof(pointData), "%.1f %.2f %.2f", new_freq, new_q, new_gain);
-
-    sendToTeensy(CMD_SET_EQ_FILTER, id_str, pointData);
+    if (presetIndex == current_config.active_preset_index) {
+        sendEqPointToTeensy(id, stored);
+    }
 
     request->send(204);
 }
@@ -245,69 +245,36 @@ void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
     }
     String presetName = request->getParam("preset_name")->value();
     String state = request->getParam("enabled")->value();
-    
+
     if (state != "on" && state != "off") {
         request->send(400, "text/plain", "Invalid state. Must be 'on' or 'off'");
         return;
     }
-    
+
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
         request->send(404, "text/plain", "Preset not found");
         return;
     }
-    
+
     Preset* preset = &current_config.presets[presetIndex];
-    PEQSet* sets = preset->preference_curve;
-
-    // Check if a PEQ set with spl=0 exists.
-    bool spl0_exists = false;
-    for (int i = 0; i < MAX_PEQ_SETS; i++) {
-        if (sets[i].spl == 0) {
-            spl0_exists = true;
-            break;
-        }
-    }
-
-    if (!spl0_exists) {
-        // Find an empty slot to create the spl=0 set.
-        int empty_slot = -1;
-        for (int i = 0; i < MAX_PEQ_SETS; i++) {
-            if (sets[i].spl == -1) {
-                empty_slot = i;
-                break;
-            }
-        }
-
-        if (empty_slot != -1) {
-            sets[empty_slot].spl = 0;
-            sets[empty_slot].num_points = 0;
-        } else {
-            request->send(507, "text/plain", "No available EQ set slots to create default spl=0 set.");
-            return;
-        }
+    if (getOrCreateSpl0Set(preset) == nullptr) {
+        request->send(507, "text/plain", "No available EQ set slots to create default spl=0 set.");
+        return;
     }
 
     bool enabled = (state == "on");
-    
     preset->EQEnabled = enabled;
-    
-    sendOnOffToTeensy(CMD_SET_EQ_ENABLED, enabled);
-    
     scheduleConfigWrite();
-    
-    // Prepare and send response
-    DynamicJsonDocument doc(1024);
+
+    if (presetIndex == current_config.active_preset_index) {
+        sendOnOffToTeensy(CMD_SET_EQ_ENABLED, enabled);
+    }
+
+    StaticJsonDocument<192> doc;
+    doc["messageType"] = "eqEnabledChanged";
+    doc["presetName"] = presetName;
     doc["status"] = "ok";
     doc["enabled"] = enabled;
-    char responseBuffer[1024]; // Adjust size as needed
-    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
-    if (len > 0 && len < sizeof(responseBuffer)) {
-        request->send(200, "application/json", responseBuffer);
-        // Broadcast update
-        broadcastWebSocket(responseBuffer);
-    } else {
-        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
-        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
-    }
+    sendJsonAndBroadcast(request, doc);
 }

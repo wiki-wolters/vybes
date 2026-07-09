@@ -1,3 +1,4 @@
+#include "globals.h"
 #include "api_gains.h"
 #include "config.h"
 #include "api_helpers.h"
@@ -5,6 +6,10 @@
 #include <AsyncJson.h>
 
 void handleGetPresetGains(AsyncWebServerRequest* request) {
+    if (!request->hasParam("preset_name")) {
+        request->send(400, "application/json", "{\"error\":\"Missing preset_name\"}");
+        return;
+    }
     String presetName = request->getParam("preset_name")->value();
     if (presetName.isEmpty()) {
         request->send(400, "application/json", "{\"error\":\"Missing preset_name\"}");
@@ -22,6 +27,10 @@ void handleGetPresetGains(AsyncWebServerRequest* request) {
 }
 
 void handleSetPresetGains(AsyncWebServerRequest* request, JsonVariant& json) {
+    if (!request->hasParam("preset_name")) {
+        request->send(400, "application/json", "{\"error\":\"Missing preset_name\"}");
+        return;
+    }
     String presetName = request->getParam("preset_name")->value();
     if (presetName.isEmpty()) {
         request->send(400, "application/json", "{\"error\":\"Missing preset_name\"}");
@@ -58,7 +67,7 @@ void handlePutSpeakerGain(AsyncWebServerRequest* request) {
             return;
         }
 
-        save_config();
+        scheduleConfigWrite();
         sendToTeensy(CMD_SET_SPEAKER_GAINS, String(current_config.speakerGains.left, 2), String(current_config.speakerGains.right, 2), String(current_config.speakerGains.sub, 2));
         request->send(200, "application/json", "{\"success\":true}");
     } else {
@@ -84,7 +93,7 @@ void handlePutSpeakerGain(AsyncWebServerRequest* request) {
         current_config.speakerGains.right = right;
         current_config.speakerGains.sub = sub;
 
-        save_config();
+        scheduleConfigWrite();
         sendToTeensy(CMD_SET_SPEAKER_GAINS, String(left, 2), String(right, 2), String(sub, 2));
         request->send(200, "application/json", "{\"success\":true}");
     }
@@ -103,7 +112,7 @@ void handlePutInputGains(AsyncWebServerRequest* request, JsonVariant& json) {
     current_config.inputGains.usb = usb;
     current_config.inputGains.tone = tone;
 
-    save_config();
+    scheduleConfigWrite();
     sendToTeensy(CMD_SET_INPUT_GAINS, String(bluetooth, 2), String(spdif, 2), String(usb, 2), String(tone, 2));
     request->send(200, "application/json", "{\"success\":true}");
 }

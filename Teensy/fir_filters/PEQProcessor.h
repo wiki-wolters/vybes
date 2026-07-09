@@ -10,13 +10,8 @@
 #define PI 3.14159265359f
 #endif
 
-#define MAX_PEQ_BANDS 8
-
-// Filter type enumeration
-enum FilterType {
-  FILTER_BIQUAD,
-  FILTER_CHAMBERLIN
-};
+// Must match MAX_PEQ_POINTS on the ESP and the point limit in the WebUI
+#define MAX_PEQ_BANDS 15
 
 // PEQ Band structure
 struct PEQBand {
@@ -26,100 +21,84 @@ struct PEQBand {
   bool enabled;
 };
 
-// Chamberlin state variable filter state
-struct ChamberlinState {
-  float low;    // Low-pass state
-  float band;   // Band-pass state  
-  float f;      // Frequency parameter
-  float q_inv;  // 1/Q parameter
-};
-
-// Animation structure
+// Animation structure (used for smooth morphs between EQ curves)
 struct AnimationState {
   bool active;
   unsigned long startTime;
   unsigned long duration;
   PEQBand startBands[MAX_PEQ_BANDS];
   PEQBand targetBands[MAX_PEQ_BANDS];
+  bool bandMoving[MAX_PEQ_BANDS]; // skip recomputing bands that aren't changing
 };
 
+// Multi-band parametric EQ. Every band is a "bell" (peaking) filter built on
+// the Cytomic/Simper trapezoidal state-variable filter, which matches the
+// standard RBJ bell response exactly and stays numerically well-behaved in
+// float32 all the way down to 20Hz - so one topology serves all bands.
 class PEQProcessor : public AudioStream {
 public:
   PEQProcessor();
-  
+
   // Initialization
   void begin(float sampleRate = 44100.0f);
-  
+
   // Band control
   void setBand(int bandIndex, float frequency, float gain, float q, bool enabled = true);
   void setBand(int bandIndex, const PEQBand& band);
   void updateBands(const PEQBand* bands, int numBands);
   void enableBand(int bandIndex, bool enabled);
   void clearAll();
-  
+
   // Band queries
   PEQBand getBand(int bandIndex) const;
   int getActiveBandCount() const;
   float calculateMaxEqBoost(const PEQBand* currentBands, int numBands) const;
   void applyPreEQGain(float maxBoost, AudioAmplifier& leftAmp, AudioAmplifier& rightAmp);
-  
-  // Animation
-  void animateToBands(const PEQBand* targetBands, int numBands, unsigned long durationMs = 1000);
+
+  // Animation (smooth morph between curves)
+  void animateToBands(const PEQBand* targetBands, int numBands, unsigned long durationMs = 50);
   void setAnimationSpeed(unsigned long durationMs);
   void updateAnimationState();
   bool isAnimating() const;
   void stopAnimation();
-  
+
   // Bypass control
   void setBypass(bool bypassed);
   bool isBypassed() const;
   void toggleBypass();
-  
+
   // AudioStream interface
   virtual void update(void) override;
 
 private:
-  // Core member variables
+  // Cytomic SVF coefficients + per-band filter state
+  struct SVFBand {
+    float a1, a2, a3; // integrator coefficients
+    float m1;         // bell mix coefficient
+    float ic1eq, ic2eq; // integrator states
+    bool active;      // enabled && gain != 0
+  };
+
   audio_block_t *inputQueue[1];
   float sampleRate;
   bool initialized;
   bool bypassed;
-  
-  // Band storage
+
   PEQBand bands[MAX_PEQ_BANDS];
-  
-  // Biquad filter variables
-  arm_biquad_casd_df1_inst_f32 biquad_insts[MAX_PEQ_BANDS];
-  float32_t biquad_coeffs[MAX_PEQ_BANDS][5];
-  float32_t biquad_states[MAX_PEQ_BANDS][4];
-  
-  // Chamberlin filter variables
-  ChamberlinState chamberlin_states[MAX_PEQ_BANDS];
-  FilterType filter_types[MAX_PEQ_BANDS];
-  
-  // Animation
+  SVFBand svf[MAX_PEQ_BANDS];
+
   AnimationState animation;
-  
-  // Filter management methods
-  FilterType getOptimalFilterType(float frequency);
+
   void updateFilter(int bandIndex);
-  void updateBiquadFilter(int bandIndex);
-  void updateChamberlinFilter(int bandIndex);
-  void setUnityGain(int bandIndex);
-  
-  // Coefficient calculation and validation
-  void calculateCoefficients(const PEQBand& band, double coeffs[5]);
-  bool validateCoefficients(double coeffs[5]);
-  
-  // Audio processing methods
-  void processChamberlinBand(int bandIndex, float32_t* buffer, int numSamples);
-  
-  // Animation methods
+  void processBand(int bandIndex, float32_t* buffer, int numSamples);
+
   void processAnimation();
   float interpolate(float start, float end, float progress);
 };
 
-// Bell filter calculation (peaking EQ) - adapted from WebUI
+// Exact magnitude response of a bell (peaking) filter in dB at 'freq'.
+// This is the same math used by the WebUI to draw the curve, so what you
+// see, what is compensated for, and what you hear all agree.
 float calculateBellFilter(float freq, float centerFreq, float gain, float q);
 
 #endif

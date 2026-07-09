@@ -321,12 +321,14 @@ const dragState = reactive({
 let throttleTimeout = null;
 let pendingRequest = null; // To hold the promise of the ongoing API call
 let trailingCall = false; // To track if a call was made during the throttle period
+let trailingFullUpdate = false; // Whether the deferred call must be a full-set update
 const THROTTLE_DELAY = 100; // milliseconds
 
 const sendUpdateToAPI = async () => {
   // If a request is already pending, skip this update attempt
   if (pendingRequest) {
     trailingCall = true; // Mark that a call is waiting
+    trailingFullUpdate = true; // A full-set update supersedes point updates
     return;
   }
 
@@ -353,8 +355,10 @@ const sendUpdateToAPI = async () => {
     // If there was a trailing call, immediately trigger another update
     if (trailingCall) {
       trailingCall = false;
+      const full = trailingFullUpdate;
+      trailingFullUpdate = false;
       // Use a small delay to prevent immediate re-triggering if the API call was very fast
-      setTimeout(() => requestUpdate(), 0);
+      setTimeout(() => requestUpdate(full), 0);
     }
   }
 };
@@ -371,6 +375,7 @@ const requestUpdate = (fullUpdate = false) => {
 
   if (throttleTimeout) {
     trailingCall = true; // Mark that a call is waiting
+    if (fullUpdate) trailingFullUpdate = true; // Don't downgrade a full-set update
     return;
   }
 
@@ -387,11 +392,9 @@ const requestUpdate = (fullUpdate = false) => {
     // If there was a trailing call during the throttle period, trigger it now
     if (trailingCall) {
       trailingCall = false;
-      if (fullUpdate) {
-        requestUpdate(true);
-      } else {
-        requestUpdate();
-      }
+      const full = trailingFullUpdate;
+      trailingFullUpdate = false;
+      requestUpdate(full);
     }
   }, THROTTLE_DELAY);
 };
@@ -485,12 +488,17 @@ const curvePath = computed(() => {
   return `M ${points.join(' L ')}`;
 });
 
-// Bell filter calculation (peaking EQ)
+// Exact bell (peaking EQ) magnitude in dB, from the RBJ analog prototype.
+// This is the same math the Teensy uses, so the drawn curve matches the
+// audible response.
 const calculateBellFilter = (freq, centerFreq, gain, q) => {
-  const ratio = freq / centerFreq;
-  const bandwidth = 1 / q;
-  const response = gain / (1 + Math.pow((ratio - 1/ratio) / bandwidth, 2));
-  return response;
+  if (!gain || q <= 0 || centerFreq <= 0 || freq <= 0) return 0;
+  const A = Math.pow(10, gain / 40);
+  const O = freq / centerFreq;
+  const c = (1 - O * O) ** 2;
+  const num = c + (A * O / q) ** 2;
+  const den = c + (O / (A * q)) ** 2;
+  return 10 * Math.log10(num / den);
 };
 
 // Point management
@@ -589,8 +597,12 @@ const onMouseMove = (event) => {
 };
 
 const stopDrag = () => {
+  if (!dragState.isDragging) return;
   dragState.isDragging = false;
   dragState.pointIndex = null;
+  // Send the full set once on release so the backend state is reconciled
+  // even if a throttled per-point update was dropped mid-drag.
+  requestUpdate(true);
 };
 
 // Fullscreen logic
@@ -636,7 +648,7 @@ onUnmounted(() => {
   document.removeEventListener('mousemove', onMouseMove);
   document.removeEventListener('mouseup', stopDrag);
   document.removeEventListener('touchmove', onMouseMove);
-  document.addEventListener('touchend', stopDrag);
+  document.removeEventListener('touchend', stopDrag);
   window.removeEventListener('resize', updateDimensions);
   window.removeEventListener('resize', checkOrientation);
   

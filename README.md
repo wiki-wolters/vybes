@@ -195,3 +195,23 @@ This page is for editing the properties of an individual preset.
 * /Teensy: Teensy DSP code
 * /mock-server: Mock server for API development
 * /WebUI: Web UI code
+
+## Building
+
+Both firmwares build with [PlatformIO](https://platformio.org):
+
+```sh
+pio run -d ESP      # ESP8266 web server firmware
+pio run -d Teensy   # Teensy DSP firmware
+cd WebUI && npm run build   # Web UI
+```
+
+Add `-t upload` to flash. GitHub Actions compiles all three on every push
+(`.github/workflows/build.yml`).
+
+## ESP ↔ Teensy link
+
+The two boards communicate over UART (115200 baud), not I2C. The WebSocket
+live-update endpoint is `ws://vybes.local/live-updates` and every message
+carries a `messageType` field. See [docs/WIRING.md](docs/WIRING.md) for the
+wiring, the serial protocol, and the debug-console pinout.

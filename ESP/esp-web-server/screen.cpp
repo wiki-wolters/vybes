@@ -21,7 +21,7 @@ void setupScreen() {
     
     // Display a test message
     lcd.setCursor(0, 0);
-    lcd.print("Vybes Starting...");
+    lcd.print("Vybes starting"); // 16x2 display: keep within 16 chars
     
     // Store empty string as current message
     currentMessage = "";

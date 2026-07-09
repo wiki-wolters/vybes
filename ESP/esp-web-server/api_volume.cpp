@@ -22,7 +22,7 @@ void handlePutVolume(AsyncWebServerRequest *request) {
             if (len > 0 && len < sizeof(messageBuffer)) {
                 broadcastWebSocket(messageBuffer);
             } else {
-                Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+                DebugSerial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
             }
             
             AsyncResponseStream *response = request->beginResponseStream("application/json");
@@ -69,7 +69,7 @@ void increase_volume(int amount) {
         if (len > 0 && len < sizeof(messageBuffer)) {
             broadcastWebSocket(messageBuffer);
         } else {
-            Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+            DebugSerial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
         }
     }
 }
@@ -92,7 +92,7 @@ void decrease_volume(int amount) {
         if (len > 0 && len < sizeof(messageBuffer)) {
             broadcastWebSocket(messageBuffer);
         } else {
-            Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+            DebugSerial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
         }
     }
 }
@@ -110,6 +110,6 @@ void toggle_mute() {
     if (len > 0 && len < sizeof(messageBuffer)) {
         broadcastWebSocket(messageBuffer);
     } else {
-        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+        DebugSerial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
     }
 }

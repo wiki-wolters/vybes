@@ -9,44 +9,45 @@
 #include "websocket.h"
 #include "teensy_comm.h"
 #include "utilities.h"
+#include "api_helpers.h"
 
 using namespace ArduinoJson;
 
 void handleGetFirFiles(AsyncWebServerRequest *request) {
-    // Request a list of all FIR filter files from the Teensy
-    char* response = requestFromTeensy(CMD_GET_FILES);
-    
-    if (response == NULL) {
-        request->send(500, "application/json", "{\"error\":\"Failed to communicate with Teensy\"}");
-        return;
-    }
-    
-    if (strlen(response) == 0) {
-        // If no response, return empty array
+    // The file list is served from a cache that is refreshed asynchronously
+    // over the Teensy link (at boot, when the Teensy reboots, and after each
+    // request so the next fetch is fresh).
+    requestFirFilesRefresh();
+
+    // strtok modifies its input, so work on a copy of the cache
+    static char listCopy[768];
+    strlcpy(listCopy, getCachedFirFiles(), sizeof(listCopy));
+
+    if (strlen(listCopy) == 0) {
         request->send(200, "application/json", "[]");
         return;
     }
-    
-    // The response from Teensy is a newline-separated list of filenames
+
+    // The cache is a newline-separated list of filenames
     // We need to convert this into a JSON array
     DynamicJsonDocument doc(1024);
     JsonArray files = doc.to<JsonArray>();
-    
+
     // Parse the newline-separated list
-    char* line = strtok((char*)response, "\n");
+    char* line = strtok(listCopy, "\n");
     while (line != NULL) {
         // Skip empty lines and error messages
-        if (strlen(line) > 0 && strncmp(line, "ERROR:", 6) != 0) {
+        if (strlen(line) > 0 && strncmp(line, "ERROR", 5) != 0) {
             // Add the filename to the array
             files.add(line);
         }
         line = strtok(NULL, "\n");
     }
-    
+
     // Serialize the response
     String jsonResponse;
     serializeJson(files, jsonResponse);
-    
+
     // Send the response
     request->send(200, "application/json", jsonResponse);
 }
@@ -64,14 +65,13 @@ void handlePutPresetFir(AsyncWebServerRequest *request) {
         request->send(400, "text/plain", "Invalid speaker");
         return;
     }
-    
-    // Find the active preset
-    int presetIndex = current_config.active_preset_index;
+
+    int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
-        request->send(404, "text/plain", "Active preset not found");
+        request->send(404, "text/plain", "Preset not found");
         return;
     }
-    
+
     // Update the FIR filter filename for the specified speaker
     Preset* preset = &current_config.presets[presetIndex];
     if (speaker == "left") {
@@ -81,26 +81,23 @@ void handlePutPresetFir(AsyncWebServerRequest *request) {
     } else if (speaker == "sub") {
         preset->FIRFilters.sub = filename;
     }
-    
+
     scheduleConfigWrite();
-    
+
+    // Push the new filename to the Teensy and reload if this preset is active
+    if (presetIndex == current_config.active_preset_index) {
+        sendToTeensy(CMD_SET_FIR, speaker, filename);
+        loadFirFilters();
+    }
+
     // Prepare and send response
-    DynamicJsonDocument doc(1024);
+    StaticJsonDocument<192> doc;
+    doc["messageType"] = "firChanged";
+    doc["presetName"] = presetName;
     doc["status"] = "ok";
     doc["speaker"] = speaker;
     doc["filename"] = filename;
-    char responseBuffer[1024]; // Adjust size as needed
-    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
-    if (len > 0 && len < sizeof(responseBuffer)) {
-        request->send(200, "application/json", responseBuffer);
-        // Broadcast update
-        broadcastWebSocket(responseBuffer);
-    } else {
-        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
-        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
-    }
-    
-    loadFirFilters();
+    sendJsonAndBroadcast(request, doc);
 }
 
 void handlePutPresetFirEnabled(AsyncWebServerRequest *request) {
@@ -119,37 +116,30 @@ void handlePutPresetFirEnabled(AsyncWebServerRequest *request) {
         request->send(400, "text/plain", "Invalid state");
         return;
     }
-    
-    // Find the active preset
-    int presetIndex = current_config.active_preset_index;
+
+    int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
-        request->send(404, "text/plain", "Active preset not found");
+        request->send(404, "text/plain", "Preset not found");
         return;
     }
-    
-    // Update the FIR filter enabled state
-    current_config.presets[presetIndex].FIRFiltersEnabled = (state == "on");
-    scheduleConfigWrite();
-    
-    // Send FIR enable/disable command to Teensy
-    sendOnOffToTeensy(CMD_SET_FIR_ENABLED, state == "on");
 
-    if (state == "on") {
-        loadFirFilters();
+    // Update the FIR filter enabled state
+    bool enabled = (state == "on");
+    current_config.presets[presetIndex].FIRFiltersEnabled = enabled;
+    scheduleConfigWrite();
+
+    if (presetIndex == current_config.active_preset_index) {
+        sendOnOffToTeensy(CMD_SET_FIR_ENABLED, enabled);
+        if (enabled) {
+            loadFirFilters();
+        }
     }
-    
+
     // Prepare and send response
-    DynamicJsonDocument doc(1024);
+    StaticJsonDocument<192> doc;
+    doc["messageType"] = "firEnabledChanged";
+    doc["presetName"] = presetName;
     doc["status"] = "ok";
-    doc["FIRFiltersEnabled"] = (state == "on");
-    char responseBuffer[1024]; // Adjust size as needed
-    size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
-    if (len > 0 && len < sizeof(responseBuffer)) {
-        request->send(200, "application/json", responseBuffer);
-        // Broadcast update
-        broadcastWebSocket(responseBuffer);
-    } else {
-        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
-        Serial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
-    }
+    doc["FIRFiltersEnabled"] = enabled;
+    sendJsonAndBroadcast(request, doc);
 }
