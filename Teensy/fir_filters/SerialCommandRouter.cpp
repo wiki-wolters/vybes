@@ -6,9 +6,6 @@ SerialCommandRouter::SerialCommandRouter(HardwareSerial& port)
 
 void SerialCommandRouter::begin(uint32_t baud) {
     port.begin(baud);
-    // Teensy hardware serial supports growing the RX FIFO buffer; this keeps
-    // command bursts intact while loop() is held up (e.g. SD card reads).
-    port.addMemoryForRead(rxBuffer, sizeof(rxBuffer));
 }
 
 void SerialCommandRouter::on(const String& commandName, Handler handler) {

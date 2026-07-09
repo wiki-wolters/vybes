@@ -75,9 +75,6 @@ private:
     size_t lineLength;
     bool lineOverflow;
 
-    // Extra RX buffering so command bursts survive long SD-card loads
-    uint8_t rxBuffer[512];
-
     String* parseArgs(const String& argsString, int& count);
 };
 

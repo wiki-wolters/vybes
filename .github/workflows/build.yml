@@ -3,6 +3,7 @@ name: Build
 on:
   push:
   pull_request:
+  workflow_dispatch: # allows manual runs from the Actions tab
 
 jobs:
   esp8266:

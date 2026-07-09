@@ -356,6 +356,12 @@ void setup() {
   router.on("ping", handlePing);
   router.begin(ESP_LINK_BAUD);
 
+  // Extra RX buffering so command bursts survive long SD-card reads.
+  // (addMemoryForRead is on the concrete HardwareSerialIMXRT class, so it's
+  // called here on Serial1 rather than inside the generic router.)
+  static uint8_t espRxBuffer[512];
+  Serial1.addMemoryForRead(espRxBuffer, sizeof(espRxBuffer));
+
   // Tell the ESP we (re)booted so it pushes the full DSP state
   router.sendEvent("boot");
 }

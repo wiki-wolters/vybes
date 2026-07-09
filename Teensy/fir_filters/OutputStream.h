@@ -6,6 +6,7 @@
 
 class OutputStream : public Print {
 public:
+    using Print::write; // keep Print's other write() overloads visible
     virtual size_t write(uint8_t c) = 0;
     virtual size_t write(const char* data, size_t len) = 0;
     virtual ~OutputStream() {}
