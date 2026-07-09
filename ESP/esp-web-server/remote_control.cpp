@@ -98,7 +98,7 @@ void RemoteControl::loop() {
 
         if (held_duration > HOLD_START_TIME) {
             float ramp_progress = (float)min((unsigned long)held_duration - HOLD_START_TIME, RAMP_DURATION) / RAMP_DURATION;
-            int current_delay = START_DELAY - (int)(DELAY_RANGE * ramp_progress);
+            unsigned long current_delay = START_DELAY - (int)(DELAY_RANGE * ramp_progress);
 
             if (millis() - _last_volume_increment_time > current_delay) {
                 if (_last_volume_action == VOLUME_UP) {

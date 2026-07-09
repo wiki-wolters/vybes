@@ -2,9 +2,6 @@
 #define GLOBALS_H
 
 #include <ESP8266WiFi.h>
-#define WM_ASYNCWEBSERVER 1
-#define WM_MDNS 1
-#define ESP_WM_NO_WEBSERVER 1
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <Wire.h>

@@ -97,7 +97,7 @@ bool load_config_from(const char* path) {
     // Load presets
     if (doc.containsKey("presets")) {
         JsonArray presets = doc["presets"];
-        for (int i = 0; i < MAX_PRESETS && i < presets.size(); i++) {
+        for (int i = 0; i < MAX_PRESETS && i < (int)presets.size(); i++) {
             JsonObject preset = presets[i];
 
             // Load preset name
@@ -141,7 +141,7 @@ bool load_config_from(const char* path) {
                 // Load preference curve (PEQ sets)
                 if (preset.containsKey("preference_curve")) {
                     JsonArray peqSets = preset["preference_curve"];
-                    for (int j = 0; j < MAX_PEQ_SETS && j < peqSets.size(); j++) {
+                    for (int j = 0; j < MAX_PEQ_SETS && j < (int)peqSets.size(); j++) {
                         JsonObject peqSet = peqSets[j];
                         current_config.presets[i].preference_curve[j].spl = peqSet["spl"] | 0;
                         int num_points = peqSet["num_points"] | 0;
@@ -151,7 +151,7 @@ bool load_config_from(const char* path) {
                         
                         if (peqSet.containsKey("points")) {
                             JsonArray points = peqSet["points"];
-                            for (int k = 0; k < MAX_PEQ_POINTS && k < points.size(); k++) {
+                            for (int k = 0; k < MAX_PEQ_POINTS && k < (int)points.size(); k++) {
                                 JsonObject point = points[k];
                                 current_config.presets[i].preference_curve[j].points[k].freq = point["freq"] | 1000.0f;
                                 current_config.presets[i].preference_curve[j].points[k].gain = point["gain"] | 0.0f;

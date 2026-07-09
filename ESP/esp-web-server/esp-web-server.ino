@@ -9,7 +9,7 @@
 #include "screen.h"
 #include "button.h"
 #include "remote_control.h"
-#include <WiFiManager.h>
+#include "wifi_setup.h"
 #include <ESP8266mDNS.h>
 
 // Define global objects
@@ -17,22 +17,6 @@ RemoteControl remoteControl;
 bool configChanged = false;
 unsigned long lastConfigChange = 0;
 const unsigned long WRITE_DELAY = 5000;
-
-void setupWiFi() {
-    // Scoped locally so its RAM is released once WiFi is up
-    WiFiManager wifiManager;
-    // WiFiManager logs to Serial by default - that's the Teensy link now
-    wifiManager.setDebugOutput(false);
-    wifiManager.setConnectTimeout(20); // 20 seconds
-    wifiManager.setAPCallback([](WiFiManager * myWiFiManager) {
-        DebugSerial.println("Entered config mode");
-    });
-    wifiManager.setConfigPortalTimeout(300);
-    if (!wifiManager.autoConnect("Vybes-Config")) {
-        ESP.restart();
-    }
-    DebugSerial.println("WiFi connected!");
-}
 
 void handleDebounceWrite() {
     if (configChanged && (millis() - lastConfigChange > WRITE_DELAY)) {
