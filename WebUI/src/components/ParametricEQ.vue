@@ -1,136 +1,165 @@
 <template>
   <div class="parametric-eq" :class="{ 'is-fullscreen': isFullscreen }">
     <div class="eq-container" ref="eqContainer">
-      <!-- Background grid -->
-      <svg class="eq-grid" :width="width" :height="height">
-        <!-- Frequency grid lines -->
-        <g class="frequency-grid">
-          <line
-            v-for="freq in frequencyGridLines"
-            :key="freq.value"
-            :x1="freq.x"
-            :y1="0"
-            :x2="freq.x"
-            :y2="height"
-            stroke="#333"
-            stroke-width="1"
-            opacity="0.3"
-          />
-          <text
-            v-for="freq in frequencyGridLines"
-            :key="`label-${freq.value}`"
-            :x="freq.x"
-            :y="height - 5"
-            fill="#666"
-            font-size="10"
-            text-anchor="middle"
-          >
-            {{ freq.label }}
-          </text>
-        </g>
-
-        <!-- Gain grid lines -->
-        <g class="gain-grid">
-          <line
-            v-for="gain in gainGridLines"
-            :key="gain.value"
-            :x1="0"
-            :y1="gain.y"
-            :x2="width"
-            :y2="gain.y"
-            stroke="#333"
-            stroke-width="1"
-            opacity="0.3"
-          />
-          <text
-            v-for="gain in gainGridLines"
-            :key="`label-${gain.value}`"
-            :x="5"
-            :y="gain.y - 3"
-            fill="#666"
-            font-size="10"
-          >
-            {{ gain.label }}
-          </text>
-        </g>
-
-        <!-- Zero line -->
-        <line
-          :x1="0"
-          :y1="height / 2"
-          :x2="width"
-          :y2="height / 2"
-          stroke="#555"
-          stroke-width="2"
-        />
-      </svg>
-
-      <!-- EQ Curve -->
-      <svg class="eq-curve" :width="width" :height="height">
-        <path
-          :d="curvePath"
-          fill="none"
-          stroke="#0088ff"
-          stroke-width="3"
-          opacity="0.8"
-        />
-      </svg>
-
-      <!-- EQ Points -->
-      <div
-        v-for="(point, index) in localEqPoints"
-        :key="index"
-        class="eq-point"
-        :class="{ active: selectedPoint === index }"
-        :style="{
-          left: frequencyToX(point.freq) + 'px',
-          top: gainToY(point.gain) + 'px'
-        }"
-        @mousedown="startDrag(index, $event)"
-        @touchstart="startDrag(index, $event)"
-        @touchend="handleTouchEnd(index, $event)"
-        @dblclick="removePoint(index)"
+      <svg
+        ref="svgEl"
+        class="eq-svg"
+        :width="width"
+        :height="height"
+        @pointerdown="onPointerDown"
+        @pointermove="onPointerMove"
+        @pointerup="onPointerUp"
+        @pointercancel="onPointerCancel"
+        @wheel.prevent="onWheel"
       >
-        <div class="point-circle"></div>
-        <div class="point-label">
-          {{ Math.round(point.freq) }}Hz
-          <br>
-          {{ point.gain > 0 ? '+' : '' }}{{ point.gain.toFixed(1) }}dB
-        </div>
+        <defs>
+          <linearGradient id="vybes-eq-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="rgba(245, 192, 78, 0.25)" />
+            <stop offset="1" stop-color="rgba(245, 192, 78, 0.02)" />
+          </linearGradient>
+        </defs>
+
+        <!-- Grid -->
+        <g class="grid">
+          <line
+            v-for="f in freqMinorLines"
+            :key="`fmin-${f.value}`"
+            :x1="f.x" :y1="0" :x2="f.x" :y2="height"
+            stroke="rgba(148, 168, 196, 0.06)" stroke-width="1"
+          />
+          <line
+            v-for="f in freqMajorLines"
+            :key="`fmaj-${f.value}`"
+            :x1="f.x" :y1="0" :x2="f.x" :y2="height"
+            stroke="rgba(148, 168, 196, 0.16)" stroke-width="1"
+          />
+          <text
+            v-for="f in freqMajorLines"
+            :key="`flab-${f.value}`"
+            :x="f.x" :y="height - 8"
+            fill="#5d6878" font-size="10" text-anchor="middle"
+          >
+            {{ f.label }}
+          </text>
+          <line
+            v-for="g in gainGridLines"
+            :key="`g-${g.value}`"
+            :x1="0" :y1="g.y" :x2="width" :y2="g.y"
+            :stroke="g.value === 0 ? 'rgba(148, 168, 196, 0.30)' : 'rgba(148, 168, 196, 0.07)'"
+            :stroke-width="g.value === 0 ? 1.5 : 1"
+          />
+          <text
+            v-for="g in gainGridLines.filter(g => g.value !== -15)"
+            :key="`glab-${g.value}`"
+            :x="8" :y="g.y - 4"
+            fill="#5d6878" font-size="10"
+          >
+            {{ g.label }}
+          </text>
+        </g>
+
+        <!-- Per-band response curves -->
+        <path
+          v-for="(d, i) in bandPaths"
+          :key="`band-${i}`"
+          :d="d"
+          fill="none"
+          :stroke="bandColor(i)"
+          :stroke-width="i === selectedPoint ? 1.8 : 1.2"
+          :opacity="i === selectedPoint ? 0.85 : 0.35"
+        />
+
+        <!-- Combined curve with fill against the 0 dB line -->
+        <path :d="combinedFillPath" fill="url(#vybes-eq-fill)" stroke="none" />
+        <path
+          :d="combinedPath"
+          fill="none"
+          stroke="#f5c04e"
+          stroke-width="2.5"
+          stroke-linejoin="round"
+        />
+
+        <!-- Band nodes -->
+        <g
+          v-for="(point, i) in localEqPoints"
+          :key="`node-${i}`"
+          class="eq-node"
+          :data-index="i"
+        >
+          <circle
+            :cx="frequencyToX(point.freq)" :cy="gainToY(point.gain)"
+            r="20" fill="transparent"
+          />
+          <circle
+            v-if="i === selectedPoint"
+            :cx="frequencyToX(point.freq)" :cy="gainToY(point.gain)"
+            r="13" fill="none" :stroke="bandColor(i)" stroke-width="2" opacity="0.45"
+          />
+          <circle
+            :cx="frequencyToX(point.freq)" :cy="gainToY(point.gain)"
+            :r="i === selectedPoint ? 8 : 6.5"
+            :fill="bandColor(i)" stroke="#10141a" stroke-width="2"
+          />
+          <text
+            :x="frequencyToX(point.freq)" :y="gainToY(point.gain)"
+            fill="#10141a" font-size="9" font-weight="700"
+            text-anchor="middle" dy="3" pointer-events="none"
+          >
+            {{ i + 1 }}
+          </text>
+        </g>
+      </svg>
+
+      <!-- Drag/pinch readout -->
+      <div
+        class="drag-readout"
+        :class="{ show: readout.show }"
+        :style="{ left: readout.x + 'px', top: readout.y + 'px' }"
+      >
+        {{ fmtFreq(readout.freq) }}<br>
+        {{ fmtGain(readout.gain) }} · Q {{ readout.q.toFixed(2) }}
       </div>
-
-      <!-- Add Point Button -->
-      <button class="add-point-btn" @click="addPoint">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
-      </button>
-
-      <!-- Import Button -->
-      <button class="import-btn" @click="showImportModal = true">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-box-arrow-in-down" viewBox="0 0 16 16">
-          <path fill-rule="evenodd" d="M3.5 10a.5.5 0 0 1-.5-.5v-8a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 .5.5v8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 0 0 1h2A1.5 1.5 0 0 0 14 9.5v-8A1.5 1.5 0 0 0 12.5 0h-9A1.5 1.5 0 0 0 2 1.5v8A1.5 1.5 0 0 0 3.5 11h2a.5.5 0 0 0 0-1z"/>
-          <path fill-rule="evenodd" d="M7.646 15.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 14.293V5.5a.5.5 0 0 0-1 0v8.793l-2.146-2.147a.5.5 0 0 0-.708.708z"/>
-        </svg>
-      </button>
     </div>
 
-    <!-- Point Selection Row -->
-    <div class="point-selection">
+    <!-- Band rail: horizontally scrollable chips -->
+    <div v-if="!isFullscreen" class="point-selection" ref="chipRail">
       <button
         v-for="(point, index) in localEqPoints"
-        :key="`select-${index}`"
-        class="point-btn"
+        :key="`chip-${index}`"
+        type="button"
+        class="point-chip"
         :class="{ active: selectedPoint === index }"
+        :style="{ '--chip-color': bandColor(index) }"
         @click="selectedPoint = index"
       >
-        {{ index + 1 }}
+        <span class="chip-dot" :style="{ background: bandColor(index) }"></span>
+        <span>{{ fmtFreq(point.freq) }} · {{ fmtGain(point.gain) }}</span>
+      </button>
+      <button
+        v-if="localEqPoints.length < MAX_POINTS"
+        type="button"
+        class="point-chip chip-ghost"
+        @click="addPoint"
+      >
+        + Add band
+      </button>
+      <button type="button" class="point-chip chip-ghost" @click="openImport">
+        Import REW
       </button>
     </div>
 
-    <!-- Controls -->
-    <div class="eq-controls" v-if="selectedPoint !== null && localEqPoints[selectedPoint]">
-      <h4>EQ Point {{ selectedPoint + 1 }}</h4>
+    <!-- Selected band controls -->
+    <div
+      v-if="!isFullscreen && selectedPoint !== null && localEqPoints[selectedPoint]"
+      class="eq-controls"
+    >
+      <div class="eq-controls-head">
+        <span class="chip-dot" :style="{ background: bandColor(selectedPoint) }"></span>
+        <h4>Band {{ selectedPoint + 1 }}</h4>
+        <button type="button" class="delete-band-btn" @click="removePoint(selectedPoint)">
+          Delete band
+        </button>
+      </div>
       <div class="control-group">
         <range-slider
           label="Frequency"
@@ -141,7 +170,7 @@
           :decimals="0"
           :logarithmic="true"
           v-model="localEqPoints[selectedPoint].freq"
-          @update:modelValue="requestUpdate"
+          @update:modelValue="() => requestUpdate()"
         />
       </div>
       <div class="control-group">
@@ -153,7 +182,7 @@
           unit="dB"
           :decimals="2"
           v-model="localEqPoints[selectedPoint].gain"
-          @update:modelValue="requestUpdate"
+          @update:modelValue="() => requestUpdate()"
         />
       </div>
       <div class="control-group">
@@ -164,8 +193,9 @@
           :step="0.1"
           unit=""
           :decimals="3"
+          :logarithmic="true"
           v-model="localEqPoints[selectedPoint].q"
-          @update:modelValue="requestUpdate"
+          @update:modelValue="() => requestUpdate()"
         />
       </div>
     </div>
@@ -176,12 +206,38 @@
       confirm-text="Import"
       @confirm="handleImport"
     >
-      <p class="mb-4 text-sm text-gray-400">Paste the filter settings from Room EQ Wizard (REW) below.</p>
+      <p class="mb-3 text-sm text-gray-400">
+        Paste REW's "Export filter settings as text" output below, or choose the exported .txt file.
+        Peaking (PK) filters are imported, up to {{ MAX_POINTS }} bands.
+      </p>
       <textarea
         v-model="importText"
-        class="w-full h-48 p-2 border border-gray-600 rounded bg-gray-800 text-white"
-        placeholder="Paste settings here..."
+        class="w-full h-40 p-2 border border-gray-600 rounded bg-gray-800 text-white font-mono text-xs"
+        placeholder="Filter 1: ON PK Fc 63.5 Hz Gain -4.5 dB Q 4.32"
+        spellcheck="false"
       ></textarea>
+      <div class="flex items-center justify-between mt-2">
+        <button type="button" class="import-file-btn" @click="importFileInput.click()">
+          Choose file…
+        </button>
+        <span
+          class="text-xs"
+          :class="importParsedPoints.length ? 'text-green-400' : 'text-red-400'"
+        >
+          <template v-if="importText.trim()">
+            {{ importParsedPoints.length
+              ? `${importParsedPoints.length} filter${importParsedPoints.length === 1 ? '' : 's'} found`
+              : 'No PK filters recognised' }}
+          </template>
+        </span>
+      </div>
+      <input
+        ref="importFileInput"
+        type="file"
+        accept=".txt,text/plain"
+        hidden
+        @change="onImportFile"
+      >
     </modal-dialog>
 
   </div>
@@ -212,50 +268,94 @@ const props = defineProps({
   }
 });
 
+const emit = defineEmits(['change']);
+
+const MAX_POINTS = 15;
+const MIN_FREQ = 20;
+const MAX_FREQ = 20000;
+const MAX_GAIN = 15;
+const MIN_Q = 0.1;
+const MAX_Q = 10;
+
+// One hue per band, shared by its node, curve and chip so bands stay
+// identifiable when many are active.
+const BAND_COLORS = [
+  '#4ea1ff', '#ff9e64', '#7bd88f', '#ff6b9d', '#b28cff',
+  '#3fd2c7', '#f95f53', '#6ee7ff', '#c3e88d', '#eeb86d',
+  '#8aadf4', '#ee99a0', '#a6da95', '#f0a6ca', '#93c5fd'
+];
+const bandColor = (i) => BAND_COLORS[i % BAND_COLORS.length];
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const fmtFreq = (f) => f >= 1000
+  ? `${(f / 1000).toFixed(f < 10000 ? 2 : 1)} kHz`
+  : `${Math.round(f)} Hz`;
+const fmtGain = (g) => `${g > 0 ? '+' : ''}${g.toFixed(1)} dB`;
+
+// ── REW import ─────────────────────────────────────────
 const showImportModal = ref(false);
 const importText = ref('');
+const importFileInput = ref(null);
+
+const REW_FILTER_RE = /Filter\s+\d+:\s+ON\s+PK\s+Fc\s+([\d.]+)\s*(k?)Hz\s+Gain\s+([-\d.]+)\s+dB\s+Q\s+([\d.]+)/i;
+
+function parseREW(text) {
+  const points = [];
+  for (const raw of text.split('\n')) {
+    // REW inserts thousands separators in some locales ("Fc 1,063.5 Hz").
+    // Only strip commas that sit between a digit and a 3-digit group so
+    // decimal-comma values are not mangled.
+    const line = raw.replace(/(\d),(?=\d{3})/g, '$1');
+    const match = line.match(REW_FILTER_RE);
+    if (!match) continue;
+    points.push({
+      freq: clamp(parseFloat(match[1]) * (match[2] ? 1000 : 1), MIN_FREQ, MAX_FREQ),
+      gain: clamp(parseFloat(match[3]), -MAX_GAIN, MAX_GAIN),
+      q: clamp(parseFloat(match[4]), MIN_Q, MAX_Q)
+    });
+  }
+  return points.slice(0, MAX_POINTS);
+}
+
+const importParsedPoints = computed(() => parseREW(importText.value));
+
+const openImport = () => {
+  importText.value = '';
+  showImportModal.value = true;
+};
+
+const onImportFile = async (event) => {
+  const file = event.target.files[0];
+  if (file) {
+    importText.value = await file.text();
+  }
+  event.target.value = '';
+};
 
 const handleImport = () => {
-  const text = importText.value;
-  const lines = text.split('\n');
-  const newPoints = [];
-
-  const regex = /Filter\s+\d+:\s+ON\s+PK\s+Fc\s+([\d\.]+)\s+Hz\s+Gain\s+([-\d\.]+)\s+dB\s+Q\s+([\d\.]+)/;
-
-  for (const line of lines) {
-    const match = line.match(regex);
-    if (match) {
-      const freq = parseFloat(match[1]);
-      const gain = parseFloat(match[2]);
-      const q = parseFloat(match[3]);
-      newPoints.push({ freq, gain, q });
-    }
+  const newPoints = importParsedPoints.value;
+  if (newPoints.length === 0) {
+    // Leave the modal open; the parse note explains why nothing happened.
+    return;
   }
-
-  if (newPoints.length > 0) {
-    localEqPoints.length = 0;
-    newPoints.forEach(point => localEqPoints.push(point));
-    selectedPoint.value = 0;
-    requestUpdate(true);
-  }
-
+  localEqPoints.length = 0;
+  newPoints.forEach(point => localEqPoints.push(point));
+  selectedPoint.value = 0;
+  requestUpdate(true);
   showImportModal.value = false;
   importText.value = '';
 };
 
-
-const emit = defineEmits(['change']);
-
-
-// Fullscreen state
+// ── Fullscreen state ───────────────────────────────────
 const isFullscreen = ref(false);
 
-// Component dimensions
+// ── Component dimensions ───────────────────────────────
 const eqContainer = ref(null);
-const width = ref(800); // Default width
+const svgEl = ref(null);
+const chipRail = ref(null);
+const width = ref(800);
 const height = ref(400);
 
-// Resize observer to update width
 let resizeObserver = null;
 
 const updateDimensions = () => {
@@ -297,24 +397,22 @@ function initializePoints() {
 const isInteracting = ref(false);
 let interactionEndTimeout = null;
 
-watch(() => props.peqPoints, (newVal, oldVal) => {
+watch(() => props.peqPoints, () => {
   if (isInteracting.value) {
     return; // Ignore updates while user is interacting
   }
-  console.log('ParametricEQ - peqPoints prop changed');
-  console.log('Old value:', oldVal);
-  console.log('New value:', newVal);
   initializePoints();
 }, { immediate: true, deep: true });
 
 const selectedPoint = ref(0);
-const dragState = reactive({
-  isDragging: false,
-  pointIndex: null,
-  startX: 0,
-  startY: 0,
-  startFreq: 0,
-  startGain: 0
+
+// Keep the selected band's chip visible in the rail
+watch(selectedPoint, async () => {
+  await nextTick();
+  const chip = chipRail.value?.children[selectedPoint.value];
+  if (chip) {
+    chip.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
+  }
 });
 
 // Throttling and request queuing
@@ -346,7 +444,6 @@ const sendUpdateToAPI = async () => {
     // Store the promise of the current API call
     pendingRequest = VybesAPI.savePrefEqSet(props.presetName, pointsToEmit);
     await pendingRequest;
-    console.log('EQ settings updated successfully.');
   } catch (error) {
     console.error('Failed to update EQ settings:', error);
     // Handle error (e.g., show a notification to the user)
@@ -421,41 +518,48 @@ const sendPointUpdateToAPI = async () => {
 
 // Frequency conversion (logarithmic scale)
 const frequencyToX = (freq) => {
-  const minFreq = Math.log10(20);
-  const maxFreq = Math.log10(20000);
+  const minFreq = Math.log10(MIN_FREQ);
+  const maxFreq = Math.log10(MAX_FREQ);
   const logFreq = Math.log10(freq);
   return ((logFreq - minFreq) / (maxFreq - minFreq)) * width.value;
 };
 
 const xToFrequency = (x) => {
-  const minFreq = Math.log10(20);
-  const maxFreq = Math.log10(20000);
+  const minFreq = Math.log10(MIN_FREQ);
+  const maxFreq = Math.log10(MAX_FREQ);
   const ratio = x / width.value;
   return Math.pow(10, minFreq + ratio * (maxFreq - minFreq));
 };
 
 // Gain conversion (linear scale)
 const gainToY = (gain) => {
-  const maxGain = 15;
-  const minGain = -15;
-  return height.value - ((gain - minGain) / (maxGain - minGain)) * height.value;
+  return height.value - ((gain + MAX_GAIN) / (2 * MAX_GAIN)) * height.value;
 };
 
 const yToGain = (y) => {
-  const maxGain = 15;
-  const minGain = -15;
   const ratio = (height.value - y) / height.value;
-  return minGain + ratio * (maxGain - minGain);
+  return -MAX_GAIN + ratio * 2 * MAX_GAIN;
 };
 
 // Grid lines
-const frequencyGridLines = computed(() => {
-  const frequencies = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
-  return frequencies.map(freq => ({
-    value: freq,
-    x: frequencyToX(freq),
-    label: freq >= 1000 ? `${freq/1000}k` : `${freq}`
-  }));
+const FREQ_MAJORS = [50, 100, 200, 500, 1000, 2000, 5000, 10000];
+
+const freqMajorLines = computed(() => FREQ_MAJORS.map(freq => ({
+  value: freq,
+  x: frequencyToX(freq),
+  label: freq >= 1000 ? `${freq / 1000}k` : `${freq}`
+})));
+
+const freqMinorLines = computed(() => {
+  const lines = [];
+  for (let decade = 10; decade < MAX_FREQ; decade *= 10) {
+    for (let m = 2; m < 10; m++) {
+      const freq = decade * m;
+      if (freq <= MIN_FREQ || freq >= MAX_FREQ || FREQ_MAJORS.includes(freq)) continue;
+      lines.push({ value: freq, x: frequencyToX(freq) });
+    }
+  }
+  return lines;
 });
 
 const gainGridLines = computed(() => {
@@ -468,25 +572,38 @@ const gainGridLines = computed(() => {
 });
 
 // EQ curve calculation
-const curvePath = computed(() => {
+const combinedSamples = computed(() => {
   const points = [];
-  const steps = 200;
+  const steps = 220;
   for (let i = 0; i <= steps; i++) {
     const x = (i / steps) * width.value;
     const freq = xToFrequency(x);
     let totalGain = 0;
-    // Calculate combined response from all EQ points
     localEqPoints.forEach(point => {
-      const gain = calculateBellFilter(freq, point.freq, point.gain, point.q);
-      totalGain += gain;
+      totalGain += calculateBellFilter(freq, point.freq, point.gain, point.q);
     });
-
-    const y = gainToY(totalGain);
-    points.push(`${x},${y}`);
+    points.push(`${x.toFixed(1)},${gainToY(totalGain).toFixed(1)}`);
   }
-
-  return `M ${points.join(' L ')}`;
+  return points;
 });
+
+const combinedPath = computed(() => `M ${combinedSamples.value.join(' L ')}`);
+
+const combinedFillPath = computed(() => {
+  const zeroY = gainToY(0).toFixed(1);
+  return `${combinedPath.value} L ${width.value},${zeroY} L 0,${zeroY} Z`;
+});
+
+const bandPaths = computed(() => localEqPoints.map(point => {
+  const samples = [];
+  const steps = 120;
+  for (let i = 0; i <= steps; i++) {
+    const x = (i / steps) * width.value;
+    const gain = calculateBellFilter(xToFrequency(x), point.freq, point.gain, point.q);
+    samples.push(`${x.toFixed(1)},${gainToY(gain).toFixed(1)}`);
+  }
+  return `M ${samples.join(' L ')}`;
+}));
 
 // Exact bell (peaking EQ) magnitude in dB, from the RBJ analog prototype.
 // This is the same math the Teensy uses, so the drawn curve matches the
@@ -502,17 +619,18 @@ const calculateBellFilter = (freq, centerFreq, gain, q) => {
 };
 
 // Point management
-  const addPoint = () => {
-    if (localEqPoints.length >= 15) return;
+const addPoint = () => {
+  addPointAt(1000, 0);
+};
 
-  const newPoint = {
-    id: localEqPoints.length,
-    freq: 1000,
-    gain: 0,
+const addPointAt = (freq, gain) => {
+  if (localEqPoints.length >= MAX_POINTS) return;
+
+  localEqPoints.push({
+    freq: clamp(freq, MIN_FREQ, MAX_FREQ),
+    gain: clamp(gain, -MAX_GAIN, MAX_GAIN),
     q: 1
-  };
-
-  localEqPoints.push(newPoint);
+  });
   selectedPoint.value = localEqPoints.length - 1;
   requestUpdate(true);
 };
@@ -540,69 +658,159 @@ const removePoint = async (index) => {
   requestUpdate(true);
 };
 
-// Drag functionality
-const lastTouch = { time: 0, index: null };
+// ── Pointer interaction ────────────────────────────────
+// All active pointers are tracked so a second finger upgrades the gesture
+// to a pinch (Q control) instead of fighting the drag.
+const pointers = new Map();
+let dragInfo = null;
+let pinchInfo = null;
+let lastTap = { time: 0, index: -1 };
+let readoutHideTimer = null;
 
-const handleTouchEnd = (index, event) => {
-  const now = new Date().getTime();
-  const timeSinceLastTouch = now - lastTouch.time;
+const readout = reactive({ show: false, x: 0, y: 0, freq: 1000, gain: 0, q: 1 });
 
-  if (timeSinceLastTouch < 300 && timeSinceLastTouch > 0 && lastTouch.index === index) {
-    // Double tap
-    removePoint(index);
-    event.preventDefault();
-  } else {
-    // Single tap
+const svgPos = (event) => {
+  const rect = svgEl.value.getBoundingClientRect();
+  return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+};
+
+const pinchDistance = () => {
+  const [p1, p2] = [...pointers.values()];
+  return Math.hypot(p1.x - p2.x, p1.y - p2.y);
+};
+
+const showReadout = (x, y) => {
+  const point = localEqPoints[selectedPoint.value];
+  if (!point) return;
+  readout.freq = point.freq;
+  readout.gain = point.gain;
+  readout.q = point.q;
+  readout.x = clamp(x, 50, width.value - 50);
+  readout.y = Math.max(44, y);
+  readout.show = true;
+  clearTimeout(readoutHideTimer);
+};
+
+const hideReadout = (delay = 0) => {
+  clearTimeout(readoutHideTimer);
+  readoutHideTimer = setTimeout(() => { readout.show = false; }, delay);
+};
+
+const onPointerDown = (event) => {
+  const pos = svgPos(event);
+  pointers.set(event.pointerId, pos);
+  try {
+    svgEl.value.setPointerCapture(event.pointerId);
+  } catch (e) {
+    // A pointer can disappear between the event and the capture call
+    // (and synthetic events are never capturable) — the gesture still
+    // works, it just loses tracking if the finger leaves the SVG.
+  }
+  event.preventDefault();
+
+  if (pointers.size === 2 && localEqPoints[selectedPoint.value]) {
+    // Second finger down: abandon any drag/tap and pinch the selected
+    // band's Q instead.
+    dragInfo = null;
+    lastTap.time = 0; // pinch fingers must not read as a double-tap
+    pinchInfo = {
+      startDistance: Math.max(10, pinchDistance()),
+      startQ: localEqPoints[selectedPoint.value].q
+    };
+    const point = localEqPoints[selectedPoint.value];
+    showReadout(frequencyToX(point.freq), gainToY(point.gain));
+    return;
+  }
+  if (pointers.size > 2) return;
+
+  const nodeEl = event.target.closest('.eq-node');
+  if (nodeEl) {
+    const index = +nodeEl.dataset.index;
+    const now = performance.now();
+    if (now - lastTap.time < 300 && lastTap.index === index) {
+      removePoint(index);
+      lastTap.time = 0;
+      return;
+    }
+    lastTap = { time: now, index };
     selectedPoint.value = index;
+    dragInfo = { index, moved: false };
+    showReadout(pos.x, pos.y);
+  } else {
+    dragInfo = { index: -1, x: pos.x, y: pos.y, moved: false }; // maybe a tap-to-add
+  }
+};
+
+const onPointerMove = (event) => {
+  if (!pointers.has(event.pointerId)) return;
+  const pos = svgPos(event);
+  pointers.set(event.pointerId, pos);
+
+  if (pinchInfo) {
+    if (pointers.size < 2) return;
+    const point = localEqPoints[selectedPoint.value];
+    if (!point) return;
+    const distance = Math.max(10, pinchDistance());
+    // Spreading fingers widens the bell (lower Q); the exponent tunes
+    // sensitivity so a comfortable pinch spans a useful Q range.
+    point.q = clamp(pinchInfo.startQ * Math.pow(pinchInfo.startDistance / distance, 1.5), MIN_Q, MAX_Q);
+    requestUpdate();
+    showReadout(frequencyToX(point.freq), gainToY(point.gain));
+    return;
   }
 
-  lastTouch.time = now;
-  lastTouch.index = index;
-};
-
-const startDrag = (index, event) => {
-  event.preventDefault();
-  selectedPoint.value = index;
-
-  const clientX = event.touches ? event.touches[0].clientX : event.clientX;
-  const clientY = event.touches ? event.touches[0].clientY : event.clientY;
-
-  dragState.isDragging = true;
-  dragState.pointIndex = index;
-  dragState.startX = clientX;
-  dragState.startY = clientY;
-  dragState.startFreq = localEqPoints[index].freq;
-  dragState.startGain = localEqPoints[index].gain;
-};
-
-const onMouseMove = (event) => {
-  if (!dragState.isDragging) return;
-
-  const clientX = event.touches ? event.touches[0].clientX : event.clientX;
-  const clientY = event.touches ? event.touches[0].clientY : event.clientY;
-
-  const deltaX = clientX - dragState.startX;
-  const deltaY = clientY - dragState.startY;
-
-  const currentX = frequencyToX(dragState.startFreq) + deltaX;
-  const currentY = gainToY(dragState.startGain) + deltaY;
-
-  const newFreq = Math.max(20, Math.min(20000, xToFrequency(currentX)));
-  const newGain = Math.max(-15, Math.min(15, yToGain(currentY)));
-
-  localEqPoints[dragState.pointIndex].freq = newFreq;
-  localEqPoints[dragState.pointIndex].gain = newGain;
-  
+  if (!dragInfo) return;
+  if (dragInfo.index < 0) {
+    if (Math.hypot(pos.x - dragInfo.x, pos.y - dragInfo.y) > 6) dragInfo.moved = true;
+    return;
+  }
+  dragInfo.moved = true;
+  const point = localEqPoints[dragInfo.index];
+  point.freq = clamp(xToFrequency(clamp(pos.x, 0, width.value)), MIN_FREQ, MAX_FREQ);
+  point.gain = clamp(yToGain(clamp(pos.y, 0, height.value)), -MAX_GAIN, MAX_GAIN);
   requestUpdate();
+  showReadout(frequencyToX(point.freq), gainToY(point.gain));
 };
 
-const stopDrag = () => {
-  if (!dragState.isDragging) return;
-  dragState.isDragging = false;
-  dragState.pointIndex = null;
-  // Send the full set once on release so the backend state is reconciled
-  // even if a throttled per-point update was dropped mid-drag.
-  requestUpdate(true);
+const finishPointer = (event, cancelled) => {
+  pointers.delete(event.pointerId);
+
+  if (pinchInfo) {
+    if (pointers.size < 2) {
+      pinchInfo = null;
+      hideReadout(600);
+      // Reconcile the backend with the final Q even if a throttled
+      // per-point update was dropped mid-pinch.
+      requestUpdate(true);
+    }
+    return; // a pinch never falls through to tap-to-add
+  }
+
+  if (!dragInfo) return;
+  if (dragInfo.index < 0) {
+    if (!cancelled && !dragInfo.moved) {
+      const pos = svgPos(event);
+      addPointAt(xToFrequency(pos.x), yToGain(pos.y));
+    }
+  } else if (dragInfo.moved) {
+    // Send the full set once on release so the backend state is reconciled
+    // even if a throttled per-point update was dropped mid-drag.
+    requestUpdate(true);
+  }
+  dragInfo = null;
+  hideReadout();
+};
+
+const onPointerUp = (event) => finishPointer(event, false);
+const onPointerCancel = (event) => finishPointer(event, true);
+
+const onWheel = (event) => {
+  const point = localEqPoints[selectedPoint.value];
+  if (!point) return;
+  point.q = clamp(point.q * Math.exp(-event.deltaY * 0.002), MIN_Q, MAX_Q);
+  requestUpdate();
+  showReadout(frequencyToX(point.freq), gainToY(point.gain));
+  hideReadout(700);
 };
 
 // Fullscreen logic
@@ -610,9 +818,7 @@ const checkOrientation = () => {
   const isLandscape = window.matchMedia("(orientation: landscape)").matches;
   isFullscreen.value = isLandscape;
   document.body.style.overflow = isLandscape ? 'hidden' : '';
-  console.log('Is landscape:', isLandscape); // Debug this
-  console.log('Window dimensions:', window.innerWidth, 'x', window.innerHeight);
-  
+
   // Allow time for orientation change and then update dimensions
   nextTick(() => {
     updateDimensions();
@@ -621,21 +827,16 @@ const checkOrientation = () => {
 
 // Event listeners
 onMounted(async () => {
-  document.addEventListener('mousemove', onMouseMove);
-  document.addEventListener('mouseup', stopDrag);
-  document.addEventListener('touchmove', onMouseMove);
-  document.addEventListener('touchend', stopDrag);
-  
   // Initial dimension update
   await nextTick();
   updateDimensions();
-  
+
   // Set up resize observer
   if (window.ResizeObserver && eqContainer.value) {
     resizeObserver = new ResizeObserver(updateDimensions);
     resizeObserver.observe(eqContainer.value);
   }
-  
+
   // Fallback resize listener
   window.addEventListener('resize', updateDimensions);
 
@@ -645,23 +846,20 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-  document.removeEventListener('mousemove', onMouseMove);
-  document.removeEventListener('mouseup', stopDrag);
-  document.removeEventListener('touchmove', onMouseMove);
-  document.removeEventListener('touchend', stopDrag);
   window.removeEventListener('resize', updateDimensions);
   window.removeEventListener('resize', checkOrientation);
-  
+
   // Ensure body scroll is unlocked on component unmount
   document.body.style.overflow = '';
 
   if (resizeObserver) {
     resizeObserver.disconnect();
   }
-  
+
   if (throttleTimeout) {
     clearTimeout(throttleTimeout);
   }
+  clearTimeout(readoutHideTimer);
   pendingRequest = null; // Ensure no pending requests block future operations if component unmounts
 });
 </script>
@@ -680,192 +878,197 @@ onUnmounted(() => {
   width: 100vw;
   height: 100vh;
   z-index: 9999;
-  padding: 0;
   border-radius: 0;
+  background: #12161c;
+  /* Keep nodes reachable around the notch on landscape iPhones */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+           env(safe-area-inset-bottom) env(safe-area-inset-left);
+  box-sizing: border-box;
 }
 
 .parametric-eq.is-fullscreen .eq-container {
   height: 100%;
-}
-
-.parametric-eq.is-fullscreen .point-selection,
-.parametric-eq.is-fullscreen .eq-controls,
-.parametric-eq.is-fullscreen .add-point-btn {
-  display: none;
+  margin-bottom: 0;
+  border-radius: 0;
 }
 
 .eq-container {
   position: relative;
   width: 100%;
   height: 280px;
-  background: #0f0f0f;
+  background: linear-gradient(180deg, #161b22 0%, #12161c 100%);
   border-radius: 4px;
   overflow: hidden;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
   min-width: 300px; /* Minimum width for usability */
 }
 
-.eq-grid, .eq-curve {
-  position: absolute;
-  top: 0;
-  left: 0;
-  pointer-events: none;
+/* Full-bleed on portrait phones: escape every ancestor's card padding */
+@media (max-width: 640px) and (orientation: portrait) {
+  .parametric-eq:not(.is-fullscreen) .eq-container {
+    width: 100vw;
+    margin-left: calc(50% - 50vw);
+    min-width: 0;
+    border-radius: 0;
+  }
 }
 
-.eq-point {
-  position: absolute;
-  transform: translate(-50%, -50%);
+.eq-svg {
+  display: block;
+  touch-action: none; /* stops Safari hijacking pinch as page zoom */
+  cursor: crosshair;
+}
+
+.eq-svg .eq-node {
   cursor: grab;
-  z-index: 10;
-  pointer-events: auto;
 }
 
-.eq-point:active {
+.eq-svg .eq-node:active {
   cursor: grabbing;
 }
 
-.point-circle {
-  width: 16px;
-  height: 16px;
-  background: #0088ff;
-  border-radius: 50%;
-  box-shadow: 0 2px 8px rgba(0, 136, 255, 0.4);
-  transition: all 0.2s ease;
-}
-
-.eq-point:hover .point-circle {
-  width: 16px;
-  height: 16px;
-  box-shadow: 0 4px 12px rgba(0, 136, 255, 0.6);
-}
-
-.eq-point.active .point-circle {
-  background: #0088ff;
-  border: 3px solid #fff;
-  box-shadow: 0 4px 16px rgba(0, 136, 255, 0.8), 0 0 0 3px rgba(0, 136, 255, 0.3);
-}
-
-.point-label {
+.drag-readout {
   position: absolute;
-  top: -40px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(0, 0, 0, 0.8);
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 10px;
-  text-align: center;
+  pointer-events: none;
+  background: rgba(10, 13, 17, 0.92);
+  border: 1px solid rgba(148, 168, 196, 0.22);
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 11px;
+  line-height: 1.5;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
   opacity: 0;
-  transition: opacity 0.2s ease;
-  pointer-events: none;
+  transition: opacity 0.12s;
+  transform: translate(-50%, -130%);
 }
 
-.eq-point:hover .point-label {
+.drag-readout.show {
   opacity: 1;
 }
 
-.add-point-btn {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  background: #333;
-  color: #fff;
-  border: none;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s ease;
-  padding: 0;
-}
-
-.add-point-btn:hover {
-  background: #0088ff;
-  color: #fff;
-  transform: scale(1.1);
-}
-
-.import-btn {
-  position: absolute;
-  top: 10px;
-  right: 60px;
-  background: #333;
-  color: #fff;
-  border: none;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s ease;
-  padding: 0;
-}
-
-.import-btn:hover {
-  background: #0088ff;
-  color: #fff;
-  transform: scale(1.1);
-}
-
-.add-point-btn svg {
-  display: block;
-}
-
+/* ── Band rail ─────────────────────────────────────── */
 .point-selection {
   display: flex;
   gap: 8px;
-  justify-content: center;
-  margin-bottom: 20px;
-  position: static;
-  z-index: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+  margin-bottom: 12px;
+  padding: 2px;
+  mask-image: linear-gradient(90deg, transparent, #000 12px, #000 calc(100% - 12px), transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12px, #000 calc(100% - 12px), transparent);
 }
 
-.point-btn {
-  background: #333;
-  color: #fff;
-  border: none;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: bold;
-  transition: all 0.2s ease;
+.point-selection::-webkit-scrollbar {
+  display: none;
+}
+
+.point-chip {
+  flex: 0 0 auto; /* chips scroll, never squish */
+  scroll-snap-align: center;
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 0;
-  line-height: 1;
+  gap: 7px;
+  background: #1a2029;
+  border: 1px solid rgba(148, 168, 196, 0.10);
+  border-radius: 999px;
+  padding: 7px 13px 7px 10px;
+  font-size: 12px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  color: #8b96a8;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.point-btn:hover {
-  background: #444;
-  transform: scale(1.05);
+.point-chip.active {
+  color: #d7dee9;
+  background: #222a35;
+  border-color: var(--chip-color, rgba(148, 168, 196, 0.22));
 }
 
-.point-btn.active {
-  background: #0088ff;
-  box-shadow: 0 0 0 2px rgba(0, 136, 255, 0.3);
+.point-chip.chip-ghost {
+  border-style: dashed;
+  font-family: inherit;
 }
 
+.point-chip:focus-visible {
+  outline: 2px solid #f5c04e;
+  outline-offset: 2px;
+}
+
+.chip-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+
+/* ── Selected band controls ────────────────────────── */
 .eq-controls {
-  background: #222;
-  padding: 20px;
-  border-radius: 4px;
+  background: #1a2029;
+  border: 1px solid rgba(148, 168, 196, 0.10);
+  padding: 16px;
+  border-radius: 10px;
+}
+
+.eq-controls-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.eq-controls-head .chip-dot {
+  width: 10px;
+  height: 10px;
 }
 
 .eq-controls h4 {
-  margin: 0 0 15px 0;
-  color: #0088ff;
+  margin: 0;
+  font-size: 14px;
+}
+
+.delete-band-btn {
+  margin-left: auto;
+  background: none;
+  border: 1px solid rgba(148, 168, 196, 0.22);
+  color: #8b96a8;
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.delete-band-btn:hover {
+  color: #ff8a80;
+  border-color: rgba(255, 138, 128, 0.4);
+}
+
+.import-file-btn {
+  background: none;
+  border: 1px solid rgba(148, 168, 196, 0.22);
+  color: #8b96a8;
+  border-radius: 6px;
+  font-size: 12px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.import-file-btn:hover {
+  color: #f5c04e;
+  border-color: #f5c04e;
 }
 
 .control-group {
   margin-bottom: 15px;
+}
+
+.control-group:last-child {
+  margin-bottom: 0;
 }
 </style>
