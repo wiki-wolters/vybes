@@ -1,200 +1,155 @@
 # Vybes, a home DSP project
 
-Vybes is a DSP, designed for flexibility and multiple presets for room correction, EQ curve preferences, dynamic EQ adjustments based on volume, phase syncing, and subwoofer crossover, all controlled via a web interface over WIFI.
+Vybes is a DSP, designed for flexibility and multiple presets covering parametric EQ, FIR
+filter room correction, speaker delays, and subwoofer crossover, all controlled via a web
+interface over WIFI.
 
 ## Internals
-At the core of the device is a Teensy 4.0 with a 600MHz processor. The Teensy is responsible for all the digital audio manipulations, including delays and parametric EQ.
 
-An ESP8266 NodeMCU development board is responsible for connecting to WIFI, serving a web UI and API, and managing Teensy state. The ESP8266 flash memory will be used to remember preset configurations and for serving up assets for the web UI.
+At the core of the device is a Teensy 4.1 with a 600MHz processor. The Teensy is
+responsible for all the digital audio manipulation: input mixing, parametric EQ, FIR
+filtering, speaker delays, subwoofer crossover, and tone/pink-noise generation.
 
-An SPDIF Toslink optical input with digital I2S output allows for direct digital audio into the Teensy without losing audio quality converting from analogue.
+An ESP8266 NodeMCU development board is responsible for connecting to WIFI, serving the
+web UI and API, and managing Teensy state. Preset configuration is stored on the
+ESP8266's flash (LittleFS, as MessagePack), alongside the built web UI assets.
 
-Output consists of four RCAs connected to two PCM5102A DAC boards. Two will be used for L & R channels, and one will be used as a subwoofer output. The fourth will be connected, but not used at this point. It could be used for a second subwoofer st some point in the future.
+Audio inputs (all digital, into the Teensy):
+* SPDIF Toslink optical
+* Bluetooth receiver via I2S
+* USB audio (the Teensy enumerates as a USB sound card; built with `USB_MIDI_AUDIO_SERIAL`)
 
-To ensure a smooth power supply, a linear regulator will take a 5V input from a standard power supply via USB-C and output a stable 3.3V that can be used by the DACs.
+Audio outputs:
+* Analog L & R via an I2S DAC board (PCM5102A)
+* Analog subwoofer via a second PCM5102A I2S DAC board
+* SPDIF pass-through out
 
-An internal microphone (ICS-43434 with digital I2S output) connected to the Teensy can detect room volume levels so that EQ can be adjusted dynamically.
+Other hardware handled by the ESP8266:
+* A 1602 backlit LCD (via an I2C PCF8574 backpack) shows the current preset name. The
+  backlight turns on when the preset changes and turns off after a few seconds.
+* A front button: a short press wakes the LCD backlight, further presses cycle through
+  presets (the selection is applied one second after the last press). Holding the button
+  for ~3 seconds triggers Bluetooth pairing (the ESP drives the Bluetooth module's
+  pairing line high while held).
+* An IR receiver, so a spare remote control can drive volume up/down, mute, and
+  next/previous preset.
 
-A 1602A backlit LCD screen will show the current preset name. The backlight turns on when the preset changes, and turns off after 5 seconds of inactivity.
+WIFI credentials are provisioned by WiFiManager: if the ESP8266 can't connect, it
+automatically opens a "Vybes-Config" access point that a phone can join to enter
+credentials. Once on the network it registers itself via mDNS so the device is
+reachable at http://vybes.local.
 
-A button on the front will allow changing between presets and if held for more than 5 seconds, will put the device into config portal state so it can be connected to by an iPhone and authentication details provided for the local network. The ESP8266 will then register itself on the network using MDSN so that it can be accessed on http://vybes.local. (see https://github.com/tzapu/WiFiManager)
+FIR filter files live on an SD card in the Teensy 4.1's built-in slot; the ESP asks the
+Teensy for the list of available files and tells it which file to load per channel.
 
-## Data Structure for presets
-* Preset name
-* Speaker delays
-  * Left
-  * Right
-  * Sub
-* Subwoofer crossover
-  * Frequency
-  * Slope (12db, 24db)
-* Room Correction: Array of PEQ sets, where each set contains:
-  * SPL value (can be null)
-  * PEQ set: Array of PEQ points, where each point contains:
-    *  Frequency
-    *  Gain
-    *  Q
-*  Preference Curve: Same as Room Correction, can be copied from presets like "Harmon"
-*  Equal loudness (on/off)
+## Presets
 
-## Web UI Pages
-### Calibrate
-This page shows if no calibration has been completed. It must be done before any presets are configured. It contains an input for entering an SPL value and a button to toggle pink noise.
+Up to 8 presets are stored (see `ESP/esp-web-server/config.h`). Each preset contains:
+
+* Name (max 15 characters)
+* Speaker gains (left, right, sub)
+* Speaker delays in microseconds (left, right, sub) + enabled flag
+* Subwoofer crossover: frequency + enabled flag
+* Preference curve EQ: up to 3 PEQ sets of up to 15 points each (frequency, gain, Q),
+  plus an enabled flag. Each set carries an SPL value for future volume-dependent EQ,
+  but currently only the default set (spl = 0) is used.
+* FIR filters: a filter filename per channel (left, right, sub) + enabled flag
+
+Global (non-preset) state includes master volume, mute state and mute percentage,
+input gains (spdif, bluetooth, usb, tone), and the tone/noise generator settings.
+
+## Web UI
+
+A Vue 3 + Vite single-page app (in `/WebUI`), served by the ESP8266. Three views:
 
 ### Home
-This page allows the user to quickly perform actions using buttons, sliders and switches. Each top level bullet point is contained in its own box to show a relation between inputs.
-
-* Presets: a button for each, and a plus icon to add new.
-  * Current preset button shows in an active state. When in an active state, the preset shows icons on the right:
-    * edit: when tapped, navigates to the preset configuration page
-    * copy: when tapped, creates a new preset with all settings copied across from the active preset. The new preset name is the same, but with " Copy" appended. The new preset becomes the active preset.
-* Turn on/off the subwoofer output (switch)
-* Bypass DSP (switch)
-* Mute
-  * Percentage (slider)
-  * On/off (switch)
-* Calibration value (text)
-* Tools (button, opens tools page)
+* Presets: a button for each, and a plus icon to add new. Tapping the active preset's
+  edit icon navigates to the preset editor.
+* Master volume slider
+* Input source gain sliders: Bluetooth, TV (SPDIF), USB, Tone
+* Speaker on/off toggles: left, right, subwoofer
+* Mute: volume-reduction percentage slider and on/off toggle
+* Configuration: backup and restore buttons (download/upload the full device config)
 
 ### Tools
-This page is for utilities that don't belong to a specific preset but can be useful.
+* Tone generator: frequency and volume sliders with a start/stop button
+* Pink noise generator: volume slider with a start/stop button
 
-* Tone generator
-  * Frequency slider
-  * Volume slider
-  * Text value of current frequency  
-* Pink noise generator toggle button
+### Preset editor
+Rename, copy, and delete buttons for the selected preset, plus collapsible sections
+(each with its own enable toggle):
+* EQ: interactive parametric EQ chart with draggable points and a calculated
+  frequency-response curve
+* FIR filters: a file selector per channel (left, right, sub)
+* Subwoofer crossover: frequency slider
+* Speaker delays: an input per speaker, in microseconds
+
+## API
+
+HTTP on port 80. Parameters are query strings unless a JSON body is noted.
+
+### System
+* **GET /status** — current state: speaker gains, input gains, mute, tone and noise
+  generator settings, master volume, and the active preset name
+* **PUT /volume?value={0-100}** — master volume
+* **PUT /mute?state={on|off}**
+* **PUT /mute/percent?percent={0-100}** — how much mute reduces the volume
+* **GET /backup** — download the device configuration (MessagePack)
+* **POST /restore** — upload a previously downloaded configuration (multipart file)
+
+### Gains
+* **PUT /gains/speaker?speaker={left|right|sub}&value={gain}**
+* **PUT /gains/input** — JSON body, any of: `{ "spdif": n, "bluetooth": n, "usb": n, "tone": n }`
+* **GET /preset/gains?preset_name={name}**
+* **PUT /preset/gains?preset_name={name}** — JSON body of per-speaker gains
+
+### Signal generator
+* **PUT /generate/tone?frequency={20-20000}&volume={0-100}**
+* **PUT /generate/tone/stop**
+* **PUT /noise?level={0-100}** — 0 turns noise off
+
+### Preset management
+* **GET /presets** — all presets with names and which is current
+* **GET /preset?name={name}** — full preset configuration
+* **POST /preset?action=create&name={name}**
+* **POST /preset?action=copy&source={name}&destination={name}**
+* **PUT /preset?action=rename&old_name={name}&new_name={name}**
+* **DELETE /preset?name={name}**
+* **PUT /preset/active?name={name}** — switch the active preset
 
 ### Preset configuration
-This page is for editing the properties of an individual preset.
+* **PUT /preset/delay?preset_name={name}&speaker={left|right|sub}&value={0-10000}** — delay in µs
+* **PUT /preset/delay/enabled?preset_name={name}&state={on|off}**
+* **PUT /preset/eq?preset_name={name}** — JSON body: array of `{ "freq": 20-20000, "gain": -15-15, "q": 0.1-10 }`
+* **PUT /preset/eq/point?preset_name={name}** — JSON body: single point `{ "id": 0-14, "freq": n, "gain": n, "q": n }`
+* **PUT /preset/eq/enabled?preset_name={name}&enabled={on|off}**
+* **PUT /preset/crossover?preset_name={name}&frequency={20-20000}**
+* **PUT /preset/crossover/enabled?preset_name={name}&enabled={on|off}**
 
-* Name: input, saves immediately on blur
-* Speaker delays:
-  * Inputs for each speaker, in ms
-  * Auto: button, helps to calculate speaker distances and group delay by playing a 100hz pulse for 200ms on each output (L, R, sub), with a 300ms silence inbetween. The pulses can be recorded from the iPhone mic at the listening position and measurements can be taken to determine appropriate speaker delay values, which can then be populated into the speaker inputs
-* Room correction: shows a list of PEQ sets, where each list item shows the SPL value for the set, and a small chart showing a preview of the EQ curve
-  * Tapping on a list item expands it, showing:
-    * An input to edit the SPL value. Changing the SPL value results in the existing set being deleted and a new one created for this SPL. An SPL cannot be chosen that already exists in the list.
-    * An interactive PEQ chart, with a tappable circle for each point, and an overall calculated curve. The chart shows a plus icon in the top right corner that allows another point to be added.
-    * Freq: slider & input, to adjust value for selected point
-    * Gain: slider & input, to adjust value for selected point
-    * Q: slider & input, to adjust value for selected point
-* Preference curve: same interface as room correction
-* Equal loudness: switch
+### FIR filters
+* **GET /fir/files** — list of filter files on the Teensy's SD card
+* **PUT /preset/fir?preset_name={name}&speaker={left|right|sub}&file={filename}**
+* **PUT /preset/fir/enabled?preset_name={name}&state={on|off}**
 
-## API Endpoints
-
-### System Status
-* **GET /status**
-  * Returns current system status including:
-    * Speaker gains (left, right, sub)
-    * Mute state and percentage
-    * Tone generation settings
-    * Noise volume
-    * Current active preset
-
-### Speaker Controls
-* **PUT /speaker/{speaker}/gain/{gain}**
-  * speaker: "left", "right", or "sub"
-  * gain: 0.0 to 2.0
-* **PUT /mute/{state}**
-  * state: "on" or "off"
-* **PUT /mute/percent/{percent}**
-  * percent: 1-100
-* **PUT /generate/noise/{volume}**
-  * volume: 0-100 (0 turns off noise)
-
-### Preset Management
-* **GET /presets**
-  * Returns array of all presets with names and current status
-* **GET /preset/{name}**
-  * Returns complete preset configuration including:
-    * FIR filter settings
-    * Speaker delays
-    * Crossover settings
-    * EQ configurations (room correction and preference curves)
-* **POST /preset/create/{name}**
-  * Creates a new preset with default settings
-  * name: must be unique
-* **POST /preset/copy/{source}/{new}**
-  * source: name of preset to copy
-  * new: name for new preset
-* **PUT /preset/rename/{old}/{new}**
-  * old: current preset name
-  * new: new preset name
-* **DELETE /preset/{name}**
-  * Deletes the specified preset
-
-### Speaker Configuration
-* **PUT /preset/{name}/delay/{speaker}/{us}**
-  * name: preset name
-  * speaker: "left", "right", or "sub"
-  * us: delay in microseconds (float)
-* **PUT /preset/{name}/delay/enabled/{state}**
-  * name: preset name
-  * state: "on" or "off"
-
-### FIR Filter Management
-* **GET /fir/files**
-  * Returns list of available FIR filter files
-* **PUT /preset/{name}/fir/file/{channel}/{filter}**
-  * name: preset name
-  * channel: "left", "right", or "sub"
-  * filter: name of FIR filter file
-* **PUT /preset/{name}/fir/enabled/{state}**
-  * name: preset name
-  * state: "on" or "off"
-
-### EQ Management
-* **POST /preset/{name}/eq**
-  * Creates or updates an EQ set
-  * Body: { peqPoints: Array }
-* **POST /preset/{name}/eq/{type}/{spl}**
-  * type: "room" or "pref"
-  * spl: 0-120 (0 = default set)
-  * body: Array of PEQ points
-* **DELETE /preset/{name}/eq/{type}/{spl}**
-  * type: "room" or "pref"
-  * spl: SPL value of set to delete
-* **PUT /preset/{name}/eq/{type}/enabled/{state}**
-  * type: "room" or "pref"
-  * state: "on" or "off"
-
-### Crossover Configuration
-* **PUT /preset/{name}/crossover/freq/{freq}**
-  * name: preset name
-  * freq: 20-500 Hz
-* **PUT /preset/{name}/crossover/enabled/{state}**
-  * name: preset name
-  * state: "on" or "off"
-
-### System Controls
-* **PUT /preset/active/{name}**
-  * name: preset name to activate
-* **PUT /generate/noise/{volume}**
-  * volume: 0-100 (0 turns off noise)
-
-### Live Updates (WebSocket)
-* **ws://vybes.local:8080**
-  * Messages are JSON objects with event types:
-    * speaker_gain: { speaker: string, gain: number }
-    * mute: { state: string }
-    * mute_percent: { percent: number }
-    * preset: { action: string, name: string, [additional fields] }
-    * speaker_delay: { speaker: string, delayUs: number, preset: string }
-    * fir_enabled: { preset: string }
-    * fir_updated: { preset: string, channel: string, filter: string }
-    * eq_updated: { preset: string, type: string, spl: number, peqPoints: Array }
-    * eq_created: { preset: string, type: string, spl: number, peqPoints: Array }
-    * eq_deleted: { preset: string, type: string, spl: number }
-    * crossover: { preset: string, frequency: number, slope: string }
-    * noise: { volume: number }
+### Live updates (WebSocket)
+* **ws://vybes.local/live-updates**
+  * State changes are broadcast to all connected clients as JSON with a `messageType`
+    field: `volumeChanged`, `muteChanged`, `mutePercentChanged`, `activePresetChanged`,
+    `delayChanged`, `delayEnabledChanged`, `eqPointsChanged`, `eqEnabledChanged`,
+    `crossoverChanged`, `crossoverEnabledChanged`, `firChanged`, `firEnabledChanged`,
+    plus payload fields (usually `presetName` and the new value).
+  * Tone and noise updates are broadcast as `{ "toneFrequency": n, "toneVolume": n }`
+    and `{ "noiseVolume": n }` (no `messageType` field).
 
 ## Directories
-* /ESP: ESP8266 API server
-* /Teensy: Teensy DSP code
-* /mock-server: Mock server for API development
-* /WebUI: Web UI code
+* `/ESP`: ESP8266 web server firmware (API, WebSocket, LCD, button, IR remote, WIFI)
+* `/Teensy`: Teensy DSP firmware. `fir_filters/` is the firmware that builds; `direct/`
+  and `fir_test/` are earlier experiments/test sketches.
+* `/WebUI`: Vue 3 web UI
+* `/mock-server`: Express + SQLite mock of the device API, for developing the web UI
+  without hardware (includes the WebSocket endpoint)
+* `/docs`: wiring and protocol documentation
+* `/3d`: 3D-printable case models
 
 ## Building
 
@@ -206,12 +161,14 @@ pio run -d Teensy   # Teensy DSP firmware
 cd WebUI && npm run build   # Web UI
 ```
 
-Add `-t upload` to flash. GitHub Actions compiles all three on every push
-(`.github/workflows/build.yml`).
+Add `-t upload` to flash. `npm run deploy` in `/WebUI` builds the UI and copies it into
+`ESP/esp-web-server/data/dist` for upload to the ESP's LittleFS. GitHub Actions compiles
+all three on every push (`.github/workflows/build.yml`).
 
 ## ESP ↔ Teensy link
 
-The two boards communicate over UART (115200 baud), not I2C. The WebSocket
-live-update endpoint is `ws://vybes.local/live-updates` and every message
-carries a `messageType` field. See [docs/WIRING.md](docs/WIRING.md) for the
-wiring, the serial protocol, and the debug-console pinout.
+The two boards communicate over UART (115200 baud) using a newline-delimited text
+protocol. On boot the Teensy sends `EVENT boot` and the ESP pushes the full DSP state,
+so either device can restart independently and the system converges. See
+[docs/WIRING.md](docs/WIRING.md) for the wiring, the serial protocol, and the
+debug-console pinout.
