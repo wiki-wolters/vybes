@@ -113,13 +113,13 @@
       :confirm-text="modalState.confirmText"
       @confirm="handleModalConfirm"
     >
-      <InputGroup v-model="modalState.inputValue" :placeholder="modalState.placeholder" class="w-full mb-4" />
+      <InputGroup ref="newPresetNameInput" v-model="modalState.inputValue" :placeholder="modalState.placeholder" class="w-full mb-4" />
     </ModalDialog>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, inject, onUnmounted } from 'vue';
+import { ref, reactive, onMounted, inject, onUnmounted, nextTick } from 'vue';
 import { asyncDebounce } from '../utilities.js'; // [cite: 42] Utility for rate limiting function calls
 import RangeSlider from '../components/shared/RangeSlider.vue';
 import InputGroup from '../components/shared/InputGroup.vue';
@@ -182,6 +182,7 @@ const modalState = reactive({
   sourceName: '', // For rename/copy operations
 });
 const showModal = ref(false); // Controls visibility of the unified modal
+const newPresetNameInput = ref(null); // Ref to the preset name input in the modal
 
 // Preset-specific editable properties
 const speakerDelays = reactive({ left: 0, right: 0, sub: 0 }); // Speaker delays [cite: 49]
@@ -464,10 +465,9 @@ async function openPresetModal(type, name) {
   modalState.sourceName = name;
   showModal.value = true;
 
-  //On next tick, focus the input field and select all text
+  //On next tick, focus the input field
   nextTick(() => {
-    newPresetNameInput.value.focus();
-    newPresetNameInput.value.select();
+    newPresetNameInput.value?.focus();
   });
 }
 

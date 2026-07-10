@@ -369,7 +369,7 @@ async function toggleMute() {
     console.error('Failed to toggle mute:', error);
     errorMessage.value = `Failed to toggle mute: ${error.message}`;
     // Revert state on error
-    muteEnabled.value = !newState;
+    muteEnabled.value = !muteEnabled.value;
   }
 }
 
@@ -404,7 +404,7 @@ async function restoreConfiguration() {
       const formData = new FormData();
       formData.append('file', file);
       try {
-        apiClient.restore(formData);
+        await apiClient.restore(formData);
         alert('Configuration restore initiated. The device will now reboot. The page will reload automatically to reflect the restored state.');
         setTimeout(() => {
           window.location.reload();
