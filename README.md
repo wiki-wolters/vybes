@@ -158,19 +158,78 @@ HTTP on port 80. Parameters are query strings unless a JSON body is noted.
 * `/docs`: wiring and protocol documentation
 * `/3d`: 3D-printable case models
 
-## Building
+## Building and flashing
 
-Both firmwares build with [PlatformIO](https://platformio.org):
+Both firmwares build with [PlatformIO](https://platformio.org) — no Arduino IDE needed.
+PlatformIO downloads the right toolchains, frameworks, and libraries automatically on
+the first build.
+
+### One-time setup
+
+Install the PlatformIO CLI, e.g. one of:
 
 ```sh
-pio run -d ESP      # ESP8266 web server firmware
-pio run -d Teensy   # Teensy DSP firmware
-cd WebUI && npm run build   # Web UI
+brew install platformio    # macOS (Homebrew)
+pipx install platformio    # anywhere with Python
+pip install platformio     # what CI uses
 ```
 
-Add `-t upload` to flash. `npm run deploy` in `/WebUI` builds the UI and copies it into
-`ESP/esp-web-server/data/dist` for upload to the ESP's LittleFS. GitHub Actions compiles
-all three on every push (`.github/workflows/build.yml`).
+(Alternatively, install the "PlatformIO IDE" extension in VS Code, which bundles the
+`pio` CLI and adds build/upload buttons.)
+
+The web UI needs Node.js. Install its dependencies once:
+
+```sh
+cd WebUI && npm install
+```
+
+### Teensy (DSP firmware)
+
+```sh
+pio run -d Teensy             # compile only
+pio run -d Teensy -t upload   # compile and flash over USB
+```
+
+Upload uses the Teensy loader bundled with the PlatformIO Teensy platform. If the
+upload sits waiting for the board, press the program button on the Teensy.
+
+### ESP8266 (web server firmware + web UI)
+
+The ESP8266's flash holds two separate images, uploaded by two separate commands:
+the firmware (the compiled C++ program) and a LittleFS filesystem image (the built
+web UI assets, plus presets saved at runtime).
+
+1. Flash the firmware:
+
+   ```sh
+   pio run -d ESP -t upload
+   ```
+
+2. Build the web UI and copy it into the ESP's filesystem staging directory
+   (`ESP/esp-web-server/data/dist`):
+
+   ```sh
+   cd WebUI && npm run deploy && cd ..
+   ```
+
+3. Pack `ESP/esp-web-server/data` into a LittleFS image and flash it:
+
+   ```sh
+   pio run -d ESP -t uploadfs
+   ```
+
+Note: `uploadfs` replaces the *entire* filesystem, including presets saved on the
+device. To keep them, download **GET /backup** before flashing and **POST /restore**
+afterwards.
+
+Both upload targets auto-detect the USB serial port. If more than one device is
+plugged in, find the right port with `pio device list` and pass
+`--upload-port <port>`.
+
+To watch ESP debug output: `pio device monitor -b 115200` (the ESP's debug UART is on
+D4/GPIO2 — see [docs/WIRING.md](docs/WIRING.md) for the pinout).
+
+GitHub Actions compiles all three on every push (`.github/workflows/build.yml`).
 
 ## ESP ↔ Teensy link
 
