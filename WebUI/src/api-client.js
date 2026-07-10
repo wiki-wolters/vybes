@@ -61,46 +61,7 @@ class VybesAPI {
     }
   }
 
-  // ===== CALIBRATION =====
-  
-  /**
-   * Set calibration SPL value
-   * @param {number} spl - SPL value (40-120)
-   */
-  async calibrate(spl) {
-    if (spl < 40 || spl > 120) {
-      throw new Error('SPL must be between 40 and 120');
-    }
-    return this.request('PUT', `/calibrate?spl=${spl}`);
-  }
-
-  /**
-   * Get calibration status
-   * @returns {Promise<Object>} Calibration data including SPL value and status
-   */
-  async getCalibration() {
-    return this.request('GET', '/calibration');
-  }
-
   // ===== SYSTEM CONTROLS =====
-
-  /**
-   * Turn subwoofer on/off
-   * @param {boolean} state - true for on, false for off
-   */
-  async setSubwoofer(state) {
-    const stateStr = state ? 'on' : 'off';
-    return this.request('PUT', `/sub?state=${stateStr}`);
-  }
-
-  /**
-   * Bypass DSP on/off
-   * @param {boolean} state - true for on, false for off
-   */
-  async setBypass(state) {
-    const stateStr = state ? 'on' : 'off';
-    return this.request('PUT', `/bypass?state=${stateStr}`);
-  }
 
   /**
    * Mute on/off
@@ -142,12 +103,12 @@ class VybesAPI {
 
   /**
    * Generate tone
-   * @param {number} frequency - Frequency (10-20000 Hz)
+   * @param {number} frequency - Frequency (20-20000 Hz)
    * @param {number} volume - Volume (1-100)
    */
   async generateTone(frequency, volume) {
-    if (frequency < 10 || frequency > 20000) {
-      throw new Error('Frequency must be between 10 and 20000 Hz');
+    if (frequency < 20 || frequency > 20000) {
+      throw new Error('Frequency must be between 20 and 20000 Hz');
     }
     if (volume < 1 || volume > 100) {
       throw new Error('Volume must be between 1 and 100');
@@ -173,13 +134,6 @@ class VybesAPI {
     return this.request('PUT', `/noise?level=${volume}`);
   }
 
-  /**
-   * Play test pulse (100hz for 200ms on each output)
-   */
-  async playPulse() {
-    return this.request('PUT', '/pulse');
-  }
-
   // ===== PRESET MANAGEMENT =====
 
   /**
@@ -191,15 +145,6 @@ class VybesAPI {
   }
 
   /**
-   * Get speaker delays for a preset
-   * @param {string} presetName - Name of the preset
-   * @returns {Promise<Object>} Object containing delays for left, right, and sub
-   */
-  async getSpeakerDelays(presetName) {
-    return this.request('GET', `/preset/delays?preset_name=${encodeURIComponent(presetName)}`);
-  }
-
-  /**
    * Set speaker delay for a specific channel
    * @param {string} presetName - Name of the preset
    * @param {string} speaker - Speaker channel ('left', 'right', or 'sub')
@@ -207,15 +152,6 @@ class VybesAPI {
    */
   async setSpeakerDelay(presetName, speaker, delayMs) {
     return this.request('PUT', `/preset/delay?preset_name=${encodeURIComponent(presetName)}&speaker=${speaker}&value=${delayMs}`);
-  }
-
-  /**
-   * Get crossover settings for a preset
-   * @param {string} presetName - Name of the preset
-   * @returns {Promise<Object>} Crossover settings
-   */
-  async getCrossover(presetName) {
-    return this.request('GET', `/preset/crossover?preset_name=${encodeURIComponent(presetName)}`);
   }
 
   /**
@@ -239,16 +175,6 @@ class VybesAPI {
    */
   async setFirFilter(presetName, channel, filterName) {
     return this.request('PUT', `/preset/fir?preset_name=${encodeURIComponent(presetName)}&speaker=${channel}&file=${encodeURIComponent(filterName)}`);
-  }
-
-  /**
-   * Get all EQ sets for a preset and type
-   * @param {string} presetName - Name of the preset
-   * @param {string} type - EQ type ('room' or 'pref')
-   * @returns {Promise<Array>} Array of EQ sets with SPL and PEQ data
-   */
-  async getEqSets(presetName, type) {
-    return this.request('GET', `/preset/eq?preset_name=${encodeURIComponent(presetName)}&type=${type}`);
   }
 
   /**

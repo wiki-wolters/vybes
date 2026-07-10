@@ -28,7 +28,7 @@ void handlePutTone(AsyncWebServerRequest *request) {
     current_config.toneVolume = vol;
     scheduleConfigWrite();
 
-    sendToTeensy("tone", freqStr + "," + volStr);
+    sendToTeensy(CMD_SET_TONE, freqStr, volStr);
 
         DynamicJsonDocument doc(1024);
     doc["toneFrequency"] = current_config.toneFrequency;
@@ -50,7 +50,7 @@ void handlePutToneStop(AsyncWebServerRequest *request) {
     current_config.toneVolume = 0;
     scheduleConfigWrite();
 
-    sendToTeensy("tone_stop", "");
+    sendToTeensy(CMD_STOP_TONE, "");
 
         DynamicJsonDocument doc(1024);
     doc["toneFrequency"] = 0;
@@ -83,7 +83,7 @@ void handlePutNoise(AsyncWebServerRequest *request) {
     current_config.noiseVolume = vol;
     scheduleConfigWrite();
 
-    sendToTeensy("noise", volStr);
+    sendToTeensy(CMD_SET_NOISE, volStr);
 
         DynamicJsonDocument doc(1024);
     doc["noiseVolume"] = current_config.noiseVolume;
@@ -97,9 +97,4 @@ void handlePutNoise(AsyncWebServerRequest *request) {
         request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
         DebugSerial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
     }
-}
-
-void handlePutPulse(AsyncWebServerRequest *request) {
-    sendToTeensy("pulse", "");
-    request->send(200, "text/plain", "Pulse triggered");
 }

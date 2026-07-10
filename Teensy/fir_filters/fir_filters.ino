@@ -303,6 +303,10 @@ void setup() {
   Mono_mixer.gain(0, 0.5);
   Mono_mixer.gain(1, 0.5);
 
+  // Signal generators start silent
+  Tone_generator.begin(0.0, 1000, WAVEFORM_SINE);
+  pink1.amplitude(0.0);
+
   // Apply state
   Serial.println("Applying state");
   setInputGains(state.gainBluetooth, state.gainOptical, state.gainUSB, state.gainGenerator);
@@ -353,6 +357,9 @@ void setup() {
   router.on("setDelays", handleSetDelays);
   router.on("setEq", handleSetEQFilter);
   router.on("resetEqFilters", handleResetEQFilters);
+  router.on("setTone", handleSetTone);
+  router.on("stopTone", handleStopTone);
+  router.on("setNoise", handleSetNoise);
   router.on("ping", handlePing);
   router.begin(ESP_LINK_BAUD);
 
@@ -584,6 +591,22 @@ void setInputGains(float bluetoothGain, float opticalGain, float usbGain, float 
   Right_mixer.gain(3, state.gainGenerator);
 }
 
+void setTone(float frequency, float volumePercent) {
+  Serial.println("Set tone: " + String(frequency) + " Hz at " + String(volumePercent) + "%");
+  Tone_generator.frequency(frequency);
+  Tone_generator.amplitude(volumePercent / 100.0f);
+}
+
+void stopTone() {
+  Serial.println("Stop tone");
+  Tone_generator.amplitude(0.0f);
+}
+
+void setNoise(float volumePercent) {
+  Serial.println("Set pink noise: " + String(volumePercent) + "%");
+  pink1.amplitude(volumePercent / 100.0f);
+}
+
 void setSpeakerGains(float leftGain, float rightGain, float subGain) {
   Serial.println("Set gains: Left " + String(leftGain) + ", Right " + String(rightGain) + ", Sub " + String(subGain));
   state.gainLeft = leftGain; // Update target left gain
@@ -803,6 +826,22 @@ void handleGetFiles(const String& command, String* args, int argCount, OutputStr
 void handleSetInputGains(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 4) {
     setInputGains(args[0].toFloat(), args[1].toFloat(), args[2].toFloat(), args[3].toFloat());
+  }
+}
+
+void handleSetTone(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 2) {
+    setTone(args[0].toFloat(), args[1].toFloat());
+  }
+}
+
+void handleStopTone(const String& command, String* args, int argCount, OutputStream& stream) {
+  stopTone();
+}
+
+void handleSetNoise(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 1) {
+    setNoise(args[0].toFloat());
   }
 }
 

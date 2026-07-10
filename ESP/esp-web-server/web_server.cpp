@@ -102,6 +102,11 @@ void setupWebServer() {
     server.on("/preset/fir/enabled", HTTP_PUT, handlePutPresetFirEnabled);
     server.on("/preset/fir", HTTP_PUT, handlePutPresetFir);
 
+    // API Routes - Signal Generator
+    server.on("/generate/tone/stop", HTTP_PUT, handlePutToneStop);
+    server.on("/generate/tone", HTTP_PUT, handlePutTone);
+    server.on("/noise", HTTP_PUT, handlePutNoise);
+
     server.on("/preset/active", HTTP_PUT, handlePutActivePreset);
 
     //Feature enablement

@@ -199,7 +199,6 @@ const inputGainsDB = ref({ bluetooth: -40, spdif: -40, usb: -40, tone: -40 });
 const inputGainsLinear = ref({ bluetooth: 0, spdif: 0, usb: 0, tone: 0 });
 let muteUpdateTimeout = null;
 let inputGainsUpdateTimeout = null;
-const calibrationValue = ref(null);
 const showNewPresetDialog = ref(false);
 const newPresetName = ref('');
 const newPresetNameInput = ref(null);
@@ -250,14 +249,6 @@ async function loadSystemData() {
       volume.value = status.volume || 50;
     } catch (statusError) {
       console.warn('Could not load system status:', statusError);
-    }
-
-    // Load calibration data
-    try {
-      const calibration = await apiClient.getCalibration();
-      calibrationValue.value = calibration.spl;
-    } catch (calibrationError) {
-      console.warn('Could not load calibration data:', calibrationError);
     }
 
   } catch (error) {

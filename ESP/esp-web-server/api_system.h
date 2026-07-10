@@ -4,8 +4,6 @@
 #include <ESPAsyncWebServer.h>
 
 void handleGetStatus(AsyncWebServerRequest *request);
-void handlePutSub(AsyncWebServerRequest *request);
-void handlePutBypass(AsyncWebServerRequest *request);
 void handlePutMute(AsyncWebServerRequest *request);
 void handlePutMutePercent(AsyncWebServerRequest *request);
 

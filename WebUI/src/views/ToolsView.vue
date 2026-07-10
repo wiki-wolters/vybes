@@ -14,15 +14,16 @@
 
     <div class="grid md:grid-cols-1 lg:grid-cols-3 gap-8">
       <!-- Tone Generator Section -->
-      <!-- <CardSection title="Tone Generator">
+      <CardSection title="Tone Generator">
         <div class="mb-4">
-          <InputGroup
-            v-model.number="toneFrequency"
-            label="Frequency (10 - 20000 Hz):"
-            type="number"
-            :min="10"
+          <RangeSlider
+            v-model="toneFrequency"
+            label="Frequency"
+            :min="20"
             :max="20000"
-            :disabled="isGeneratingTone"
+            :decimals="0"
+            unit=" Hz"
+            logarithmic
           />
         </div>
         <div class="mb-6">
@@ -32,20 +33,15 @@
             :min="1"
             :max="100"
             unit="%"
-            :disabled="isGeneratingTone"
           />
         </div>
-        <div class="flex space-x-3">
-          <button @click="generateToneSignal" :disabled="isGeneratingTone" class="btn-primary flex-1">
-            <span v-if="isGeneratingTone">Generating...</span>
-            <span v-else>Start Tone</span>
-          </button>
-          <button @click="stopToneSignal" :disabled="!isGeneratingTone" class="btn-secondary flex-1">
-            Stop Tone
-          </button>
-        </div>
+        <button @click="toggleTone" class="w-full"
+          :class="isGeneratingTone ? 'btn-danger' : 'btn-primary'">
+          <span v-if="isGeneratingTone">Stop Tone</span>
+          <span v-else>Start Tone</span>
+        </button>
         <p v-if="isGeneratingTone" class="mt-3 text-xs text-green-400 text-center">Tone is currently active.</p>
-      </CardSection> -->
+      </CardSection>
 
       <!-- Pink Noise Generator Section -->
       <CardSection title="Pink Noise Generator">
@@ -66,31 +62,13 @@
         </button>
         <p v-if="isGeneratingNoise" class="mt-3 text-xs text-green-400 text-center">Pink noise is currently active.</p>
       </CardSection>
-
-      <!-- Test Pulse Section -->
-      <!-- <CardSection title="System Test Pulse">
-        <p class="text-sm text-vybes-text-secondary mb-4">
-          Plays a short audio pulse through the system. Useful for testing connections and basic output.
-        </p>
-        <button @click="playTestPulse" :disabled="isLoading" class="btn-primary w-full">
-          <span v-if="isLoading" class="flex items-center justify-center">
-            <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            Playing...
-          </span>
-          <span v-else>Play Test Pulse</span>
-        </button>
-      </CardSection> -->
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, inject } from 'vue';
+import { ref, inject, watch, onUnmounted } from 'vue';
 import CardSection from '../components/shared/CardSection.vue';
-import InputGroup from '../components/shared/InputGroup.vue';
 import RangeSlider from '../components/shared/RangeSlider.vue';
 
 const apiClient = inject('vybesAPI');
@@ -105,7 +83,6 @@ const noiseVolume = ref(50);
 const isGeneratingNoise = ref(false);
 
 // General reactive data
-const isLoading = ref(false); // For specific actions like pulse
 const toolMessage = ref('');
 const messageType = ref('info'); // 'success', 'error', 'info'
 
@@ -114,10 +91,59 @@ function clearMessage() {
   messageType.value = 'info';
 }
 
+// While the tone is playing, follow slider/input changes so the frequency can
+// be swept by ear. Throttled so a drag doesn't flood the device.
+const TONE_UPDATE_INTERVAL_MS = 150;
+let toneUpdateTimer = null;
+let toneUpdatePending = false;
+
+watch([toneFrequency, toneVolume], () => {
+  if (isGeneratingTone.value) {
+    scheduleToneUpdate();
+  }
+});
+
+function scheduleToneUpdate() {
+  if (toneUpdateTimer) {
+    toneUpdatePending = true;
+    return;
+  }
+  sendToneUpdate();
+  toneUpdateTimer = setTimeout(() => {
+    toneUpdateTimer = null;
+    if (toneUpdatePending) {
+      toneUpdatePending = false;
+      scheduleToneUpdate();
+    }
+  }, TONE_UPDATE_INTERVAL_MS);
+}
+
+async function sendToneUpdate() {
+  try {
+    await apiClient.generateTone(Math.round(toneFrequency.value), toneVolume.value);
+  } catch (error) {
+    console.error('Tone update failed:', error);
+  }
+}
+
+onUnmounted(() => {
+  if (toneUpdateTimer) {
+    clearTimeout(toneUpdateTimer);
+  }
+});
+
+function toggleTone() {
+  if (isGeneratingTone.value) {
+    stopToneSignal();
+  } else {
+    generateToneSignal();
+  }
+}
+
 async function generateToneSignal() {
   clearMessage();
-  if (toneFrequency.value < 10 || toneFrequency.value > 20000) {
-    toolMessage.value = 'Tone frequency must be between 10 and 20000 Hz.';
+  if (toneFrequency.value < 20 || toneFrequency.value > 20000) {
+    toolMessage.value = 'Tone frequency must be between 20 and 20000 Hz.';
     messageType.value = 'error';
     return;
   }
@@ -149,11 +175,10 @@ async function generateToneSignal() {
 async function stopToneSignal() {
   clearMessage();
   try {
-    if (!apiClient || typeof apiClient.generateTone !== 'function') {
-      throw new Error('API client or generateTone method is not available.');
+    if (!apiClient || typeof apiClient.stopTone !== 'function') {
+      throw new Error('API client or stopTone method is not available.');
     }
-    // Assuming 0 volume stops the tone, or a dedicated endpoint like apiClient.stopTone()
-    await apiClient.generateTone(toneFrequency.value, 0); 
+    await apiClient.stopTone();
     isGeneratingTone.value = false;
     toolMessage.value = 'Tone stopped.';
     messageType.value = 'info';
@@ -201,28 +226,6 @@ async function togglePinkNoise() {
     toolMessage.value = `Failed to toggle pink noise: ${error.message}`;
     messageType.value = 'error';
     // Revert optimistic UI updates if necessary, or rely on actual device state if available
-  }
-}
-
-async function playTestPulse() {
-  clearMessage();
-  isLoading.value = true;
-  toolMessage.value = 'Playing test pulse...';
-  messageType.value = 'info';
-
-  try {
-    if (!apiClient || typeof apiClient.playPulse !== 'function') {
-      throw new Error('API client or playPulse method is not available.');
-    }
-    await apiClient.playPulse();
-    toolMessage.value = 'Test pulse played successfully.';
-    messageType.value = 'success';
-  } catch (error) {
-    console.error('Play Test Pulse failed:', error);
-    toolMessage.value = `Failed to play test pulse: ${error.message}`;
-    messageType.value = 'error';
-  } finally {
-    isLoading.value = false;
   }
 }
 

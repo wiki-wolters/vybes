@@ -6,6 +6,5 @@
 void handlePutTone(AsyncWebServerRequest *request);
 void handlePutToneStop(AsyncWebServerRequest *request);
 void handlePutNoise(AsyncWebServerRequest *request);
-void handlePutPulse(AsyncWebServerRequest *request);
 
 #endif // API_SIGNAL_GENERATOR_H

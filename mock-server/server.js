@@ -6,7 +6,7 @@ const path = require('path');
 
 const app = express();
 const expressStaticGzip = require('express-static-gzip');
-const PORT = 80; // Standard HTTP port for vybes.local
+const PORT = process.env.PORT || 80; // Standard HTTP port for vybes.local
 
 // Middleware
 app.use(cors());
@@ -157,7 +157,8 @@ app.get('/status', async (req, res) => {
       bluetoothGain,
       spdifGain,
       usbGain,
-      toneGain
+      toneGain,
+      volume
     ] = await Promise.all([
       getSetting('sub_gain'),
       getSetting('left_gain'),
@@ -170,7 +171,8 @@ app.get('/status', async (req, res) => {
       getSetting('bluetooth_gain'),
       getSetting('spdif_gain'),
       getSetting('usb_gain'),
-      getSetting('tone_gain')
+      getSetting('tone_gain'),
+      getSetting('volume')
     ]);
 
     // Get current preset
@@ -257,6 +259,57 @@ app.put('/mute', async (req, res) => {
     await setSetting('mute_state', state);
     broadcast({ event: 'mute', state });
     res.json({ success: true, state });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Signal generator
+app.put('/generate/tone', async (req, res) => {
+  const frequency = parseInt(req.query.frequency);
+  const volume = parseInt(req.query.volume);
+
+  if (isNaN(frequency) || frequency < 20 || frequency > 20000) {
+    return res.status(400).json({ error: 'Frequency must be between 20 and 20000' });
+  }
+  if (isNaN(volume) || volume < 0 || volume > 100) {
+    return res.status(400).json({ error: 'Volume must be between 0 and 100' });
+  }
+
+  try {
+    await setSetting('tone_frequency', frequency.toString());
+    await setSetting('tone_volume', volume.toString());
+    const payload = { toneFrequency: frequency, toneVolume: volume };
+    broadcast(payload);
+    res.json(payload);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/generate/tone/stop', async (req, res) => {
+  try {
+    await setSetting('tone_volume', '0');
+    const payload = { toneFrequency: 0, toneVolume: 0 };
+    broadcast(payload);
+    res.json(payload);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/noise', async (req, res) => {
+  const level = parseInt(req.query.level);
+
+  if (isNaN(level) || level < 0 || level > 100) {
+    return res.status(400).json({ error: 'Level must be between 0 and 100' });
+  }
+
+  try {
+    await setSetting('noise_volume', level.toString());
+    const payload = { noiseVolume: level };
+    broadcast(payload);
+    res.json(payload);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

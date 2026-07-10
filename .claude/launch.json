@@ -2,6 +2,16 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "mock-server",
+      "runtimeExecutable": "/usr/bin/env",
+      "runtimeArgs": [
+        "PORT=3199",
+        "/Users/lancewolters/.nvm/versions/node/v20.19.6/bin/node",
+        "mock-server/server.js"
+      ],
+      "port": 3199
+    },
+    {
       "name": "webui-dev",
       "runtimeExecutable": "/Users/lancewolters/.nvm/versions/node/v20.19.6/bin/node",
       "runtimeArgs": [

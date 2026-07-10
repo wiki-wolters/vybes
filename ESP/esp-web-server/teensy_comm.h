@@ -32,9 +32,12 @@
 #define CMD_SET_DELAYS "setDelays"
 #define CMD_SET_DELAY_ENABLED "setDelayEnabled"
 
+// Signal Generator Commands
+#define CMD_SET_TONE "setTone"
+#define CMD_STOP_TONE "stopTone"
+#define CMD_SET_NOISE "setNoise"
+
 // System Commands
-#define CMD_SET_SUBWOOFER "setSubwoofer"
-#define CMD_SET_BYPASS "setBypass"
 #define CMD_SET_MUTE "setMute"
 #define CMD_SET_MUTE_PERCENT "setMutePercent"
 #define CMD_PING "ping"

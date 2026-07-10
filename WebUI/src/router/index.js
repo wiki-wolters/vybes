@@ -2,7 +2,6 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import HomeView from '../views/HomeView.vue'
 import ToolsView from '../views/ToolsView.vue'
 import PresetView from '../views/PresetEditorView.vue'
-import CalibrateView from '../views/CalibrationView.vue'
 
 const routes = [
   {
@@ -11,14 +10,6 @@ const routes = [
     component: HomeView,
     meta: {
       title: 'Vybes DSP - Home'
-    }
-  },
-  {
-    path: '/calibrate',
-    name: 'Calibrate',
-    component: CalibrateView,
-    meta: {
-      title: 'Vybes DSP - Calibration'
     }
   },
   {

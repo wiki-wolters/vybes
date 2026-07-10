@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "VITE_API_BASE_URL=http://vybes-mock.local vite build",
+    "deploy": "npm run build && rm -rf ../ESP/esp-web-server/data/dist && cp -R dist ../ESP/esp-web-server/data/dist",
     "preview": "vite preview",
     "lint": "lint"
   },
