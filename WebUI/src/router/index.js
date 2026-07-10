@@ -13,14 +13,14 @@ const routes = [
       title: 'Vybes DSP - Home'
     }
   },
-  // {
-  //   path: '/calibrate',
-  //   name: 'Calibrate',
-  //   component: CalibrateView,
-  //   meta: {
-  //     title: 'Vybes DSP - Calibration'
-  //   }
-  // },
+  {
+    path: '/calibrate',
+    name: 'Calibrate',
+    component: CalibrateView,
+    meta: {
+      title: 'Vybes DSP - Calibration'
+    }
+  },
   {
     path: '/tools',
     name: 'Tools',

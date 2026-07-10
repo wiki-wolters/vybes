@@ -1,11 +1,7 @@
 <template>
-  <div class="container mx-auto p-3 bg-vybes-dark-element rounded-lg shadow-xl min-h-[calc(100vh-200px)]">
-    <div v-if="editorMessage && messageType === 'error'" class="mb-6 p-4 rounded-md text-sm text-center transition-all duration-300"
-      :class="{
-        'bg-green-700 text-green-100': messageType === 'success',
-        'bg-red-700 text-red-100': messageType === 'error',
-        'bg-blue-700 text-blue-100': messageType === 'info', // [cite: 2]
-      }"
+  <div class="container mx-auto px-0 sm:px-4 py-3 min-h-[calc(100vh-200px)]">
+    <div v-if="editorMessage && messageType === 'error'"
+      class="mb-6 mx-3 sm:mx-0 p-4 rounded-md text-sm text-center bg-red-700 text-red-100 transition-all duration-300"
       @click="clearMessage"> {{ editorMessage }}
     </div>
 
@@ -16,43 +12,58 @@
           <p class="text-center text-vybes-text-secondary">No preset selected</p>
         </div>
         <div v-else>
-          <div class="flex flex-col md:flex-row md:justify-between md:items-center space-y-3 md:space-y-0 mb-4">
-            <div class="flex items-center"> <h2 class="text-2xl font-semibold text-vybes-accent mr-2">
-                {{ selectedPresetName }}
-              </h2>
-              <span v-if="selectedPresetData?.isCurrent" class="text-sm bg-vybes-accent text-white px-2 py-1 rounded-md">Active</span>
-              <div class="ml-2 space-x-1">
-                <button @click="openPresetModal('rename', selectedPresetName)" class="btn-icon btn-secondary-icon p-1" title="Rename Preset">✏️</button> <button @click="openPresetModal('copy', selectedPresetName)" class="btn-icon btn-secondary-icon p-1" title="Copy Preset">📋</button> <button @click="handleDeletePreset(selectedPresetName)" class="btn-icon btn-danger-icon p-1" title="Delete Preset">🗑️</button> </div>
+          <div class="flex items-center px-3 sm:px-0 mb-4">
+            <h2 class="text-2xl font-semibold text-vybes-text-primary mr-2 truncate">
+              {{ selectedPresetName }}
+            </h2>
+            <span v-if="selectedPresetData?.isCurrent" class="text-sm bg-vybes-accent text-vybes-dark font-medium px-2 py-1 rounded-md flex-none">Active</span>
+            <div class="ml-2 flex space-x-1 flex-none">
+              <button @click="openPresetModal('rename', selectedPresetName)" class="btn-icon icon-neutral" title="Rename preset" aria-label="Rename preset">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                </svg>
+              </button>
+              <button @click="openPresetModal('copy', selectedPresetName)" class="btn-icon icon-neutral" title="Copy preset" aria-label="Copy preset">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                </svg>
+              </button>
+              <button @click="openPresetModal('delete', selectedPresetName)" class="btn-icon icon-danger" title="Delete preset" aria-label="Delete preset">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                </svg>
+              </button>
             </div>
           </div>
-          
+
           <CollapsibleSection title="EQ" :model-value="selectedPresetData.isPreferenceEQEnabled" @update:modelValue="updateEQEnabled($event)" :animate="animationsEnabled">
-            <EQSection
-              :eq-sets="prefEQSets"
-              :preset-name="selectedPresetName"
-              eq-type="pref"
-              @update-eq-points="handleEQPointsUpdate('pref', $event)"
-              @create-new-set="handleCreateNewSet('pref', $event)"
-              :is-enabled="selectedPresetData.isPreferenceEQEnabled"
-            />
+            <div :class="{ 'opacity-50 pointer-events-none': !selectedPresetData.isPreferenceEQEnabled }">
+              <EQSection
+                :eq-sets="prefEQSets"
+                :preset-name="selectedPresetName"
+                eq-type="pref"
+                @update-eq-points="handleEQPointsUpdate('pref', $event)"
+                :is-enabled="selectedPresetData.isPreferenceEQEnabled"
+              />
+            </div>
           </CollapsibleSection>
 
           <CollapsibleSection title="FIR Filters" :model-value="selectedPresetData.isFIREnabled" @update:modelValue="updateFIREnabled($event)" :animate="animationsEnabled">
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6" :class="{ 'opacity-50': !selectedPresetData.isFIREnabled }">
-              <InputGroup 
-                v-model="selectedPresetData.firLeft" 
+              <InputGroup
+                v-model="selectedPresetData.firLeft"
                 :label="'Left'"
                 :disabled="!selectedPresetData.isFIREnabled"
                 @update:modelValue="updateFIRFilter('left', $event)"
               />
-              <InputGroup 
-                v-model="selectedPresetData.firRight" 
+              <InputGroup
+                v-model="selectedPresetData.firRight"
                 :label="'Right'"
                 :disabled="!selectedPresetData.isFIREnabled"
                 @update:modelValue="updateFIRFilter('right', $event)"
               />
-              <InputGroup 
-                v-model="selectedPresetData.firSub" 
+              <InputGroup
+                v-model="selectedPresetData.firSub"
                 :label="'Sub'"
                 :disabled="!selectedPresetData.isFIREnabled"
                 @update:modelValue="updateFIRFilter('sub', $event)"
@@ -76,20 +87,20 @@
 
           <CollapsibleSection title="Speaker Delays" :model-value="selectedPresetData.isSpeakerDelayEnabled" @update:modelValue="updateSpeakerDelayEnabled($event)" :animate="animationsEnabled">
             <div class="grid grid-cols-1 md:grid-cols-3 gap-3" :class="{ 'opacity-50': !selectedPresetData.isSpeakerDelayEnabled }">
-              <SpeakerDelayInput 
-                title="Left" 
-                v-model="speakerDelays.left" 
+              <SpeakerDelayInput
+                title="Left"
+                v-model="speakerDelays.left"
                 :disabled="!selectedPresetData.isSpeakerDelayEnabled"
                 @update:modelValue="updateSpeakerDelay('left', $event)"
               />
-              <SpeakerDelayInput 
-                title="Right" 
+              <SpeakerDelayInput
+                title="Right"
                 v-model="speakerDelays.right"
                 :disabled="!selectedPresetData.isSpeakerDelayEnabled"
                 @update:modelValue="updateSpeakerDelay('right', $event)"
               />
-              <SpeakerDelayInput 
-                title="Sub" 
+              <SpeakerDelayInput
+                title="Sub"
                 v-model="speakerDelays.sub"
                 :disabled="!selectedPresetData.isSpeakerDelayEnabled"
                 @update:modelValue="updateSpeakerDelay('sub', $event)"
@@ -97,7 +108,7 @@
             </div>
           </CollapsibleSection>
 
-          <CollapsibleSection title="Volume & Balance" v-model="volumeAndBalanceExpanded" :animate="animationsEnabled">
+          <CollapsibleSection title="Volume & Balance" :toggleable="false" :animate="animationsEnabled">
             <VolumeControlGroup
               :initial-gains="presetGains"
               @update:gains="updatePresetGains"
@@ -106,36 +117,45 @@
         </div>
       </div>
     </div>
-    
+
     <ModalDialog
       v-model="showModal"
       :title="modalState.title"
       :confirm-text="modalState.confirmText"
       @confirm="handleModalConfirm"
     >
-      <InputGroup ref="newPresetNameInput" v-model="modalState.inputValue" :placeholder="modalState.placeholder" class="w-full mb-4" />
+      <p v-if="modalState.type === 'delete'" class="text-vybes-text-secondary mb-4">
+        {{ modalState.message }}
+      </p>
+      <InputGroup
+        v-else
+        ref="modalInput"
+        v-model="modalState.inputValue"
+        :placeholder="modalState.placeholder"
+        class="w-full mb-4"
+        @keyup.enter="handleModalConfirm"
+      />
     </ModalDialog>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, onMounted, inject, onUnmounted, nextTick } from 'vue';
-import { asyncDebounce } from '../utilities.js'; // [cite: 42] Utility for rate limiting function calls
+import { asyncDebounce } from '../utilities.js'; // Utility for rate limiting function calls
 import RangeSlider from '../components/shared/RangeSlider.vue';
 import InputGroup from '../components/shared/InputGroup.vue';
 import ModalDialog from '../components/shared/ModalDialog.vue';
-import SpeakerDelayInput from '../components/shared/SpeakerDelayInput.vue'; // New component for speaker delay inputs
+import SpeakerDelayInput from '../components/shared/SpeakerDelayInput.vue';
 import VolumeControlGroup from '../components/shared/VolumeControlGroup.vue';
-import EQSection from '../components/shared/EQSection.vue'; // New component for EQ sections
+import EQSection from '../components/shared/EQSection.vue';
 import CollapsibleSection from '../components/shared/CollapsibleSection.vue';
 import Loading from '../components/shared/Loading.vue';
-import ToggleSwitch from '../components/shared/ToggleSwitch.vue';
 import { useRouter } from 'vue-router';
 
 const router = useRouter();
 
 // Define props for the component
-const props = defineProps({ // [cite: 44]
+const props = defineProps({
   initialPreset: {
     type: String,
     required: false,
@@ -159,50 +179,38 @@ const props = defineProps({ // [cite: 44]
   }
 });
 
-const apiClient = inject('vybesAPI'); // Injected API client for backend communication [cite: 45] 
-const prefEQExpanded = ref(false);
-const crossoverExpanded = ref(true);
-const speakerDelayExpanded = ref(false);
-const volumeAndBalanceExpanded = ref(true);
+const apiClient = inject('vybesAPI'); // Injected API client for backend communication
 const animationsEnabled = ref(false);
 // General reactive state
-const selectedPresetName = ref(null); // Selected preset name [cite: 45]
-const selectedPresetData = ref(null); // Holds the full preset data object for the selected preset [cite: 45]
-const isLoadingData = ref(true); // True when fetching data for a selected preset [cite: 46]
-const editorMessage = ref(''); // Feedback message displayed to the user [cite: 46]
-const messageType = ref('info'); // Type of feedback message: 'success', 'error', 'info' [cite: 47]
+const selectedPresetName = ref(null);
+const selectedPresetData = ref(null); // Holds the full preset data object for the selected preset
+const isLoadingData = ref(true); // True when fetching data for a selected preset
+const editorMessage = ref(''); // Feedback message displayed to the user
+const messageType = ref('info'); // Type of feedback message: 'error' or 'info'
 
 // Unified Modal state
 const modalState = reactive({
-  type: null, // 'create', 'rename', 'copy'
+  type: null, // 'create', 'rename', 'copy', 'delete'
   title: '',
   confirmText: '',
   inputValue: '',
   placeholder: 'Preset Name',
-  sourceName: '', // For rename/copy operations
+  sourceName: '', // For rename/copy/delete operations
+  message: '', // For confirmation-only modals (delete)
 });
 const showModal = ref(false); // Controls visibility of the unified modal
-const newPresetNameInput = ref(null); // Ref to the preset name input in the modal
+const modalInput = ref(null);
 
 // Preset-specific editable properties
-const speakerDelays = reactive({ left: 0, right: 0, sub: 0 }); // Speaker delays [cite: 49]
+const speakerDelays = reactive({ left: 0, right: 0, sub: 0 });
 const presetGains = reactive({ left: 100, right: 100, sub: 100 });
-const crossoverFreq = ref(80); // Crossover frequency, Default 80Hz [cite: 50]
 
 // EQ States
-const prefEQSets = ref([]); // Array of preference curve EQ sets ({ spl: Number, peqSet: Array }) [cite: 59]
-const currentPrefSPL = ref(0); // Default SPL value for preference curve [cite: 59]
+const prefEQSets = ref([]); // Array of preference curve EQ sets ({ spl: Number, peqSet: Array })
+const currentPrefSPL = ref(0); // Default SPL value for preference curve
 
-// Helper to get reactive refs for a given EQ type ('room' or 'pref')
-const getEQRefs = { sets: prefEQSets, currentSPL: currentPrefSPL, type: 'pref' };
-
-// Helper functions for showing messages
-const showSuccess = (message) => {
-  editorMessage.value = message;
-  messageType.value = 'success';
-  setTimeout(clearMessage, 3000);
-};
-
+// Errors are worth interrupting for; routine successful tweaks are not, so
+// continuous controls stay quiet on success.
 const showError = (message) => {
   editorMessage.value = message;
   messageType.value = 'error';
@@ -210,7 +218,7 @@ const showError = (message) => {
 };
 
 // Clears the editor feedback message
-const clearMessage = () => { editorMessage.value = ''; messageType.value = 'info'; }; // [cite: 62]
+const clearMessage = () => { editorMessage.value = ''; messageType.value = 'info'; };
 
 // Generic helper to perform an API call and handle common success/failure patterns
 async function performApiCall(apiCall, successCallback, failureMessage, failureCallback) {
@@ -220,8 +228,7 @@ async function performApiCall(apiCall, successCallback, failureMessage, failureC
     return true; // Indicate success
   } catch (error) {
     console.error(failureMessage, error);
-    editorMessage.value = `${failureMessage}: ${error.message}`;
-    messageType.value = 'error';
+    showError(`${failureMessage}: ${error.message}`);
     if (failureCallback) failureCallback(error);
     return false; // Indicate failure
   }
@@ -245,13 +252,8 @@ const handleEQPointsUpdate = async (type, updatedPoints) => {
 
   await performApiCall(
     () => apiClient.savePrefEqSet(selectedPresetName.value, updatedPoints),
-    () => {
-      showSuccess('EQ points updated');
-    },
-    'Failed to update EQ points',
-    () => {
-      showError('Failed to update EQ points');
-    }
+    null,
+    'Failed to update EQ points'
   );
 };
 
@@ -261,11 +263,8 @@ const updateEQEnabled = async (value) => {
     selectedPresetName.value,
     'pref',
     value
-  ), () => {
-    showSuccess('Preference EQ setting updated');
-  }, 'Failed to update EQ setting', () => {
-    showError('Failed to update EQ setting');
-    selectedPresetData.value.isPreferenceEQEnabled = !selectedPresetData.value.isPreferenceEQEnabled;
+  ), null, 'Failed to update EQ setting', () => {
+    selectedPresetData.value.isPreferenceEQEnabled = !value;
   });
 };
 
@@ -276,11 +275,10 @@ const updateFIREnabled = async (value) => {
       selectedPresetName.value,
       value
     ),
-    () => showSuccess('FIR filter setting updated'),
+    null,
     'Failed to update FIR setting',
     () => {
-      showError('Failed to update FIR setting');
-      selectedPresetData.value.isFIREnabled = !selectedPresetData.value.isFIREnabled;
+      selectedPresetData.value.isFIREnabled = !value;
     }
   );
 };
@@ -292,11 +290,7 @@ const updateFIRFilter = async (speaker, value) => {
     selectedPresetName.value,
     speaker,
     value
-  ), () => {
-    showSuccess(`${speaker} FIR filter updated`);
-  }, 'Failed to update FIR filter', () => {
-    showError('Failed to update FIR filter');
-  });
+  ), null, 'Failed to update FIR filter');
 };
 
 const updateCrossoverEnabled = async (value) => {
@@ -305,10 +299,7 @@ const updateCrossoverEnabled = async (value) => {
   await debouncedApiCall(() => apiClient.updateCrossoverEnabled(
     selectedPresetName.value,
     value
-  ), () => {
-    showSuccess('Crossover setting updated');
-  }, 'Failed to update crossover setting', () => {
-    showError('Failed to update crossover setting');
+  ), null, 'Failed to update crossover setting', () => {
     selectedPresetData.value.isCrossoverEnabled = currentValue;
   });
 };
@@ -321,10 +312,8 @@ const updateCrossoverFreq = async (value) => {
     selectedPresetName.value,
     value
   ), () => {
-    showSuccess('Crossover frequency updated');
     prevValue = null;
   }, 'Failed to update crossover frequency', () => {
-    showError('Failed to update crossover frequency');
     selectedPresetData.value.crossoverFreq = prevValue;
     prevValue = null;
   });
@@ -336,10 +325,7 @@ const updateSpeakerDelayEnabled = async (value) => {
   await debouncedApiCall(() => apiClient.setSpeakerDelayEnabled(
     selectedPresetName.value,
     value
-  ), () => {
-    showSuccess('Speaker delay setting updated');
-  }, 'Failed to update speaker delay setting', () => {
-    showError('Failed to update speaker delay setting');
+  ), null, 'Failed to update speaker delay setting', () => {
     selectedPresetData.value.isSpeakerDelayEnabled = currentValue;
   });
 };
@@ -350,11 +336,7 @@ const updateSpeakerDelay = async (speaker, value) => {
     selectedPresetName.value,
     speaker,
     value
-  ), () => {
-    showSuccess(`${speaker} speaker delay updated`);
-  }, 'Failed to update speaker delay', () => {
-    showError('Failed to update speaker delay');
-  });
+  ), null, 'Failed to update speaker delay');
 };
 
 const updatePresetGains = async (newGains) => {
@@ -362,40 +344,22 @@ const updatePresetGains = async (newGains) => {
   await debouncedApiCall(() => apiClient.setPresetGains(
     selectedPresetName.value,
     newGains
-  ), () => {
-    showSuccess('Preset gains updated');
-  }, 'Failed to update preset gains', () => {
-    showError('Failed to update preset gains');
-  });
-};
-
-// Save crossover enabled (not debounced)
-const setCrossoverEnabled = async () => {
-  if (!selectedPresetName.value) return;
-  const currentValue = selectedPresetData.value?.crossover.enabled;
-  await debouncedApiCall(() => apiClient.setCrossoverEnabled(selectedPresetName.value, crossoverEnabled.value),
-    null,
-    'Failed to set crossover enabled',
-    () => {
-      // Reset to previous value on failure
-      crossoverEnabled.value = currentValue;
-    }
-  );
+  ), null, 'Failed to update preset gains');
 };
 
 // Fetch detailed data for a specific preset
-async function fetchPresetData(presetName, isNewOrCopy = false) { // [cite: 72]
-  if (!presetName) { selectedPresetData.value = null; isLoadingData.value = false; return; } // [cite: 72]
-  isLoadingData.value = true; clearMessage(); // [cite: 73]
+async function fetchPresetData(presetName, isNewOrCopy = false) {
+  if (!presetName) { selectedPresetData.value = null; isLoadingData.value = false; return; }
+  isLoadingData.value = true; clearMessage();
   await performApiCall(
-    () => apiClient.getPreset(presetName), // [cite: 74]
+    () => apiClient.getPreset(presetName),
     (data) => {
       selectedPresetData.value = data;
       Object.assign(speakerDelays, data.speakerDelays);
       apiClient.getPresetGains(presetName).then(gains => {
         Object.assign(presetGains, gains);
       });
-      
+
       // Initialize prefEQSets from the preference curve data
       if (data.preferenceEQ) {
         prefEQSets.value = data.preferenceEQ;
@@ -415,217 +379,137 @@ async function fetchPresetData(presetName, isNewOrCopy = false) { // [cite: 72]
       currentPrefSPL.value = 0;
     }
   );
-  isLoadingData.value = false; 
+  isLoadingData.value = false;
   setTimeout(() => {
     animationsEnabled.value = true;
   }, 100);
 }
 
 // Selects a preset by name
-async function selectPreset(presetName, isNewOrCopy = false) { // [cite: 92]
+async function selectPreset(presetName, isNewOrCopy = false) {
   // Allow re-selection if isNewOrCopy is true, to ensure re-initialization logic runs for new/copied presets.
   if (selectedPresetName.value === presetName && selectedPresetData.value && !isNewOrCopy) return;
   selectedPresetName.value = presetName;
   await fetchPresetData(presetName, isNewOrCopy);
 }
 
-// Component lifecycle hook
-onMounted(async () => { // [cite: 156]
-  console.log('PresetEditorView mounted', { props });
+let unsubscribeLive = null;
 
+// Component lifecycle hook
+onMounted(async () => {
   await selectPreset(props.name);
 
   // Setup WebSocket listener for active preset changes
-  console.log('PresetEditorView: apiClient defined?', !!apiClient);
-  apiClient.connectLiveUpdates(
+  unsubscribeLive = apiClient.connectLiveUpdates(
     (data) => {
       if (data.messageType === 'activePresetChanged') {
-        console.log('Active preset changed, redirecting to home:', data.activePresetName);
         router.push('/');
       }
     },
     (error) => {
       console.error('WebSocket error in PresetEditorView:', error);
-    },
-    () => {
-      console.log('WebSocket disconnected in PresetEditorView');
     }
   );
 });
 
 onUnmounted(() => {
-  apiClient.disconnectLiveUpdates();
+  if (unsubscribeLive) unsubscribeLive();
 });
+
+const MODAL_COPY = {
+  create: { title: 'Create New Preset', confirmText: 'Create' },
+  rename: { title: 'Rename Preset', confirmText: 'Rename' },
+  copy: { title: 'Copy Preset', confirmText: 'Copy' },
+  delete: { title: 'Delete Preset', confirmText: 'Delete' },
+};
 
 async function openPresetModal(type, name) {
   modalState.type = type;
-  modalState.title = type === 'create' ? 'Create New Preset' : 'Rename Preset';
-  modalState.confirmText = type === 'create' ? 'Create' : 'Rename';
-  modalState.inputValue = name;
+  modalState.title = MODAL_COPY[type].title;
+  modalState.confirmText = MODAL_COPY[type].confirmText;
+  modalState.inputValue = type === 'copy' ? `${name} Copy` : name;
   modalState.sourceName = name;
+  modalState.message = type === 'delete'
+    ? `Delete preset "${name}"? This cannot be undone.`
+    : '';
   showModal.value = true;
 
-  //On next tick, focus the input field
-  nextTick(() => {
-    newPresetNameInput.value?.focus();
-  });
+  if (type !== 'delete') {
+    await nextTick();
+    modalInput.value?.focus();
+  }
 }
 
 // Handles the confirmation (submit) from the unified modal
 async function handleModalConfirm() {
   const { type, inputValue, sourceName } = modalState;
-  editorMessage.value = ''; // Clear message before operation
-  let newSelectedName = null; // To store the name of the preset to be selected after action
+  clearMessage();
+
+  if (type === 'delete') {
+    const success = await performApiCall(
+      () => apiClient.deletePreset(sourceName),
+      null,
+      'Failed to delete preset'
+    );
+    showModal.value = false;
+    if (success) {
+      router.push('/');
+    }
+    return;
+  }
+
+  let newSelectedName = null; // The preset to select after the action
 
   const trimmedValue = inputValue.trim();
   if (!trimmedValue) {
-    editorMessage.value = 'Preset name cannot be empty.'; // [cite: 167, 173, 183]
-    messageType.value = 'error'; // [cite: 168, 174, 184]
+    showError('Preset name cannot be empty.');
     return;
   }
 
   if (type === 'create') {
     await performApiCall(
-      () => apiClient.createPreset(trimmedValue), // [cite: 169]
-      () => { editorMessage.value = `Preset '${trimmedValue}' created successfully.`; messageType.value = 'success'; newSelectedName = trimmedValue; }, // [cite: 169]
-      'Failed to create preset',
-      () => {
-        editorMessage.value = 'Failed to create preset';
-        messageType.value = 'error';
-      }
+      () => apiClient.createPreset(trimmedValue),
+      () => { newSelectedName = trimmedValue; },
+      'Failed to create preset'
     );
   } else if (type === 'rename') {
-    if (trimmedValue === sourceName) { // [cite: 174]
-      editorMessage.value = 'New name is the same as the old name.'; // [cite: 174]
-      messageType.value = 'info'; // [cite: 175]
+    if (trimmedValue === sourceName) {
+      showModal.value = false;
+      return;
     }
     await performApiCall(
-      () => apiClient.renamePreset(sourceName, trimmedValue), // [cite: 177]
-      () => { editorMessage.value = `Preset '${sourceName}' renamed to '${trimmedValue}'.`; messageType.value = 'success'; newSelectedName = trimmedValue; }, // [cite: 177]
-      'Failed to rename preset' // [cite: 181]
+      () => apiClient.renamePreset(sourceName, trimmedValue),
+      () => { newSelectedName = trimmedValue; },
+      'Failed to rename preset'
     );
   } else if (type === 'copy') {
-    if (trimmedValue === sourceName) { // [cite: 184]
-      editorMessage.value = 'Copy name cannot be the same as the source name.'; // [cite: 184]
-      messageType.value = 'error'; // [cite: 185]
+    if (trimmedValue === sourceName) {
+      showError('Copy name cannot be the same as the source name.');
+      return;
     }
     await performApiCall(
-      () => apiClient.copyPreset(sourceName, trimmedValue), // [cite: 186]
-      () => { editorMessage.value = `Preset '${sourceName}' copied to '${trimmedValue}'.`; messageType.value = 'success'; newSelectedName = trimmedValue; }, // [cite: 186]
-      'Failed to copy preset',
-      () => {
-        editorMessage.value = 'Failed to copy preset';
-        messageType.value = 'error';
-      }
+      () => apiClient.copyPreset(sourceName, trimmedValue),
+      () => { newSelectedName = trimmedValue; },
+      'Failed to copy preset'
     );
-  } else if (type === 'delete') {
-    await performApiCall(
-      () => apiClient.deletePreset(sourceName),
-      () => {
-        editorMessage.value = `Preset '${sourceName}' deleted successfully.`;
-        messageType.value = 'success';
-      },
-      'Failed to delete preset'
-    );
-    // If successful, the redirect will happen, so further processing in this function might be skipped
-    // or happen just before navigation. If deletion fails, normal error handling will occur.
-    // If deletion is successful and we redirect, we might not need to fall through to the generic 'if (success)' block below
-    // for preset list refreshing if the page context is about to change entirely.
-    // However, if the redirect is conditional or might not happen, ensure 'success' is handled appropriately.
-    showModal.value = false; // Close modal
-    return; // Exit function early as we've redirected or handled the delete fully.
   }
 
   if (newSelectedName) {
-    await selectPreset(newSelectedName);
-    await router.push(`/preset/${newSelectedName}`);
-  }
-  // Message for rename is set here. Create/Copy messages are handled by fetchPresetData.
-  if (type === 'rename') {
-    editorMessage.value = `Preset '${inputValue}' renamed successfully.`;
-    messageType.value = 'success';
+    await selectPreset(newSelectedName, true);
+    await router.push(`/preset/${encodeURIComponent(newSelectedName)}`);
   }
   showModal.value = false;
 }
-
-// Handles deletion of a preset (prompted by a direct button, not modal)
-async function handleDeletePreset(name) { // [cite: 189]
-  // Basic confirm, consider a more robust modal for this in future [cite: 189]
-  if (!window.confirm(`Are you sure you want to delete preset '${name}'? This cannot be undone.`)) {
-    return; // [cite: 189]
-  }
-  const success = await performApiCall(
-    () => apiClient.deletePreset(name), // [cite: 191]
-    () => {
-      editorMessage.value = `Preset '${name}' deleted successfully.`; // [cite: 191]
-      router.push('/');
-      messageType.value = 'success'; // [cite: 191]
-      if (selectedPresetName.value === name) { // [cite: 192]
-        selectedPresetName.value = null; // Deselect if it was the deleted one [cite: 192]
-        selectedPresetData.value = null; // [cite: 193]
-      }
-    },
-    'Failed to delete preset' // [cite: 195]
-  );
-}
-
 </script>
 
 <style scoped>
-@reference "../style.css"; /* Style reference from original file */
+@reference "../style.css";
 
-/* Basic Modal Styling (from original) */
-.modal-backdrop {
-  @apply fixed inset-0 bg-black opacity-60 flex items-center justify-center p-4 transition-opacity duration-300 ease-in-out; /* [cite: 196] */
-}
-.modal-content {
-  @apply bg-vybes-dark-card p-6 rounded-lg shadow-xl w-full max-w-md transform transition-all duration-300 ease-in-out scale-95 opacity-0; /* [cite: 197] */
-  animation: fadeInScale 0.3s forwards; /* [cite: 197] */
-}
-@keyframes fadeInScale { /* [cite: 198] */
-  to {
-    opacity: 1; /* [cite: 198] */
-    transform: scale(1); /* [cite: 198] */
-  }
-}
-.modal-input {
-  @apply w-full px-4 py-2 bg-vybes-dark-input border border-vybes-dark-border rounded-md shadow-sm focus:ring-vybes-primary focus:border-vybes-primary text-vybes-text-primary placeholder-vybes-text-secondary; /* [cite: 199] */
+.icon-neutral {
+  @apply bg-vybes-dark-element hover:bg-vybes-dark-input text-vybes-text-secondary hover:text-white;
 }
 
-/* Button styles (assuming you have global button styles or extend as needed) (from original) */
-.btn-primary {
-  @apply bg-vybes-primary hover:bg-vybes-primary-hover text-white font-semibold py-2 px-4 rounded-md shadow disabled:opacity-50 disabled:cursor-not-allowed; /* [cite: 200] */
-}
-.btn-secondary {
-  @apply bg-vybes-accent hover:bg-vybes-accent-hover text-white font-semibold py-2 px-4 rounded-md shadow disabled:opacity-50 disabled:cursor-not-allowed; /* [cite: 201] */
-}
-.btn-danger {
-   @apply bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-md shadow disabled:opacity-50 disabled:cursor-not-allowed; /* [cite: 202] */
-}
-
-.btn-icon {
-  @apply p-1.5 rounded-md transition-colors duration-150; /* [cite: 203] */
-}
-.btn-secondary-icon {
-   @apply bg-vybes-dark-element hover:bg-vybes-accent text-vybes-text-secondary hover:text-white; /* [cite: 203] */
-}
-.btn-danger-icon {
-   @apply bg-vybes-dark-element hover:bg-red-600 text-vybes-text-secondary hover:text-white; /* [cite: 204] */
-}
-
-/* Custom scrollbar for preset list if it gets long (from original) */
-.preset-list-container::-webkit-scrollbar {
-  width: 8px; /* [cite: 204] */
-}
-.preset-list-container::-webkit-scrollbar-track {
-  @apply bg-vybes-dark-input; /* [cite: 205] */
-  border-radius: 4px;
-}
-.preset-list-container::-webkit-scrollbar-thumb {
-  @apply bg-vybes-primary; /* [cite: 205] */
-  border-radius: 4px;
-}
-.preset-list-container::-webkit-scrollbar-thumb:hover {
-  @apply bg-vybes-primary-hover; /* [cite: 205] */
+.icon-danger {
+  @apply bg-vybes-dark-element hover:bg-red-600 text-vybes-text-secondary hover:text-white;
 }
 </style>

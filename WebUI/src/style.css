@@ -1,58 +1,56 @@
 @import "tailwindcss";
 @config "../tailwind.config.js";
 
+/* Single source of truth for the theme. Tailwind classes (vybes-*) map to
+   the same palette via tailwind.config.js. */
+:root {
+  --vybes-primary: #3b82f6;
+  --vybes-primary-dark: #2563eb;
+  --vybes-accent: #f59e0b;
+  --vybes-accent-light: #fbbf24;
+  --vybes-dark: #111827;
+  --vybes-dark-element: #1f2937;
+  --vybes-dark-card: #374151;
+  --vybes-dark-input: #4b5563;
+  --vybes-border: #6b7280;
+  --vybes-text-primary: #f9fafb;
+  --vybes-text-secondary: #d1d5db;
+}
+
 body {
-  @apply bg-vybes-dark-bg text-vybes-text-primary;
+  @apply bg-vybes-dark text-vybes-text-primary;
   font-family: 'Segoe UI', system-ui, sans-serif; /* Matches tailwind.config.js */
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Removed display: flex, place-items: center, min-width: 320px from original body */
-  /* The original #app styling for centering might need to be re-applied on the #app element directly if desired */
 }
 
-/* Keeping these for now, but they might be refactored later with Tailwind utility classes */
-a {
-  font-weight: 500;
-  @apply text-vybes-blue; /* Example of using a custom color */
-  text-decoration: inherit;
-}
-a:hover {
-  @apply text-blue-400; /* Example: a slightly lighter blue on hover */
-}
-
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+/* Layered so utility classes on links (nav, tabs) can override the default */
+@layer base {
+  a {
+    font-weight: 500;
+    @apply text-vybes-blue;
+    text-decoration: inherit;
+  }
+  a:hover {
+    @apply text-blue-400;
+  }
 }
 
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  @apply bg-vybes-dark-element text-vybes-text-primary; /* Using custom colors */
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  @apply border-vybes-blue; /* Using custom color for border */
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color; /* Standard focus outline */
+/* Shared button styles. Components add layout only — no per-view
+   .btn-* redefinitions. */
+.btn-primary {
+  @apply bg-vybes-primary hover:bg-vybes-primary-dark text-white font-semibold py-2 px-4 rounded-md shadow transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer;
 }
 
-/* Styles for #app might be needed if it's the main container for layout */
-#app {
-  /* max-width: 1280px; */ /* This was in the original, might be useful */
-  /* margin: 0 auto; */ /* This was in the original for centering */
-  /* padding: 2rem; */ /* This was in the original */
-  /* text-align: center; */ /* This was in the original */
-  /* These properties might be better on App.vue's root element */
+.btn-secondary {
+  @apply bg-vybes-dark-input hover:bg-vybes-border text-vybes-text-primary font-semibold py-2 px-4 rounded-md shadow transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer;
 }
 
-/* Removed :root and @media (prefers-color-scheme: light) as we are setting a default dark theme. */
-/* Removed .card as it was a generic class, specific card styling should be component-based or using utilities. */
+.btn-danger {
+  @apply bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-md shadow transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer;
+}
+
+.btn-icon {
+  @apply p-1.5 rounded-md transition-colors duration-150 cursor-pointer;
+}

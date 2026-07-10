@@ -1,12 +1,12 @@
 <template>
-  <section class="mb-3 p-3 bg-vybes-dark-card rounded-lg">
+  <section class="mb-3 px-3 py-3 sm:px-4 bg-vybes-dark-element rounded-none sm:rounded-lg">
     <div v-if="title" class="flex justify-between items-center mb-4">
-      <h3 class="text-lg font-semibold text-vybes-accent">{{ title }}</h3>
+      <h3 class="text-lg font-semibold text-vybes-text-primary">{{ title }}</h3>
       <slot name="header-actions"></slot>
     </div>
-    
+
     <slot></slot>
-    
+
     <div v-if="$slots.actions" class="mt-4 flex justify-end space-x-2">
       <slot name="actions"></slot>
     </div>

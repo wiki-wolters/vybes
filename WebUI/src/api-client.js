@@ -9,7 +9,13 @@ class VybesAPI {
     this.baseUrl = API_BASE_URL;
     this.socket = null;
 
-    console.log(API_BASE_URL);
+    // Live-update plumbing: one shared socket, many listeners, and
+    // automatic reconnection with exponential backoff.
+    this.messageListeners = new Set();
+    this.statusListeners = new Set();
+    this.connectionState = 'disconnected'; // 'disconnected' | 'connecting' | 'connected'
+    this.reconnectTimer = null;
+    this.reconnectDelay = 1000;
   }
 
   get isWebSocketConnected() {
@@ -430,54 +436,99 @@ class VybesAPI {
 
   // ===== WEBSOCKET LIVE UPDATES =====
 
-  /**
-   * Connect to live updates WebSocket
-   * @param {Function} onMessage - Callback for incoming messages
-   * @param {Function} onError - Callback for errors
-   * @param {Function} onClose - Callback for connection close
-   */
-  connectLiveUpdates(onMessage, onError = null, onClose = null) {
-    if (this.socket) {
-      this.socket.close();
-    }
+  _setConnectionState(state) {
+    if (this.connectionState === state) return;
+    this.connectionState = state;
+    this.statusListeners.forEach(cb => {
+      try { cb(state); } catch (e) { console.error('Connection status listener failed:', e); }
+    });
+  }
 
-    const wsUrl = window.location.protocol === 'https:' ? 'wss://' : 'ws://' + window.location.host;
-    
-    this.socket = new WebSocket(`${wsUrl}/live-updates`);
+  _openSocket() {
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+    this.socket = new WebSocket(`${wsProtocol}${window.location.host}/live-updates`);
+    this._setConnectionState('connecting');
+
+    this.socket.onopen = () => {
+      this.reconnectDelay = 1000;
+      this._setConnectionState('connected');
+    };
 
     this.socket.onmessage = (event) => {
+      let data;
       try {
-        const data = JSON.parse(event.data);
-        onMessage(data);
+        data = JSON.parse(event.data);
       } catch (error) {
         console.error('Failed to parse WebSocket message:', error);
-        if (onError) onError(error);
+        this.messageListeners.forEach(l => l.onError && l.onError(error));
+        return;
       }
+      this.messageListeners.forEach(l => l.onMessage(data));
     };
 
     this.socket.onerror = (error) => {
       console.error('WebSocket error:', error);
-      if (onError) onError(error);
+      this.messageListeners.forEach(l => l.onError && l.onError(error));
     };
 
     this.socket.onclose = (event) => {
-      console.log('WebSocket connection closed:', event);
-      if (onClose) onClose(event);
-    };
-
-    this.socket.onopen = () => {
-      console.log('WebSocket connection established');
+      this.socket = null;
+      this._setConnectionState('disconnected');
+      this.messageListeners.forEach(l => l.onClose && l.onClose(event));
+      this._scheduleReconnect();
     };
   }
 
+  _scheduleReconnect() {
+    if (this.reconnectTimer) return;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.ensureLiveConnection();
+    }, this.reconnectDelay);
+    // Back off up to 30s so a powered-off device isn't hammered.
+    this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
+  }
+
   /**
-   * Disconnect from live updates WebSocket
+   * Open the shared live-updates socket if it isn't already open.
+   * Reconnects automatically whenever the connection drops.
+   */
+  ensureLiveConnection() {
+    if (this.socket) return;
+    this._openSocket();
+  }
+
+  /**
+   * Subscribe to connection state changes ('disconnected' | 'connecting' |
+   * 'connected'). The callback fires immediately with the current state.
+   * @returns {Function} Unsubscribe function
+   */
+  onConnectionChange(callback) {
+    this.statusListeners.add(callback);
+    callback(this.connectionState);
+    return () => this.statusListeners.delete(callback);
+  }
+
+  /**
+   * Register a listener on the shared live-updates socket.
+   * @param {Function} onMessage - Callback for incoming messages
+   * @param {Function} onError - Callback for errors
+   * @param {Function} onClose - Callback for connection close
+   * @returns {Function} Unsubscribe function — call it on component unmount
+   */
+  connectLiveUpdates(onMessage, onError = null, onClose = null) {
+    const listener = { onMessage, onError, onClose };
+    this.messageListeners.add(listener);
+    this.ensureLiveConnection();
+    return () => this.messageListeners.delete(listener);
+  }
+
+  /**
+   * Remove all message listeners. The socket itself stays open so the
+   * connection indicator keeps working; listeners re-register on mount.
    */
   disconnectLiveUpdates() {
-    if (this.socket) {
-      this.socket.close();
-      this.socket = null;
-    }
+    this.messageListeners.clear();
   }
 
   // ===== UTILITY METHODS =====

@@ -1,9 +1,9 @@
 <template>
-  <div class="container mx-auto p-6 bg-vybes-dark-element rounded-lg shadow-xl">
-    <h1 class="text-3xl font-bold mb-8 text-vybes-light-blue text-center">Audio Tools</h1>
+  <div class="container mx-auto px-0 sm:px-4 py-3">
+    <h1 class="text-2xl font-semibold mb-6 px-3 sm:px-0 text-vybes-text-primary">Audio Tools</h1>
 
     <!-- General Feedback Message Area -->
-    <div v-if="toolMessage" class="mb-6 p-4 rounded-md text-sm text-center transition-all duration-300"
+    <div v-if="toolMessage" class="mb-6 mx-3 sm:mx-0 p-4 rounded-md text-sm text-center transition-all duration-300"
       :class="{
         'bg-green-700 text-green-100': messageType === 'success',
         'bg-red-700 text-red-100': messageType === 'error',
@@ -229,50 +229,6 @@ async function playTestPulse() {
 </script>
 
 <style scoped>
-@reference "../style.css";
-
-.tool-card {
-  @apply p-8 rounded-lg shadow-lg transition-all duration-300 ease-in-out hover:shadow-2xl;
-  /* Consider adding hover effects or subtle gradients if desired */
-}
-
-.tool-input {
-  @apply w-full px-4 py-2 bg-vybes-dark-input border border-vybes-dark-border rounded-md shadow-sm focus:ring-vybes-primary focus:border-vybes-primary text-vybes-text-primary placeholder-vybes-text-secondary disabled:opacity-50 disabled:cursor-not-allowed;
-}
-
-/* Basic button styles - can be expanded or use global button styles if defined */
-.btn-primary {
-  @apply bg-vybes-primary hover:bg-vybes-primary-hover text-white font-semibold py-2 px-4 rounded-md shadow transition-colors duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed;
-}
-
-.btn-secondary {
-  @apply bg-vybes-accent hover:bg-vybes-accent-hover text-white font-semibold py-2 px-4 rounded-md shadow transition-colors duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed;
-}
-
-.btn-danger {
-  @apply bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-md shadow transition-colors duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed;
-}
-
-input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 20px;
-  height: 20px;
-  background: #4F46E5; /* vybes-primary */
-  cursor: pointer;
-  border-radius: 50%;
-  border: 2px solid white;
-}
-
-input[type="range"]::-moz-range-thumb {
-  width: 18px;
-  height: 18px;
-  background: #4F46E5; /* vybes-primary */
-  cursor: pointer;
-  border-radius: 50%;
-  border: 2px solid white;
-}
-
 input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button {
   -webkit-appearance: none;

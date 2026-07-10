@@ -1,6 +1,6 @@
 <template>
-  <div class="container mx-auto p-6 bg-vybes-dark-element rounded-lg shadow-xl">
-    <h1 class="text-3xl font-bold mb-6 text-vybes-light-blue text-center">Device Calibration</h1>
+  <div class="container mx-auto px-0 sm:px-4 py-3">
+    <h1 class="text-2xl font-semibold mb-6 px-3 sm:px-0 text-vybes-text-primary">Device Calibration</h1>
 
     <CardSection>
       <div class="max-w-md mx-auto">

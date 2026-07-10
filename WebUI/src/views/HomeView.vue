@@ -1,5 +1,5 @@
 <template>
-  <div class="container mx-auto p-3 space-y-3">
+  <div class="container mx-auto px-0 sm:px-4 py-3">
     <!-- Loading State -->
     <div v-if="isLoading" class="text-center py-10">
       <svg class="animate-spin h-8 w-8 text-vybes-primary mx-auto mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -10,12 +10,12 @@
     </div>
 
     <!-- Error Message -->
-    <div v-if="errorMessage" class="bg-red-700 text-red-100 p-4 rounded-lg mb-6">
+    <div v-if="errorMessage" class="bg-red-700 text-red-100 p-4 rounded-none sm:rounded-lg mb-6">
       <p><strong>Error:</strong> {{ errorMessage }}</p>
     </div>
 
     <!-- Main Content -->
-    <div v-if="!isLoading" class="space-y-6">
+    <div v-if="!isLoading">
       <!-- Presets Section -->
       <CardSection title="Presets">
         <div class="flex flex-wrap gap-3">
@@ -424,8 +424,10 @@ async function restoreConfiguration() {
 }
 
 // WebSocket live updates
+let unsubscribeLive = null;
+
 function setupLiveUpdates() {
-  apiClient.connectLiveUpdates(
+  unsubscribeLive = apiClient.connectLiveUpdates(
     (data) => {
       // Handle live updates
       if (data.messageType === 'activePresetChanged' && data.activePresetName) {
@@ -442,9 +444,6 @@ function setupLiveUpdates() {
     },
     (error) => {
       console.error('WebSocket error:', error);
-    },
-    () => {
-      console.log('WebSocket disconnected');
     }
   );
 }
@@ -465,26 +464,19 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
-  apiClient.disconnectLiveUpdates();
+  if (unsubscribeLive) unsubscribeLive();
 });
 </script>
 
 <style scoped>
 @reference '../style.css';
-.control-section {
-  @apply bg-vybes-dark-element p-6 rounded-lg shadow-lg;
-}
-
-.section-title {
-  @apply text-xl font-semibold text-vybes-accent mb-4;
-}
 
 .preset-button {
-  @apply relative px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center space-x-2;
+  @apply relative px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center space-x-2 cursor-pointer;
 }
 
 .preset-active {
-  @apply bg-vybes-primary text-white shadow-lg pr-20;
+  @apply bg-vybes-primary text-white shadow-lg pr-14;
 }
 
 .preset-inactive {
@@ -492,7 +484,7 @@ onUnmounted(() => {
 }
 
 .preset-add {
-  @apply bg-vybes-accent text-vybes-dark hover:bg-vybes-accent-light border-2 border-dashed border-vybes-accent;
+  @apply bg-transparent text-vybes-text-secondary border-2 border-dashed border-vybes-border hover:border-vybes-accent hover:text-vybes-accent;
 }
 
 .preset-controls {
@@ -500,73 +492,10 @@ onUnmounted(() => {
 }
 
 .preset-control-btn {
-  @apply p-1 hover:bg-white/20 rounded transition-colors;
+  @apply p-1 hover:bg-white/20 rounded transition-colors cursor-pointer;
 }
 
 .switch-container {
   @apply flex items-center space-x-3 cursor-pointer w-1/3;
-}
-
-.switch-input {
-  @apply sr-only;
-}
-
-.switch-slider {
-  @apply relative inline-block w-12 h-6 bg-gray-600 rounded-full transition-colors duration-200;
-}
-
-.switch-input:checked + .switch-slider {
-  @apply bg-vybes-primary;
-}
-
-.switch-slider::before {
-  @apply content-[''] absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform duration-200;
-}
-
-.switch-input:checked + .switch-slider::before {
-  @apply transform translate-x-6;
-}
-
-.switch-label {
-  @apply text-vybes-text-primary font-medium;
-}
-
-.slider {
-  @apply h-2 bg-vybes-dark-input rounded-lg appearance-none cursor-pointer;
-}
-
-.slider::-webkit-slider-thumb {
-  @apply appearance-none w-5 h-5 bg-vybes-primary rounded-full cursor-pointer;
-}
-
-.slider::-moz-range-thumb {
-  @apply w-5 h-5 bg-vybes-primary rounded-full cursor-pointer border-none;
-}
-
-.tools-button {
-  @apply flex items-center px-6 py-3 bg-vybes-accent text-vybes-dark font-semibold rounded-lg hover:bg-vybes-accent-light transition-colors;
-}
-
-.modal-overlay {
-  @apply fixed inset-0 bg-black/50 flex items-center justify-center z-50;
-}
-
-.modal-content {
-  @apply bg-vybes-dark-element p-6 rounded-lg shadow-xl max-w-md w-full mx-4;
-}
-
-/* CSS custom properties for theming - add these to your main CSS file */
-:root {
-  --vybes-primary: #3b82f6;
-  --vybes-primary-dark: #2563eb;
-  --vybes-accent: #f59e0b;
-  --vybes-accent-light: #fbbf24;
-  --vybes-dark: #111827;
-  --vybes-dark-element: #1f2937;
-  --vybes-dark-card: #374151;
-  --vybes-dark-input: #4b5563;
-  --vybes-border: #6b7280;
-  --vybes-text-primary: #f9fafb;
-  --vybes-text-secondary: #d1d5db;
 }
 </style>

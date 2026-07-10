@@ -7,18 +7,21 @@ export default {
   theme: {
     extend: {
       colors: {
+        // Blues collapsed to one hue family (previously #0088ff and #3b82f6
+        // competed). vybes-blue/light-blue kept as aliases so existing
+        // classes still work.
         'vybes-primary': '#3b82f6',
         'vybes-primary-dark': '#2563eb',
-        'vybes-primary-hover': '#0066cc', // Added for hover state
-        'vybes-blue': '#0088ff',
-        'vybes-light-blue': '#33aaff', // Added - used in Vue component
-        'vybes-accent': '#f59e0b', // Added - used in Vue component  
+        'vybes-primary-hover': '#2563eb',
+        'vybes-blue': '#3b82f6',
+        'vybes-light-blue': '#60a5fa',
+        'vybes-accent': '#f59e0b',
         'vybes-accent-light': '#fbbf24',
         'vybes-accent-hover': '#fbbf24',
-        'vybes-dark-bg': '#1a1a1a',
-        'vybes-dark-card': '#374151',
         'vybes-dark': '#111827',
+        'vybes-dark-bg': '#111827',
         'vybes-dark-element': '#1f2937',
+        'vybes-dark-card': '#374151',
         'vybes-dark-input': '#4b5563',
         'vybes-dark-border': '#111',
         'vybes-border': '#6b7280',
