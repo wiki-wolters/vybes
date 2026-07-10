@@ -1,6 +1,7 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import HomeView from '../views/HomeView.vue'
 import ToolsView from '../views/ToolsView.vue'
+import AnalyzerView from '../views/AnalyzerView.vue'
 import PresetView from '../views/PresetEditorView.vue'
 
 const routes = [
@@ -18,6 +19,14 @@ const routes = [
     component: ToolsView,
     meta: {
       title: 'Tone generator etc'
+    }
+  },
+  {
+    path: '/analyzer',
+    name: 'Analyzer',
+    component: AnalyzerView,
+    meta: {
+      title: 'Real-time analyzer'
     }
   },
   {

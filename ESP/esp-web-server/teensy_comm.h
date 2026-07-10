@@ -37,6 +37,10 @@
 #define CMD_STOP_TONE "stopTone"
 #define CMD_SET_NOISE "setNoise"
 
+// RTA (real-time analyzer) streaming: "setRta 1" starts/keeps-alive,
+// "setRta 0" stops. The Teensy replies with "RTA <hex>" frames.
+#define CMD_SET_RTA "setRta"
+
 // System Commands
 #define CMD_SET_MUTE "setMute"
 #define CMD_SET_MUTE_PERCENT "setMutePercent"

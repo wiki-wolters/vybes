@@ -1,6 +1,7 @@
 #include "globals.h"
 #include "teensy_comm.h"
 #include "config.h"
+#include "websocket.h"
 
 // Outgoing queue. A full preset sync is ~30 commands.
 #define QUEUE_SIZE 40
@@ -190,6 +191,13 @@ void requestFirFilesRefresh() {
 //   "FILES" ... "EOT"   the SD file list, one filename per line
 // Anything else is forwarded to the debug console.
 static void handleTeensyLine(const char* line) {
+    // RTA spectrum frames stream at ~10Hz while the analyzer UI is open -
+    // forward them straight to the websocket, no debug logging.
+    if (strncmp(line, "RTA ", 4) == 0) {
+        broadcastRtaFrame(line + 4);
+        return;
+    }
+
     if (collectingFiles) {
         if (strcmp(line, "EOT") == 0) {
             memcpy(firFilesCache, firFilesPending, firFilesPendingLen);

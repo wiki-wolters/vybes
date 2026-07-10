@@ -80,9 +80,15 @@ AudioEffectDelay         Sub_delay;
 AudioEffectDelay         Right_delay;  
 
 // Outputs
-AudioOutputSPDIF3        L_R_Spdif_Out;     
-AudioOutputI2S           L_R_Analog_Out;    
+AudioOutputSPDIF3        L_R_Spdif_Out;
+AudioOutputI2S           L_R_Analog_Out;
 AudioOutputI2S2          Sub_Analog_Out;
+
+// RTA spectrum tap: the L+R source mix (pre-DSP) feeds an FFT whose
+// 1/3-octave band levels stream to the web UI over the ESP link. The FFT
+// input is disconnected while idle so it costs no CPU (see rtaLoop).
+AudioMixer4              RTA_mixer;
+AudioAnalyzeFFT1024      RTA_fft;
 
 // Connections
 
@@ -99,6 +105,11 @@ AudioConnection          patchCord_BluetoothLToLeftMixer(Bluetooth_in, 0, Left_m
 AudioConnection          patchCord_BluetoothRToRightMixer(Bluetooth_in, 1, Right_mixer, 1);
 AudioConnection          patchCord_USBLToLeftMixer(USB_in, 0, Left_mixer, 2);
 AudioConnection          patchCord_USBRToRightMixer(USB_in, 1, Right_mixer, 2);
+
+// RTA tap connections (the FFT link starts disconnected; see setup)
+AudioConnection          patchCord_LeftMixerToRTA(Left_mixer, 0, RTA_mixer, 0);
+AudioConnection          patchCord_RightMixerToRTA(Right_mixer, 0, RTA_mixer, 1);
+AudioConnection          patchCord_RTAMixerToFFT(RTA_mixer, 0, RTA_fft, 0);
 
 // Patchcords for PEQ processors
 AudioConnection patchCord_LeftMixerToPreEQ(Left_mixer, 0, Left_Pre_EQ_amp, 0);
@@ -196,6 +207,23 @@ AudioConnection          patchCord_RightPostDelayAmpToSpdifOut(Right_Post_Delay_
 const int CURRENT_VERSION = 3;
 bool sdCardInitialized = false;
 bool firFilesPending = false;
+
+// --- RTA (real-time analyzer) state ---
+// The ESP refreshes the enable flag every couple of seconds while a web
+// client is listening ("setRta 1" keepalives); streaming stops on its own
+// when the keepalives stop. Band centers are the standard 31 1/3-octave
+// bands and must match RTA_BAND_CENTERS in WebUI/src/rta.js.
+#define RTA_NUM_BANDS 31
+#define RTA_FRAME_INTERVAL_MS 100
+#define RTA_KEEPALIVE_TIMEOUT_MS 7000
+static const float RTA_BAND_CENTERS[RTA_NUM_BANDS] = {
+  20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500,
+  630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000,
+  10000, 12500, 16000, 20000
+};
+bool rtaEnabled = false;
+unsigned long rtaLastKeepaliveAt = 0;
+unsigned long rtaLastFrameAt = 0;
 
 //Define a structure for holding state
 struct State {
@@ -307,6 +335,12 @@ void setup() {
   Tone_generator.begin(0.0, 1000, WAVEFORM_SINE);
   pink1.amplitude(0.0);
 
+  // RTA tap: equal L+R mix, Hanning window, idle until the UI asks for it
+  RTA_mixer.gain(0, 0.5);
+  RTA_mixer.gain(1, 0.5);
+  RTA_fft.windowFunction(AudioWindowHanning1024);
+  patchCord_RTAMixerToFFT.disconnect();
+
   // Apply state
   Serial.println("Applying state");
   setInputGains(state.gainBluetooth, state.gainOptical, state.gainUSB, state.gainGenerator);
@@ -360,6 +394,7 @@ void setup() {
   router.on("setTone", handleSetTone);
   router.on("stopTone", handleStopTone);
   router.on("setNoise", handleSetNoise);
+  router.on("setRta", handleSetRta);
   router.on("ping", handlePing);
   router.begin(ESP_LINK_BAUD);
 
@@ -411,6 +446,73 @@ void loop() {
   }
   router.loop();
   updateAudioVolume(); // Call this frequently to smooth volume changes
+  rtaLoop();
+}
+
+void setRtaEnabled(bool enabled) {
+  rtaLastKeepaliveAt = millis();
+  if (enabled == rtaEnabled) return;
+  rtaEnabled = enabled;
+  Serial.println(enabled ? "RTA started" : "RTA stopped");
+  if (enabled) {
+    patchCord_RTAMixerToFFT.connect();
+  } else {
+    patchCord_RTAMixerToFFT.disconnect();
+  }
+}
+
+// Sum FFT power over [lo,hi) Hz. Edge bins contribute proportionally to
+// their overlap with the band, so bands narrower than one 43Hz bin still
+// get a sensible share instead of double-counting or reading zero.
+static float rtaBandPower(float lo, float hi) {
+  const float binWidth = AUDIO_SAMPLE_RATE_EXACT / 1024.0f;
+  int first = (int)roundf(lo / binWidth);
+  int last = (int)roundf(hi / binWidth);
+  if (first < 1) first = 1; // skip the DC bin
+  if (last > 511) last = 511;
+  float power = 0.0f;
+  for (int i = first; i <= last; i++) {
+    float overlap = min(hi, (i + 0.5f) * binWidth) - max(lo, (i - 0.5f) * binWidth);
+    if (overlap <= 0.0f) continue;
+    float mag = RTA_fft.read(i);
+    power += mag * mag * (overlap / binWidth);
+  }
+  return power;
+}
+
+// While enabled, send "RTA <62 hex chars>\n" frames at ~10Hz: one byte per
+// band, value = (dB + 100) * 2, i.e. -100dB..+27.5dB in 0.5dB steps. Kept
+// compact so a frame fits well inside the ESP's 160-byte RX line buffer.
+void rtaLoop() {
+  if (!rtaEnabled) return;
+  if (millis() - rtaLastKeepaliveAt > RTA_KEEPALIVE_TIMEOUT_MS) {
+    setRtaEnabled(false);
+    return;
+  }
+  if (millis() - rtaLastFrameAt < RTA_FRAME_INTERVAL_MS) return;
+  if (!RTA_fft.available()) return;
+
+  static const char HEX_DIGITS[] = "0123456789abcdef";
+  char frame[4 + RTA_NUM_BANDS * 2 + 1];
+  memcpy(frame, "RTA ", 4);
+  size_t pos = 4;
+  // Band edges are a third of an octave apart: center * 10^(+/-0.05)
+  for (int b = 0; b < RTA_NUM_BANDS; b++) {
+    float power = rtaBandPower(RTA_BAND_CENTERS[b] * 0.89125f,
+                               RTA_BAND_CENTERS[b] * 1.12202f);
+    float dB = (power > 1e-10f) ? 10.0f * log10f(power) : -100.0f;
+    int v = (int)roundf((dB + 100.0f) * 2.0f);
+    if (v < 0) v = 0;
+    if (v > 255) v = 255;
+    frame[pos++] = HEX_DIGITS[v >> 4];
+    frame[pos++] = HEX_DIGITS[v & 0x0F];
+  }
+  frame[pos++] = '\n';
+
+  // Never block on the UART; skip the frame if the TX buffer is busy
+  if ((size_t)Serial1.availableForWrite() < pos) return;
+  Serial1.write((const uint8_t*)frame, pos);
+  rtaLastFrameAt = millis();
 }
 
 // Move 'current' toward 'target' with an exponential ramp whose speed is
@@ -842,6 +944,14 @@ void handleStopTone(const String& command, String* args, int argCount, OutputStr
 void handleSetNoise(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 1) {
     setNoise(args[0].toFloat());
+  }
+}
+
+// "setRta 1" enables RTA streaming (and acts as the keepalive while it
+// repeats); "setRta 0" stops it immediately.
+void handleSetRta(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 1) {
+    setRtaEnabled(args[0].toInt() == 1);
   }
 }
 

@@ -372,7 +372,12 @@ class VybesAPI {
 
   _openSocket() {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-    this.socket = new WebSocket(`${wsProtocol}${window.location.host}/live-updates`);
+    // In dev the page is served by vite, not the device, so the live socket
+    // goes to the mock server's standalone websocket port instead.
+    const wsUrl = import.meta.env.DEV
+      ? 'ws://localhost:8080'
+      : `${wsProtocol}${window.location.host}/live-updates`;
+    this.socket = new WebSocket(wsUrl);
     this._setConnectionState('connecting');
 
     this.socket.onopen = () => {
@@ -455,6 +460,16 @@ class VybesAPI {
    */
   disconnectLiveUpdates() {
     this.messageListeners.clear();
+  }
+
+  /**
+   * Send a raw text message over the live-updates socket. No-op when the
+   * socket isn't open. Used by the analyzer's "rta:keepalive".
+   */
+  sendLiveMessage(text) {
+    if (this.isWebSocketConnected) {
+      this.socket.send(text);
+    }
   }
 
   // ===== UTILITY METHODS =====

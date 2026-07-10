@@ -71,6 +71,7 @@ void loop() {
     remoteControl.loop();
     MDNS.update();
     teensyCommLoop();     // Drain queued Teensy commands, read replies/events
+    websocketLoop();      // RTA keepalive relay to the Teensy
     handleDebounceWrite();
     handleButton();
     loopScreen();

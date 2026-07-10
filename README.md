@@ -67,7 +67,7 @@ input gains (spdif, bluetooth, usb, tone), and the tone/noise generator settings
 
 ## Web UI
 
-A Vue 3 + Vite single-page app (in `/WebUI`), served by the ESP8266. Three views:
+A Vue 3 + Vite single-page app (in `/WebUI`), served by the ESP8266. Four views:
 
 ### Home
 * Presets: a button for each, and a plus icon to add new. Tapping the active preset's
@@ -81,6 +81,23 @@ A Vue 3 + Vite single-page app (in `/WebUI`), served by the ESP8266. Three views
 ### Tools
 * Tone generator: frequency and volume sliders with a start/stop button
 * Pink noise generator: volume slider with a start/stop button
+
+### Analyzer
+Real-time 31-band (1/3-octave) spectrum overlay:
+* Source trace: the Teensy taps the L+R input mix (pre-DSP) with an FFT and
+  streams band levels while the page is open
+* Microphone trace: captured in the browser via Web Audio, aggregated into the
+  same bands, with optional REW-style calibration file import (persisted in the
+  browser)
+* The mic trace is auto level-aligned to the source (median mid-band offset),
+  and a delta chart shows mic − source: where the room and system boost or lose
+  energy. Play pink noise for the most meaningful delta.
+* Exponential averaging (0.5–8 s) smooths both traces and absorbs the timing
+  difference between the device tap and the mic path
+* Note: browsers only expose the microphone on secure origins (HTTPS or
+  localhost), so the mic overlay doesn't work on a phone browsing the device
+  over plain HTTP. On a laptop, Chrome's
+  `#unsafely-treat-insecure-origin-as-secure` flag is the workaround.
 
 ### Preset editor
 Rename, copy, and delete buttons for the selected preset, plus collapsible sections
@@ -147,6 +164,11 @@ HTTP on port 80. Parameters are query strings unless a JSON body is noted.
     plus payload fields (usually `presetName` and the new value).
   * Tone and noise updates are broadcast as `{ "toneFrequency": n, "toneVolume": n }`
     and `{ "noiseVolume": n }` (no `messageType` field).
+  * RTA: clients send the text message `rta:keepalive` every 2 s while they want
+    spectrum data; the server relays the interest to the Teensy and broadcasts
+    frames as `{ "type": "rta", "d": "<62 hex chars>" }` — two hex digits per
+    band (31 bands, 20 Hz–20 kHz), value = (dB + 100) × 2. Streaming stops a few
+    seconds after the keepalives do.
 
 ## Directories
 * `/ESP`: ESP8266 web server firmware (API, WebSocket, LCD, button, IR remote, WIFI)
