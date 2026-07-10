@@ -39,6 +39,13 @@ automatically opens a "Vybes-Config" access point that a phone can join to enter
 credentials. Once on the network it registers itself via mDNS so the device is
 reachable at http://vybes.local.
 
+The config portal also has a "Standalone mode (no router)" button for use away from
+any WIFI network (e.g. in the car): it brings up a plain "Vybes" access point
+(password `vybes-dsp`) serving the full web UI at http://192.168.4.1. The AP
+deliberately has no captive portal or internet, so phones keep streaming (Spotify,
+Bluetooth audio) over cellular while connected to it — confirm the "no internet,
+stay connected?" prompt once. Standalone mode lasts until the next power cycle.
+
 FIR filter files live on an SD card in the Teensy 4.1's built-in slot; the ESP asks the
 Teensy for the list of available files and tells it which file to load per channel.
 

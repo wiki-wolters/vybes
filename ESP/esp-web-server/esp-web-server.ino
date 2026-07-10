@@ -46,7 +46,7 @@ void setup() {
 
     remoteControl.setup();
 
-    setupWiFi();
+    bool standalone = setupWiFi();
     initI2C(); // LCD only - the Teensy link is UART now
     setupScreen();
     writeToScreen("Vybes DSP");
@@ -63,7 +63,7 @@ void setup() {
     init_config();  // Load configuration
 
     DebugSerial.println("Vybes DSP ready!");
-    DebugSerial.println(WiFi.localIP());
+    DebugSerial.println(standalone ? WiFi.softAPIP() : WiFi.localIP());
     DebugSerial.printf("Free heap: %d\n", ESP.getFreeHeap());
 }
 
