@@ -10,7 +10,7 @@
 #include "button.h"
 #include "remote_control.h"
 #include "wifi_setup.h"
-#include <ESP8266mDNS.h>
+#include <ESPmDNS.h>
 
 // Define global objects
 RemoteControl remoteControl;
@@ -32,14 +32,12 @@ void scheduleConfigWrite() {
 }
 
 void setup() {
-    // UART0 is the Teensy link: begin on the default pins, then swap it to
-    // GPIO15 (D8, TX) / GPIO13 (D7, RX). See docs/WIRING.md.
-    TeensySerial.begin(TEENSY_BAUD);
-    TeensySerial.swap();
-
-    // Debug output: Serial1, TX-only on GPIO2 (D4)
+    // Debug output on USB
     DebugSerial.begin(115200);
     DebugSerial.println("\nVybes ESP starting");
+
+    // UART2 is the Teensy link. See docs/WIRING.md.
+    TeensySerial.begin(TEENSY_BAUD, SERIAL_8N1, TEENSY_RX_PIN, TEENSY_TX_PIN);
 
     setupButton();
     initLittleFS(); // For serving web files
@@ -53,6 +51,7 @@ void setup() {
 
     if (MDNS.begin("vybes")) {
         MDNS.addService("http", "tcp", 80);
+        MDNS.addService("https", "tcp", 443);
         DebugSerial.println("mDNS responder started: vybes.local");
     }
 
@@ -69,7 +68,6 @@ void setup() {
 
 void loop() {
     remoteControl.loop();
-    MDNS.update();
     teensyCommLoop();     // Drain queued Teensy commands, read replies/events
     websocketLoop();      // RTA keepalive relay to the Teensy
     handleDebounceWrite();

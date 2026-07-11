@@ -33,10 +33,9 @@ static float clampf(float value, float lo, float hi) {
     return value;
 }
 
-void handlePutPresetCrossover(AsyncWebServerRequest *request) {
+esp_err_t handlePutPresetCrossover(PsychicRequest *request) {
     if (!request->hasParam("preset_name") || !request->hasParam("frequency")) {
-        request->send(400, "text/plain", "Missing required parameters");
-        return;
+        return request->reply(400, "text/plain", "Missing required parameters");
     }
     String presetName = request->getParam("preset_name")->value();
     String freqStr = request->getParam("frequency")->value();
@@ -44,14 +43,12 @@ void handlePutPresetCrossover(AsyncWebServerRequest *request) {
 
     // Validate frequency range (20Hz to 20kHz)
     if (freq < 20 || freq > 20000) {
-        request->send(400, "text/plain", "Crossover frequency must be between 20 and 20000 Hz");
-        return;
+        return request->reply(400, "text/plain", "Crossover frequency must be between 20 and 20000 Hz");
     }
 
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
-        request->send(404, "text/plain", "Preset not found");
-        return;
+        return request->reply(404, "text/plain", "Preset not found");
     }
 
     // Update the preset
@@ -68,28 +65,25 @@ void handlePutPresetCrossover(AsyncWebServerRequest *request) {
     doc["presetName"] = presetName;
     doc["status"] = "ok";
     doc["crossoverFreq"] = freq;
-    sendJsonAndBroadcast(request, doc);
+    return sendJsonAndBroadcast(request, doc);
 }
 
-void handlePutPresetCrossoverEnabled(AsyncWebServerRequest *request) {
+esp_err_t handlePutPresetCrossoverEnabled(PsychicRequest *request) {
     if (!request->hasParam("preset_name") || !request->hasParam("enabled")) {
-        request->send(400, "text/plain", "Missing required parameters");
-        return;
+        return request->reply(400, "text/plain", "Missing required parameters");
     }
     String presetName = request->getParam("preset_name")->value();
     String state = request->getParam("enabled")->value();
 
     if (state != "on" && state != "off") {
-        request->send(400, "text/plain", "Invalid state");
-        return;
+        return request->reply(400, "text/plain", "Invalid state");
     }
 
     bool enabled = (state == "on");
 
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
-        request->send(404, "text/plain", "Preset not found");
-        return;
+        return request->reply(404, "text/plain", "Preset not found");
     }
 
     // Update the preset
@@ -105,37 +99,32 @@ void handlePutPresetCrossoverEnabled(AsyncWebServerRequest *request) {
     doc["presetName"] = presetName;
     doc["status"] = "ok";
     doc["crossoverEnabled"] = enabled;
-    sendJsonAndBroadcast(request, doc);
+    return sendJsonAndBroadcast(request, doc);
 }
 
-void handlePutPresetEQPoints(AsyncWebServerRequest *request, JsonVariant &json) {
+esp_err_t handlePutPresetEQPoints(PsychicRequest *request, JsonVariant &json) {
     if (!request->hasParam("preset_name")) {
-        request->send(400, "text/plain", "Missing required parameters");
-        return;
+        return request->reply(400, "text/plain", "Missing required parameters");
     }
     String presetName = request->getParam("preset_name")->value();
 
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
-        request->send(404, "text/plain", "Preset not found");
-        return;
+        return request->reply(404, "text/plain", "Preset not found");
     }
 
     Preset* preset = &current_config.presets[presetIndex];
     PEQSet* target_set = getOrCreateSpl0Set(preset);
     if (target_set == nullptr) {
-        request->send(507, "text/plain", "No available EQ set slots to create default spl=0 set.");
-        return;
+        return request->reply(507, "text/plain", "No available EQ set slots to create default spl=0 set.");
     }
 
     JsonArray pointsArray = json.as<JsonArray>();
     if (pointsArray.isNull()) {
-        request->send(400, "text/plain", "Expected a JSON array of PEQ points");
-        return;
+        return request->reply(400, "text/plain", "Expected a JSON array of PEQ points");
     }
     if ((int)pointsArray.size() > MAX_PEQ_POINTS) {
-        request->send(400, "text/plain", "Too many PEQ points");
-        return;
+        return request->reply(400, "text/plain", "Too many PEQ points");
     }
 
     // Points are stored sequentially: array order defines the band index.
@@ -174,8 +163,6 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, JsonVariant &json) 
         sendToTeensy(CMD_RESET_EQ_FILTERS, fromIndex);
     }
 
-    request->send(204);
-
     StaticJsonDocument<192> responseDoc;
     responseDoc["messageType"] = "eqPointsChanged";
     responseDoc["presetName"] = presetName;
@@ -188,38 +175,35 @@ void handlePutPresetEQPoints(AsyncWebServerRequest *request, JsonVariant &json) 
     if (len > 0 && len < sizeof(buffer)) {
         broadcastWebSocket(buffer);
     }
+
+    return request->reply(204);
 }
 
-void handlePutPresetEQPoint(AsyncWebServerRequest *request, JsonVariant &json) {
+esp_err_t handlePutPresetEQPoint(PsychicRequest *request, JsonVariant &json) {
     if (!request->hasParam("preset_name")) {
-        request->send(400, "text/plain", "Missing required parameters");
-        return;
+        return request->reply(400, "text/plain", "Missing required parameters");
     }
     String presetName = request->getParam("preset_name")->value();
 
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
-        request->send(404, "text/plain", "Preset not found");
-        return;
+        return request->reply(404, "text/plain", "Preset not found");
     }
 
     JsonObject point = json.as<JsonObject>();
     if (point.isNull()) {
-        request->send(400, "text/plain", "Expected a JSON PEQ point object");
-        return;
+        return request->reply(400, "text/plain", "Expected a JSON PEQ point object");
     }
 
     int id = point["id"] | -1;
     if (id < 0 || id >= MAX_PEQ_POINTS) {
-        request->send(400, "text/plain", "PEQ point ID out of bounds");
-        return;
+        return request->reply(400, "text/plain", "PEQ point ID out of bounds");
     }
 
     Preset* preset = &current_config.presets[presetIndex];
     PEQSet* target_set = getOrCreateSpl0Set(preset);
     if (target_set == nullptr) {
-        request->send(507, "text/plain", "No available EQ set slots to create default spl=0 set.");
-        return;
+        return request->reply(507, "text/plain", "No available EQ set slots to create default spl=0 set.");
     }
 
     PEQPoint& stored = target_set->points[id];
@@ -235,32 +219,28 @@ void handlePutPresetEQPoint(AsyncWebServerRequest *request, JsonVariant &json) {
         sendEqPointToTeensy(id, stored);
     }
 
-    request->send(204);
+    return request->reply(204);
 }
 
-void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
+esp_err_t handlePutPresetEQEnabled(PsychicRequest *request) {
     if (!request->hasParam("preset_name") || !request->hasParam("enabled")) {
-        request->send(400, "text/plain", "Missing required parameters");
-        return;
+        return request->reply(400, "text/plain", "Missing required parameters");
     }
     String presetName = request->getParam("preset_name")->value();
     String state = request->getParam("enabled")->value();
 
     if (state != "on" && state != "off") {
-        request->send(400, "text/plain", "Invalid state. Must be 'on' or 'off'");
-        return;
+        return request->reply(400, "text/plain", "Invalid state. Must be 'on' or 'off'");
     }
 
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
-        request->send(404, "text/plain", "Preset not found");
-        return;
+        return request->reply(404, "text/plain", "Preset not found");
     }
 
     Preset* preset = &current_config.presets[presetIndex];
     if (getOrCreateSpl0Set(preset) == nullptr) {
-        request->send(507, "text/plain", "No available EQ set slots to create default spl=0 set.");
-        return;
+        return request->reply(507, "text/plain", "No available EQ set slots to create default spl=0 set.");
     }
 
     bool enabled = (state == "on");
@@ -276,5 +256,5 @@ void handlePutPresetEQEnabled(AsyncWebServerRequest *request) {
     doc["presetName"] = presetName;
     doc["status"] = "ok";
     doc["enabled"] = enabled;
-    sendJsonAndBroadcast(request, doc);
+    return sendJsonAndBroadcast(request, doc);
 }

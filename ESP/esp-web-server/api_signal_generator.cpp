@@ -5,10 +5,9 @@
 #include "teensy_comm.h"
 #include "utilities.h"
 
-void handlePutTone(AsyncWebServerRequest *request) {
+esp_err_t handlePutTone(PsychicRequest *request) {
     if (!request->hasParam("frequency") || !request->hasParam("volume")) {
-        request->send(400, "text/plain", "Missing required parameters");
-        return;
+        return request->reply(400, "text/plain", "Missing required parameters");
     }
     String freqStr = request->getParam("frequency")->value();
     String volStr = request->getParam("volume")->value();
@@ -16,12 +15,10 @@ void handlePutTone(AsyncWebServerRequest *request) {
     int vol = volStr.toInt();
 
     if (freq < 20 || freq > 20000) {
-        request->send(400, "text/plain", "Invalid frequency value");
-        return;
+        return request->reply(400, "text/plain", "Invalid frequency value");
     }
     if (vol < 0 || vol > 100) {
-        request->send(400, "text/plain", "Invalid volume value");
-        return;
+        return request->reply(400, "text/plain", "Invalid volume value");
     }
 
     current_config.toneFrequency = freq;
@@ -37,15 +34,14 @@ void handlePutTone(AsyncWebServerRequest *request) {
     char responseBuffer[1024]; // Adjust size as needed
     size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
     if (len > 0 && len < sizeof(responseBuffer)) {
-        request->send(200, "application/json", responseBuffer);
         broadcastWebSocket(responseBuffer);
-    } else {
-        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
-        DebugSerial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+        return request->reply(200, "application/json", responseBuffer);
     }
+    DebugSerial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+    return request->reply(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
 }
 
-void handlePutToneStop(AsyncWebServerRequest *request) {
+esp_err_t handlePutToneStop(PsychicRequest *request) {
     current_config.toneFrequency = 0;
     current_config.toneVolume = 0;
     scheduleConfigWrite();
@@ -59,25 +55,22 @@ void handlePutToneStop(AsyncWebServerRequest *request) {
     char responseBuffer[1024]; // Adjust size as needed
     size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
     if (len > 0 && len < sizeof(responseBuffer)) {
-        request->send(200, "application/json", responseBuffer);
         broadcastWebSocket(responseBuffer);
-    } else {
-        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
-        DebugSerial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+        return request->reply(200, "application/json", responseBuffer);
     }
+    DebugSerial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+    return request->reply(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
 }
 
-void handlePutNoise(AsyncWebServerRequest *request) {
+esp_err_t handlePutNoise(PsychicRequest *request) {
     if (!request->hasParam("level")) {
-        request->send(400, "text/plain", "Missing required parameters");
-        return;
+        return request->reply(400, "text/plain", "Missing required parameters");
     }
     String volStr = request->getParam("level")->value();
     int vol = volStr.toInt();
 
     if (vol < 0 || vol > 100) {
-        request->send(400, "text/plain", "Invalid volume value");
-        return;
+        return request->reply(400, "text/plain", "Invalid volume value");
     }
 
     current_config.noiseVolume = vol;
@@ -91,10 +84,9 @@ void handlePutNoise(AsyncWebServerRequest *request) {
     char responseBuffer[1024]; // Adjust size as needed
     size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
     if (len > 0 && len < sizeof(responseBuffer)) {
-        request->send(200, "application/json", responseBuffer);
         broadcastWebSocket(responseBuffer);
-    } else {
-        request->send(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
-        DebugSerial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+        return request->reply(200, "application/json", responseBuffer);
     }
+    DebugSerial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
+    return request->reply(500, "application/json", "{\"error\":\"Failed to serialize JSON response or buffer too small\"}");
 }

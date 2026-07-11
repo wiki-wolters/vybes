@@ -10,7 +10,7 @@
 
 // --- API Handlers ---
 
-void handleGetPresets(AsyncWebServerRequest *request) {
+esp_err_t handleGetPresets(PsychicRequest *request) {
     DynamicJsonDocument doc(2048); // Increased size to accommodate the larger JSON structure
     JsonArray presets = doc.to<JsonArray>();
     
@@ -24,20 +24,18 @@ void handleGetPresets(AsyncWebServerRequest *request) {
 
     String response;
     serializeJson(doc, response);
-    request->send(200, "application/json", response);
+    return request->reply(200, "application/json", response.c_str());
 }
 
-void handleGetPreset(AsyncWebServerRequest *request) {
+esp_err_t handleGetPreset(PsychicRequest *request) {
     if (!request->hasParam("name")) {
-        request->send(400, "text/plain", "Missing required parameters");
-        return;
+        return request->reply(400, "text/plain", "Missing required parameters");
     }
     String presetName = request->getParam("name")->value();
     int presetIndex = find_preset_by_name(presetName.c_str());
 
     if (presetIndex == -1) {
-        request->send(404, "text/plain", "Preset not found");
-        return;
+        return request->reply(404, "text/plain", "Preset not found");
     }
 
     const Preset& preset = current_config.presets[presetIndex];
@@ -83,30 +81,26 @@ void handleGetPreset(AsyncWebServerRequest *request) {
 
     String response;
     serializeJson(doc, response);
-    request->send(200, "application/json", response);
+    return request->reply(200, "application/json", response.c_str());
 }
 
-void handlePostPresetCreate(AsyncWebServerRequest *request) {
+esp_err_t handlePostPresetCreate(PsychicRequest *request) {
     if (!request->hasParam("name")) {
-        request->send(400, "text/plain", "Missing required parameters");
-        return;
+        return request->reply(400, "text/plain", "Missing required parameters");
     }
     String presetName = request->getParam("name")->value();
 
     if (presetName.length() == 0 || presetName.length() >= PRESET_NAME_MAX_LEN) {
-        request->send(400, "text/plain", "Preset name must be between 1 and " + String(PRESET_NAME_MAX_LEN) + " characters");
-        return;
+        return request->reply(400, "text/plain", "Preset name too long");
     }
 
     if (find_preset_by_name(presetName.c_str()) != -1) {
-        request->send(409, "text/plain", "Preset name already exists");
-        return;
+        return request->reply(409, "text/plain", "Preset name already exists");
     }
 
     int newIndex = find_empty_preset_slot();
     if (newIndex == -1) {
-        request->send(507, "text/plain", "Maximum number of presets reached");
-        return;
+        return request->reply(507, "text/plain", "Maximum number of presets reached");
     }
 
     // Create new preset with default values
@@ -131,37 +125,32 @@ void handlePostPresetCreate(AsyncWebServerRequest *request) {
     }
 
     scheduleConfigWrite();
-    request->send(201, "application/json", "{}");
+    return request->reply(201, "application/json", "{}");
 }
 
-void handlePostPresetCopy(AsyncWebServerRequest *request) {
+esp_err_t handlePostPresetCopy(PsychicRequest *request) {
     if (!request->hasParam("source") || !request->hasParam("destination")) {
-        request->send(400, "text/plain", "Missing required parameters");
-        return;
+        return request->reply(400, "text/plain", "Missing required parameters");
     }
     String sourceName = request->getParam("source")->value();
     String destName = request->getParam("destination")->value();
 
     if (destName.length() == 0 || destName.length() >= PRESET_NAME_MAX_LEN) {
-        request->send(400, "text/plain", "Destination preset name must be between 1 and " + String(PRESET_NAME_MAX_LEN) + " characters");
-        return;
+        return request->reply(400, "text/plain", "Destination preset name too long");
     }
 
     if (find_preset_by_name(destName.c_str()) != -1) {
-        request->send(409, "text/plain", "Destination preset name already exists");
-        return;
+        return request->reply(409, "text/plain", "Destination preset name already exists");
     }
 
     int sourceIndex = find_preset_by_name(sourceName.c_str());
     if (sourceIndex == -1) {
-        request->send(404, "text/plain", "Source preset not found");
-        return;
+        return request->reply(404, "text/plain", "Source preset not found");
     }
 
     int destIndex = find_empty_preset_slot();
     if (destIndex == -1) {
-        request->send(507, "text/plain", "Maximum number of presets reached");
-        return;
+        return request->reply(507, "text/plain", "Maximum number of presets reached");
     }
 
     // Copy the preset struct
@@ -170,58 +159,51 @@ void handlePostPresetCopy(AsyncWebServerRequest *request) {
     strcpy(current_config.presets[destIndex].name, destName.c_str());
 
     scheduleConfigWrite();
-    request->send(201, "application/json", "{}");
+    return request->reply(201, "application/json", "{}");
 }
 
-void handlePutPresetRename(AsyncWebServerRequest *request) {
+esp_err_t handlePutPresetRename(PsychicRequest *request) {
     if (!request->hasParam("old_name") || !request->hasParam("new_name")) {
-        request->send(400, "text/plain", "Missing required parameters");
-        return;
+        return request->reply(400, "text/plain", "Missing required parameters");
     }
     String oldName = request->getParam("old_name")->value();
     String newName = request->getParam("new_name")->value();
 
     if (newName.length() == 0 || newName.length() >= PRESET_NAME_MAX_LEN) {
-        request->send(400, "text/plain", "Invalid new preset name");
-        return;
+        return request->reply(400, "text/plain", "Invalid new preset name");
     }
 
     int existing_preset_index = find_preset_by_name(newName.c_str());
     if (existing_preset_index != -1 && existing_preset_index != find_preset_by_name(oldName.c_str())) {
-        request->send(409, "text/plain", "New preset name already exists");
-        return;
+        return request->reply(409, "text/plain", "New preset name already exists");
     }
 
     int presetIndex = find_preset_by_name(oldName.c_str());
     if (presetIndex == -1) {
-        request->send(404, "text/plain", "Preset to rename not found");
-        return;
+        return request->reply(404, "text/plain", "Preset to rename not found");
     }
 
     // Update name in config
     strcpy(current_config.presets[presetIndex].name, newName.c_str());
     scheduleConfigWrite();
 
-    request->send(200, "application/json", "{}");
+    return request->reply(200, "application/json", "{}");
 }
 
-void handleDeletePreset(AsyncWebServerRequest *request) {
+esp_err_t handleDeletePreset(PsychicRequest *request) {
     if (!request->hasParam("name")) {
-        request->send(400, "text/plain", "Missing required parameters");
-        return;
+        return request->reply(400, "text/plain", "Missing required parameters");
     }
     String presetName = request->getParam("name")->value();
 
     if (presetName == "Default") {
-        request->send(400, "text/plain", "Cannot delete the default preset");
-        return;
+        return request->reply(400, "text/plain", "Cannot delete the default preset");
     }
 
     int presetIndex = find_preset_by_name(presetName.c_str());
 
     if (presetIndex == -1) {
-        request->send(404, "text/plain", "Preset not found");
-        return;
+        return request->reply(404, "text/plain", "Preset not found");
     }
 
     // "Delete" by clearing the name, making the slot available
@@ -236,20 +218,18 @@ void handleDeletePreset(AsyncWebServerRequest *request) {
     loadFirFilters();
 
     scheduleConfigWrite();
-    request->send(200, "application/json", "{}");
+    return request->reply(200, "application/json", "{}");
 }
 
-void handlePutActivePreset(AsyncWebServerRequest *request) {
+esp_err_t handlePutActivePreset(PsychicRequest *request) {
     if (!request->hasParam("name")) {
-        request->send(400, "text/plain", "Missing required parameters");
-        return;
+        return request->reply(400, "text/plain", "Missing required parameters");
     }
     String presetName = request->getParam("name")->value();
     int presetIndex = find_preset_by_name(presetName.c_str());
 
     if (presetIndex == -1) {
-        request->send(404, "text/plain", "Preset not found");
-        return;
+        return request->reply(404, "text/plain", "Preset not found");
     }
 
     current_config.active_preset_index = presetIndex;
@@ -257,7 +237,7 @@ void handlePutActivePreset(AsyncWebServerRequest *request) {
     loadFirFilters();
     scheduleConfigWrite();
 
-    request->send(200, "application/json", "{}"); // HTTP response
+    // Broadcast first, then reply (reply ends the request)
 
     // Prepare data for WebSocket broadcast
     StaticJsonDocument<192> doc;
@@ -271,25 +251,23 @@ void handlePutActivePreset(AsyncWebServerRequest *request) {
     } else {
         DebugSerial.println("Error serializing JSON for WebSocket broadcast or buffer too small.");
     }
+    return request->reply(200, "application/json", "{}");
 }
 
-void handlePutPresetDelayEnabled(AsyncWebServerRequest *request) {
+esp_err_t handlePutPresetDelayEnabled(PsychicRequest *request) {
     if (!request->hasParam("preset_name") || !request->hasParam("enabled")) {
-        request->send(400, "text/plain", "Missing required parameters");
-        return;
+        return request->reply(400, "text/plain", "Missing required parameters");
     }
     String presetName = request->getParam("preset_name")->value();
     String state = request->getParam("enabled")->value();
     
     if (state != "on" && state != "off") {
-        request->send(400, "text/plain", "Invalid state. Must be 'on' or 'off'");
-        return;
+        return request->reply(400, "text/plain", "Invalid state. Must be 'on' or 'off'");
     }
     
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
-        request->send(404, "text/plain", "Preset not found");
-        return;
+        return request->reply(404, "text/plain", "Preset not found");
     }
     
     bool enabled = (state == "on");
@@ -307,33 +285,29 @@ void handlePutPresetDelayEnabled(AsyncWebServerRequest *request) {
     doc["presetName"] = presetName;
     doc["status"] = "ok";
     doc["enabled"] = enabled;
-    sendJsonAndBroadcast(request, doc);
+    return sendJsonAndBroadcast(request, doc);
 }
 
-void handlePutPresetDelayNamed(AsyncWebServerRequest *request) {
+esp_err_t handlePutPresetDelayNamed(PsychicRequest *request) {
     if (!request->hasParam("preset_name") || !request->hasParam("speaker") || !request->hasParam("value")) {
-        request->send(400, "text/plain", "Missing required parameters");
-        return;
+        return request->reply(400, "text/plain", "Missing required parameters");
     }
     String presetName = request->getParam("preset_name")->value();
     String speaker = request->getParam("speaker")->value();
     String delayUsStr = request->getParam("value")->value();
     
     if (speaker != "left" && speaker != "right" && speaker != "sub") {
-        request->send(400, "text/plain", "Invalid speaker. Must be 'left', 'right', or 'sub'");
-        return;
+        return request->reply(400, "text/plain", "Invalid speaker. Must be 'left', 'right', or 'sub'");
     }
     
     float delayUs = delayUsStr.toFloat();
     if (delayUs < 0 || delayUs > 10000.0f) {
-        request->send(400, "text/plain", "Delay must be between 0 and 10,000 microseconds");
-        return;
+        return request->reply(400, "text/plain", "Delay must be between 0 and 10,000 microseconds");
     }
     
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
-        request->send(404, "text/plain", "Preset not found");
-        return;
+        return request->reply(404, "text/plain", "Preset not found");
     }
     
     // Update the delay in the config
@@ -362,6 +336,6 @@ void handlePutPresetDelayNamed(AsyncWebServerRequest *request) {
     doc["status"] = "ok";
     doc["speaker"] = speaker;
     doc["delayUs"] = delayUs;
-    sendJsonAndBroadcast(request, doc);
+    return sendJsonAndBroadcast(request, doc);
 }
 

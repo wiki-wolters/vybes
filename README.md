@@ -10,9 +10,9 @@ At the core of the device is a Teensy 4.1 with a 600MHz processor. The Teensy is
 responsible for all the digital audio manipulation: input mixing, parametric EQ, FIR
 filtering, speaker delays, subwoofer crossover, and tone/pink-noise generation.
 
-An ESP8266 NodeMCU development board is responsible for connecting to WIFI, serving the
+An ESP32 DevKitC (WROOM-32) development board is responsible for connecting to WIFI, serving the
 web UI and API, and managing Teensy state. Preset configuration is stored on the
-ESP8266's flash (LittleFS, as MessagePack), alongside the built web UI assets.
+ESP32's flash (LittleFS, as MessagePack), alongside the built web UI assets.
 
 Audio inputs (all digital, into the Teensy):
 * SPDIF Toslink optical
@@ -24,7 +24,7 @@ Audio outputs:
 * Analog subwoofer via a second PCM5102A I2S DAC board
 * SPDIF pass-through out
 
-Other hardware handled by the ESP8266:
+Other hardware handled by the ESP32:
 * A 1602 backlit LCD (via an I2C PCF8574 backpack) shows the current preset name. The
   backlight turns on when the preset changes and turns off after a few seconds.
 * A front button: a short press wakes the LCD backlight, further presses cycle through
@@ -34,10 +34,19 @@ Other hardware handled by the ESP8266:
 * An IR receiver, so a spare remote control can drive volume up/down, mute, and
   next/previous preset.
 
-WIFI credentials are provisioned by WiFiManager: if the ESP8266 can't connect, it
+WIFI credentials are provisioned by WiFiManager: if the ESP32 can't connect, it
 automatically opens a "Vybes-Config" access point that a phone can join to enter
 credentials. Once on the network it registers itself via mDNS so the device is
 reachable at http://vybes.local.
+
+The server also listens on **https://vybes.local** when TLS certificates are
+present on the device (LittleFS `/certs/server.crt` + `/certs/server.key`;
+without them it serves plain HTTP only). Generate them with `ESP/make-certs.sh`
+(uses [mkcert](https://github.com/FiloSottile/mkcert)) and flash with
+`pio run -d ESP -t uploadfs`. Trust the mkcert root CA on a phone or laptop
+(instructions in the script header) and the browser treats the device as a
+secure origin — which is what allows microphone access for the Analyzer's mic
+overlay, notably on iOS where there is no insecure-origin override.
 
 The config portal also has a "Standalone mode (no router)" button for use away from
 any WIFI network (e.g. in the car): it brings up a plain "Vybes" access point
@@ -67,7 +76,7 @@ input gains (spdif, bluetooth, usb, tone), and the tone/noise generator settings
 
 ## Web UI
 
-A Vue 3 + Vite single-page app (in `/WebUI`), served by the ESP8266. Four views:
+A Vue 3 + Vite single-page app (in `/WebUI`), served by the ESP32. Four views:
 
 ### Home
 * Presets: a button for each, and a plus icon to add new. Tapping the active preset's
@@ -110,7 +119,7 @@ Rename, copy, and delete buttons for the selected preset, plus collapsible secti
 
 ## API
 
-HTTP on port 80. Parameters are query strings unless a JSON body is noted.
+HTTP on port 80 and HTTPS on 443 (same routes; HTTPS only when certificates are installed). Parameters are query strings unless a JSON body is noted.
 
 ### System
 * **GET /status** — current state: speaker gains, input gains, mute, tone and noise
@@ -156,7 +165,7 @@ HTTP on port 80. Parameters are query strings unless a JSON body is noted.
 * **PUT /preset/fir/enabled?preset_name={name}&state={on|off}**
 
 ### Live updates (WebSocket)
-* **ws://vybes.local/live-updates**
+* **ws://vybes.local/live-updates** (or `wss://` when the page is served over HTTPS)
   * State changes are broadcast to all connected clients as JSON with a `messageType`
     field: `volumeChanged`, `muteChanged`, `mutePercentChanged`, `activePresetChanged`,
     `delayChanged`, `delayEnabledChanged`, `eqPointsChanged`, `eqEnabledChanged`,
@@ -171,7 +180,7 @@ HTTP on port 80. Parameters are query strings unless a JSON body is noted.
     seconds after the keepalives do.
 
 ## Directories
-* `/ESP`: ESP8266 web server firmware (API, WebSocket, LCD, button, IR remote, WIFI)
+* `/ESP`: ESP32 web server firmware (API, WebSocket, HTTPS, LCD, button, IR remote, WIFI)
 * `/Teensy`: Teensy DSP firmware. `fir_filters/` is the firmware that builds; `direct/`
   and `fir_test/` are earlier experiments/test sketches.
 * `/WebUI`: Vue 3 web UI
@@ -215,11 +224,11 @@ pio run -d Teensy -t upload   # compile and flash over USB
 Upload uses the Teensy loader bundled with the PlatformIO Teensy platform. If the
 upload sits waiting for the board, press the program button on the Teensy.
 
-### ESP8266 (web server firmware + web UI)
+### ESP32 (web server firmware + web UI)
 
-The ESP8266's flash holds two separate images, uploaded by two separate commands:
+The ESP32's flash holds two separate images, uploaded by two separate commands:
 the firmware (the compiled C++ program) and a LittleFS filesystem image (the built
-web UI assets, plus presets saved at runtime).
+web UI assets, TLS certificates, plus presets saved at runtime).
 
 1. Flash the firmware:
 
@@ -227,14 +236,22 @@ web UI assets, plus presets saved at runtime).
    pio run -d ESP -t upload
    ```
 
-2. Build the web UI and copy it into the ESP's filesystem staging directory
+2. (Optional, for HTTPS) generate TLS certificates into the filesystem staging
+   directory - only needed once, and only if you want the mic-capable secure
+   origin:
+
+   ```sh
+   ./ESP/make-certs.sh
+   ```
+
+3. Build the web UI and copy it into the ESP's filesystem staging directory
    (`ESP/esp-web-server/data/dist`):
 
    ```sh
    cd WebUI && npm run deploy && cd ..
    ```
 
-3. Pack `ESP/esp-web-server/data` into a LittleFS image and flash it:
+4. Pack `ESP/esp-web-server/data` into a LittleFS image and flash it:
 
    ```sh
    pio run -d ESP -t uploadfs

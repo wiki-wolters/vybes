@@ -3,12 +3,11 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include <ESPAsyncWebServer.h>
+#include <PsychicHttp.h>
 
-void addPresetGainsHandler(AsyncWebServer* server);
-void handleGetPresetGains(AsyncWebServerRequest* request);
-void handleSetPresetGains(AsyncWebServerRequest* request, JsonVariant& json);
-void handlePutSpeakerGain(AsyncWebServerRequest* request);
-void handlePutInputGains(AsyncWebServerRequest* request, JsonVariant& json);
+esp_err_t handleGetPresetGains(PsychicRequest* request);
+esp_err_t handleSetPresetGains(PsychicRequest* request, JsonVariant& json);
+esp_err_t handlePutSpeakerGain(PsychicRequest* request);
+esp_err_t handlePutInputGains(PsychicRequest* request, JsonVariant& json);
 
 #endif

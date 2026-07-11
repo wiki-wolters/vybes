@@ -13,7 +13,7 @@
 
 using namespace ArduinoJson;
 
-void handleGetFirFiles(AsyncWebServerRequest *request) {
+esp_err_t handleGetFirFiles(PsychicRequest *request) {
     // The file list is served from a cache that is refreshed asynchronously
     // over the Teensy link (at boot, when the Teensy reboots, and after each
     // request so the next fetch is fresh).
@@ -24,8 +24,7 @@ void handleGetFirFiles(AsyncWebServerRequest *request) {
     strlcpy(listCopy, getCachedFirFiles(), sizeof(listCopy));
 
     if (strlen(listCopy) == 0) {
-        request->send(200, "application/json", "[]");
-        return;
+        return request->reply(200, "application/json", "[]");
     }
 
     // The cache is a newline-separated list of filenames
@@ -49,27 +48,24 @@ void handleGetFirFiles(AsyncWebServerRequest *request) {
     serializeJson(files, jsonResponse);
 
     // Send the response
-    request->send(200, "application/json", jsonResponse);
+    return request->reply(200, "application/json", jsonResponse.c_str());
 }
 
-void handlePutPresetFir(AsyncWebServerRequest *request) {
+esp_err_t handlePutPresetFir(PsychicRequest *request) {
     if (!request->hasParam("preset_name") || !request->hasParam("speaker") || !request->hasParam("file")) {
-        request->send(400, "text/plain", "Missing required parameters");
-        return;
+        return request->reply(400, "text/plain", "Missing required parameters");
     }
     String presetName = request->getParam("preset_name")->value();
     String speaker = request->getParam("speaker")->value();
     String filename = request->getParam("file")->value();
     
     if (speaker != "left" && speaker != "right" && speaker != "sub") {
-        request->send(400, "text/plain", "Invalid speaker");
-        return;
+        return request->reply(400, "text/plain", "Invalid speaker");
     }
 
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
-        request->send(404, "text/plain", "Preset not found");
-        return;
+        return request->reply(404, "text/plain", "Preset not found");
     }
 
     // Update the FIR filter filename for the specified speaker
@@ -97,30 +93,26 @@ void handlePutPresetFir(AsyncWebServerRequest *request) {
     doc["status"] = "ok";
     doc["speaker"] = speaker;
     doc["filename"] = filename;
-    sendJsonAndBroadcast(request, doc);
+    return sendJsonAndBroadcast(request, doc);
 }
 
-void handlePutPresetFirEnabled(AsyncWebServerRequest *request) {
+esp_err_t handlePutPresetFirEnabled(PsychicRequest *request) {
     if (!request->hasParam("preset_name")) {
-        request->send(400, "text/plain", "Missing preset_name parameter");
-        return;
+        return request->reply(400, "text/plain", "Missing preset_name parameter");
     }
     if (!request->hasParam("state")) {
-        request->send(400, "text/plain", "Missing state parameter");
-        return;
+        return request->reply(400, "text/plain", "Missing state parameter");
     }
     String presetName = request->getParam("preset_name")->value();
     String state = request->getParam("state")->value();
     
     if (state != "on" && state != "off") {
-        request->send(400, "text/plain", "Invalid state");
-        return;
+        return request->reply(400, "text/plain", "Invalid state");
     }
 
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
-        request->send(404, "text/plain", "Preset not found");
-        return;
+        return request->reply(404, "text/plain", "Preset not found");
     }
 
     // Update the FIR filter enabled state
@@ -141,5 +133,5 @@ void handlePutPresetFirEnabled(AsyncWebServerRequest *request) {
     doc["presetName"] = presetName;
     doc["status"] = "ok";
     doc["FIRFiltersEnabled"] = enabled;
-    sendJsonAndBroadcast(request, doc);
+    return sendJsonAndBroadcast(request, doc);
 }

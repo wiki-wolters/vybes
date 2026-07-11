@@ -1,4 +1,7 @@
-const API_BASE_URL = import.meta.env.DEV ? 'http://vybes-mock.local' : 'http://vybes.local'
+// In production the API is same-origin (relative URLs), so the UI works
+// identically over http://vybes.local and https://vybes.local - hardcoding
+// a scheme would break one of them (mixed content under HTTPS).
+const API_BASE_URL = import.meta.env.DEV ? 'http://vybes-mock.local' : ''
 
 /*
  * Vybes DSP API Client - Enhanced Version

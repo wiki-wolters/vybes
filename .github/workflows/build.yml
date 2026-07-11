@@ -6,7 +6,7 @@ on:
   workflow_dispatch: # allows manual runs from the Actions tab
 
 jobs:
-  esp8266:
+  esp32:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

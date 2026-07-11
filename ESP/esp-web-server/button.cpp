@@ -8,8 +8,10 @@
 #include <ArduinoJson.h>
 #include <string.h>
 
-const int BUTTON_PIN = 14; //D5 (moved from D7/GPIO13, which is now the UART RX from the Teensy)
-const int BLUETOOTH_PAIRING_PIN = 12; //D6, for output
+// ESP32 pins: 32/33 have internal pullups and no strapping/boot duties
+// (GPIO12/MTDI would change the flash voltage if held high at boot).
+const int BUTTON_PIN = 32;
+const int BLUETOOTH_PAIRING_PIN = 33; // output to the BT module's pair pin
 
 unsigned long pressStart = 0;
 String lastMessage = "";

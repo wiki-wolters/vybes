@@ -1,9 +1,10 @@
 #include "globals.h"
 #include "websocket.h"
-#include "web_server.h" // Include web_server.h to access the 'server' instance
 #include "teensy_comm.h"
 
-AsyncWebSocket ws("/live-updates"); // Create the WebSocket instance
+// Shared between the HTTP and HTTPS servers - both attach it to
+// /live-updates in setupWebServer, and its client list covers both.
+PsychicWebSocketHandler ws;
 
 // RTA subscription: the analyzer page sends "rta:keepalive" over the socket
 // every couple of seconds while it is open. While those keepalives are
@@ -15,45 +16,35 @@ AsyncWebSocket ws("/live-updates"); // Create the WebSocket instance
 static unsigned long rtaLastClientKeepaliveAt = 0;
 static bool rtaActive = false;
 
-void handleWebSocketEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
-    switch (type) {
-        case WS_EVT_CONNECT:
-            DebugSerial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
-            // Clients JSON-parse every message, so the greeting must be JSON
-            client->text("{\"type\":\"hello\",\"message\":\"Connected to Vybes\"}");
-            break;
-        case WS_EVT_DISCONNECT:
-            DebugSerial.printf("WebSocket client #%u disconnected\n", client->id());
-            break;
-        case WS_EVT_DATA:
-            // data packet
-            if (len > 0) {
-                AwsFrameInfo *info = (AwsFrameInfo*)arg;
-                if (info->final && info->index == 0 && info->len == len) {
-                    // The whole message is in a single frame and we got all of it.
-                    // Note: 'data' is not null-terminated - compare with length.
-                    if (len == 13 && strncmp((const char*)data, "rta:keepalive", 13) == 0) {
-                        rtaLastClientKeepaliveAt = millis();
-                        break;
-                    }
-                    DebugSerial.printf("WebSocket client #%u received: %.*s\n", client->id(), (int)len, (const char*)data);
-                }
-            }
-            break;
-        case WS_EVT_PONG:
-        case WS_EVT_ERROR:
-            break;
-    }
-}
-
 void setupWebSocket() {
-    ws.onEvent(handleWebSocketEvent);
-    server.addHandler(&ws); // Attach the WebSocket to the AsyncWebServer
-    DebugSerial.println("WebSocket server started on /live-updates");
+    ws.onOpen([](PsychicWebSocketClient *client) {
+        DebugSerial.printf("WebSocket client #%d connected from %s\n",
+                           client->socket(), client->remoteIP().toString().c_str());
+        // Clients JSON-parse every message, so the greeting must be JSON
+        client->sendMessage("{\"type\":\"hello\",\"message\":\"Connected to Vybes\"}");
+    });
+
+    ws.onFrame([](PsychicWebSocketRequest *request, httpd_ws_frame *frame) {
+        if (frame->type == HTTPD_WS_TYPE_TEXT && frame->len > 0) {
+            // frame->payload is not null-terminated - compare with length
+            if (frame->len == 13 && strncmp((const char*)frame->payload, "rta:keepalive", 13) == 0) {
+                rtaLastClientKeepaliveAt = millis();
+                return ESP_OK;
+            }
+            DebugSerial.printf("WebSocket received: %.*s\n", (int)frame->len, (const char*)frame->payload);
+        }
+        return ESP_OK;
+    });
+
+    ws.onClose([](PsychicWebSocketClient *client) {
+        DebugSerial.printf("WebSocket client #%d disconnected\n", client->socket());
+    });
+
+    DebugSerial.println("WebSocket handler ready on /live-updates");
 }
 
 void broadcastWebSocket(const char* message) {
-    ws.textAll(message);
+    ws.sendAll(message);
     DebugSerial.print("WebSocket broadcast: ");
     DebugSerial.println(message);
 }
@@ -66,7 +57,7 @@ void broadcastRtaFrame(const char* hexData) {
     if (len == 0 || len > 62) return; // 31 bands * 2 hex chars
     char buf[96];
     snprintf(buf, sizeof(buf), "{\"type\":\"rta\",\"d\":\"%s\"}", hexData);
-    ws.textAll(buf);
+    ws.sendAll(buf);
 }
 
 // Relay RTA interest to the Teensy: refresh its keepalive while a web

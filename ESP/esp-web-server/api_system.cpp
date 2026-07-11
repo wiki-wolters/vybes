@@ -6,7 +6,7 @@
 #include "utilities.h"
 #include "api_helpers.h"
 
-void handleGetStatus(AsyncWebServerRequest *request) {
+esp_err_t handleGetStatus(PsychicRequest *request) {
     DynamicJsonDocument doc(1024);
 
     JsonObject speakerGains = doc.createNestedObject("speakerGains");
@@ -36,21 +36,19 @@ void handleGetStatus(AsyncWebServerRequest *request) {
 
     String response;
     serializeJson(doc, response);
-    request->send(200, "application/json", response);
+    return request->reply(200, "application/json", response.c_str());
 }
 
-void handlePutMute(AsyncWebServerRequest *request) {
+esp_err_t handlePutMute(PsychicRequest *request) {
     if (!request->hasParam("state")) {
-        request->send(400, "text/plain", "Missing required parameters");
-        return;
+        return request->reply(400, "text/plain", "Missing required parameters");
     }
     String state = request->getParam("state")->value();
     
     DebugSerial.print("Put Mute: ");DebugSerial.println(state);
 
     if (state != "on" && state != "off") {
-        request->send(400, "text/plain", "Invalid state");
-        return;
+        return request->reply(400, "text/plain", "Invalid state");
     }
 
     current_config.muted = (state == "on");
@@ -62,20 +60,18 @@ void handlePutMute(AsyncWebServerRequest *request) {
     StaticJsonDocument<96> doc;
     doc["messageType"] = "muteChanged";
     doc["muted"] = current_config.muted;
-    sendJsonAndBroadcast(request, doc);
+    return sendJsonAndBroadcast(request, doc);
 }
 
-void handlePutMutePercent(AsyncWebServerRequest *request) {
+esp_err_t handlePutMutePercent(PsychicRequest *request) {
     if (!request->hasParam("percent")) {
-        request->send(400, "text/plain", "Missing required parameters");
-        return;
+        return request->reply(400, "text/plain", "Missing required parameters");
     }
     String percentStr = request->getParam("percent")->value();
     int percent = percentStr.toInt();
 
     if (percent < 0 || percent > 100) {
-        request->send(400, "text/plain", "Invalid percent value");
-        return;
+        return request->reply(400, "text/plain", "Invalid percent value");
     }
 
     current_config.mutePercent = percent;
@@ -86,5 +82,5 @@ void handlePutMutePercent(AsyncWebServerRequest *request) {
     StaticJsonDocument<96> doc;
     doc["messageType"] = "mutePercentChanged";
     doc["mutePercent"] = current_config.mutePercent;
-    sendJsonAndBroadcast(request, doc);
+    return sendJsonAndBroadcast(request, doc);
 }

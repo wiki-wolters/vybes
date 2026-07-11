@@ -1,12 +1,15 @@
 #ifndef WEB_SERVER_H
 #define WEB_SERVER_H
 
-#include <ESPAsyncWebServer.h>
+#include <PsychicHttp.h>
+#include <PsychicHttpsServer.h>
 
-extern AsyncWebServer server;
+// Plain HTTP on port 80, HTTPS on 443. Both serve the identical routes; the
+// HTTPS listener only starts when certificates exist on LittleFS (see
+// docs/WIRING.md and ESP/make-certs.sh).
+extern PsychicHttpServer server;
+extern PsychicHttpsServer serverHttps;
 
 void setupWebServer();
-void handleBackup(AsyncWebServerRequest *request);
-void handleRestore(AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final);
 
 #endif // WEB_SERVER_H

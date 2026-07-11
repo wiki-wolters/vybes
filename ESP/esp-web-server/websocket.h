@@ -1,9 +1,11 @@
 #ifndef WEBSOCKET_H
 #define WEBSOCKET_H
 
-#include <ESPAsyncWebServer.h>
+#include <PsychicHttp.h>
 
-extern AsyncWebSocket ws;
+// One shared handler serves /live-updates on both the HTTP and HTTPS
+// listeners; its client list (and sendAll) spans both.
+extern PsychicWebSocketHandler ws;
 
 void setupWebSocket();
 void broadcastWebSocket(const char* message);

@@ -1,8 +1,8 @@
 #ifndef I2C_H
 #define I2C_H
 
-#define I2C_SDA 4                // GPIO4 (D2)
-#define I2C_SCL 5                // GPIO5 (D1)
+#define I2C_SDA 21               // ESP32 default SDA
+#define I2C_SCL 22               // ESP32 default SCL
 
 void initI2C();
 

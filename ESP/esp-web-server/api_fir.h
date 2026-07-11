@@ -1,10 +1,10 @@
 #ifndef API_FIR_H
 #define API_FIR_H
 
-#include <ESPAsyncWebServer.h>
+#include <PsychicHttp.h>
 
-void handleGetFirFiles(AsyncWebServerRequest *request);
-void handlePutPresetFir(AsyncWebServerRequest *request);
-void handlePutPresetFirEnabled(AsyncWebServerRequest *request);
+esp_err_t handleGetFirFiles(PsychicRequest *request);
+esp_err_t handlePutPresetFir(PsychicRequest *request);
+esp_err_t handlePutPresetFirEnabled(PsychicRequest *request);
 
 #endif // API_FIR_H

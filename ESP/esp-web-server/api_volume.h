@@ -1,9 +1,9 @@
 #ifndef API_VOLUME_H
 #define API_VOLUME_H
 
-#include <ESPAsyncWebServer.h>
+#include <PsychicHttp.h>
 
-void handlePutVolume(AsyncWebServerRequest *request);
+esp_err_t handlePutVolume(PsychicRequest *request);
 void increase_volume(int amount = 2);
 void decrease_volume(int amount = 2);
 void toggle_mute();

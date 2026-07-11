@@ -11,13 +11,17 @@
 #include <IRrecv.h>
 #include <IRutils.h>
 
-const uint16_t kIrLed = D3;
-IRrecv irrecv(kIrLed);
+// IR receiver input. GPIO4 is free on the ESP32 (the old NodeMCU D3/GPIO0
+// is a strapping pin on both chips - avoid it).
+const uint16_t kIrRecvPin = 4;
+IRrecv irrecv(kIrRecvPin);
 decode_results results;
 
-// Define the actions that can be triggered by the remote control
+// Define the actions that can be triggered by the remote control.
+// (IR_ prefix avoids colliding with unscoped enums in library headers,
+// e.g. PsychicHttp's Disposition::NONE.)
 enum IRACTION {
-    NONE,
+    IR_NONE,
     VOLUME_UP,
     VOLUME_DOWN,
     MUTE,
@@ -50,7 +54,7 @@ const char* actionToString(IRACTION action) {
         case NEXT_PRESET: return "NEXT_PRESET";
         case PREVIOUS_PRESET: return "PREVIOUS_PRESET";
         case VOLUME_REPEAT: return "VOLUME_REPEAT";
-        case NONE: return "NONE";
+        case IR_NONE: return "IR_NONE";
         default: return "UNKNOWN";
     }
 }
@@ -65,7 +69,7 @@ IRACTION getAction(uint64_t code) {
             return remoteCodes[i].action;
         }
     }
-    return NONE;
+    return IR_NONE;
 }
 
 void RemoteControl::setup() {
@@ -175,7 +179,7 @@ void RemoteControl::handle_ir_code(uint64_t code) {
         case PREVIOUS_PRESET:
             previous_preset();
             break;
-        case NONE:
+        case IR_NONE:
             break;
     }
 }

@@ -1,16 +1,16 @@
 #ifndef API_PRESET_CONFIG_H
 #define API_PRESET_CONFIG_H
 
-#include <ESPAsyncWebServer.h>
+#include <PsychicHttp.h>
 #include <ArduinoJson.h>
 
 // EQ management endpoints
-void handlePutPresetEQPoints(AsyncWebServerRequest *request, JsonVariant &json);
-void handlePutPresetEQPoint(AsyncWebServerRequest *request, JsonVariant &json);
-void handlePutPresetEQEnabled(AsyncWebServerRequest *request);
+esp_err_t handlePutPresetEQPoints(PsychicRequest *request, JsonVariant &json);
+esp_err_t handlePutPresetEQPoint(PsychicRequest *request, JsonVariant &json);
+esp_err_t handlePutPresetEQEnabled(PsychicRequest *request);
 
 // Crossover endpoints
-void handlePutPresetCrossover(AsyncWebServerRequest *request);
-void handlePutPresetCrossoverEnabled(AsyncWebServerRequest *request);
+esp_err_t handlePutPresetCrossover(PsychicRequest *request);
+esp_err_t handlePutPresetCrossoverEnabled(PsychicRequest *request);
 
 #endif // API_PRESET_CONFIG_H

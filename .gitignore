@@ -2,3 +2,8 @@ ESP/screenlog*
 
 # WebUI build output copied in by `npm run deploy` (WebUI/package.json)
 ESP/esp-web-server/data/dist
+# TLS certificate + private key served by the device (ESP/make-certs.sh)
+ESP/esp-web-server/data/certs/
+
+# PlatformIO build output
+.pio/

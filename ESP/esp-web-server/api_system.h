@@ -1,10 +1,10 @@
 #ifndef API_SYSTEM_H
 #define API_SYSTEM_H
 
-#include <ESPAsyncWebServer.h>
+#include <PsychicHttp.h>
 
-void handleGetStatus(AsyncWebServerRequest *request);
-void handlePutMute(AsyncWebServerRequest *request);
-void handlePutMutePercent(AsyncWebServerRequest *request);
+esp_err_t handleGetStatus(PsychicRequest *request);
+esp_err_t handlePutMute(PsychicRequest *request);
+esp_err_t handlePutMutePercent(PsychicRequest *request);
 
 #endif // API_SYSTEM_H

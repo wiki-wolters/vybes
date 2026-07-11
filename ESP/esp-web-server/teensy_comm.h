@@ -3,9 +3,11 @@
 
 #include <Arduino.h>
 
-// The Teensy link is UART0 (swapped to GPIO15/TX + GPIO13/RX in setup).
-// Debug output moves to Serial1 (GPIO2 / D4, TX only) - see docs/WIRING.md.
-#define TeensySerial Serial
+// The Teensy link is UART2: GPIO16 (RX2, from Teensy TX1/pin 1) and GPIO17
+// (TX2, to Teensy RX1/pin 0). Debug output stays on USB - see docs/WIRING.md.
+#define TeensySerial Serial2
+#define TEENSY_RX_PIN 16
+#define TEENSY_TX_PIN 17
 #define TEENSY_BAUD 115200
 
 // Speaker and Gain Commands
