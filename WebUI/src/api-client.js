@@ -1,7 +1,11 @@
 // In production the API is same-origin (relative URLs), so the UI works
 // identically over http://vybes.local and https://vybes.local - hardcoding
 // a scheme would break one of them (mixed content under HTTPS).
-const API_BASE_URL = import.meta.env.DEV ? 'http://vybes-mock.local' : ''
+// In dev, VITE_API_BASE_URL (e.g. in a .env.development.local) overrides the
+// default mock-server hostname.
+const API_BASE_URL = import.meta.env.DEV
+  ? (import.meta.env.VITE_API_BASE_URL || 'http://vybes-mock.local')
+  : ''
 
 /*
  * Vybes DSP API Client - Enhanced Version

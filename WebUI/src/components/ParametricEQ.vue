@@ -248,6 +248,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from
 import RangeSlider from './shared/RangeSlider.vue';
 import ModalDialog from './shared/ModalDialog.vue';
 import VybesAPI from '../api-client';
+import { peakingBellDb } from '../eq-math.js';
 
 const props = defineProps({
   peqPoints: {
@@ -605,18 +606,8 @@ const bandPaths = computed(() => localEqPoints.map(point => {
   return `M ${samples.join(' L ')}`;
 }));
 
-// Exact bell (peaking EQ) magnitude in dB, from the RBJ analog prototype.
-// This is the same math the Teensy uses, so the drawn curve matches the
-// audible response.
-const calculateBellFilter = (freq, centerFreq, gain, q) => {
-  if (!gain || q <= 0 || centerFreq <= 0 || freq <= 0) return 0;
-  const A = Math.pow(10, gain / 40);
-  const O = freq / centerFreq;
-  const c = (1 - O * O) ** 2;
-  const num = c + (A * O / q) ** 2;
-  const den = c + (O / (A * q)) ** 2;
-  return 10 * Math.log10(num / den);
-};
+// Exact bell magnitude shared with the analyzer's auto-EQ (see eq-math.js).
+const calculateBellFilter = peakingBellDb;
 
 // Point management
 const addPoint = () => {

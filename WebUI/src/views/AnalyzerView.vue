@@ -65,7 +65,15 @@
             boosts; below zero, frequencies it loses.
           </p>
           <div class="w-full rounded bg-black/30 overflow-hidden">
-            <svg :width="width" :height="deltaHeight" class="block">
+            <svg
+              :width="width"
+              :height="deltaHeight"
+              class="block cursor-crosshair"
+              style="touch-action: pan-y"
+              @pointermove="onDeltaHover"
+              @pointerdown="onDeltaHover"
+              @pointerleave="onDeltaLeave"
+            >
               <g v-for="line in deltaGridLines" :key="'d' + line.db">
                 <line :x1="padLeft" :y1="line.y" :x2="width" :y2="line.y" stroke="#333" stroke-width="1" opacity="0.5" />
                 <text :x="4" :y="line.y + 3" fill="#666" font-size="9">{{ line.db > 0 ? '+' + line.db : line.db }}</text>
@@ -82,14 +90,153 @@
                 :opacity="bar.opacity"
                 rx="1"
               />
+              <!-- Proposed EQ correction and the predicted result of applying it -->
+              <template v-if="frozen && generatedPoints.length">
+                <path :d="correctionPath" fill="none" stroke="#e879f9" stroke-width="2" opacity="0.9" />
+                <path :d="predictedPath" fill="none" stroke="#e5e7eb" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.75" />
+              </template>
+              <!-- Crosshair: nearest band under the pointer/finger -->
+              <g v-if="deltaHover" pointer-events="none">
+                <line :x1="deltaHover.x" :y1="0" :x2="deltaHover.x" :y2="deltaHeight" stroke="#fff" stroke-width="1" opacity="0.5" />
+                <circle v-if="deltaHover.hasValue" :cx="deltaHover.x" :cy="deltaHover.y" r="3" fill="#fff" />
+                <rect :x="deltaHover.labelX - 46" y="4" width="92" height="28" rx="4" fill="rgba(10, 13, 17, 0.9)" stroke="rgba(148, 168, 196, 0.25)" />
+                <text :x="deltaHover.labelX" y="16" fill="#e5e7eb" font-size="10" font-weight="600" text-anchor="middle">{{ deltaHover.freqLabel }}</text>
+                <text :x="deltaHover.labelX" y="27" fill="#9ca3af" font-size="9" text-anchor="middle">{{ deltaHover.valueLabel }}</text>
+              </g>
             </svg>
           </div>
+          <p v-if="frozen && generatedPoints.length" class="mt-2 text-xs text-vybes-text-secondary">
+            <span style="color: #e879f9">━</span> proposed EQ correction ·
+            <span class="text-gray-300">┄</span> predicted result after EQ
+          </p>
         </div>
         <p v-else class="mt-4 text-xs text-vybes-text-secondary">
           Start the microphone while music (ideally
           <router-link to="/tools" class="text-vybes-accent underline">pink noise</router-link>)
           is playing to see where the room and system deviate from the source.
         </p>
+      </CardSection>
+
+      <CardSection v-if="frozen && deltaValues" title="EQ Correction">
+        <p class="text-xs text-vybes-text-secondary mb-4">
+          Fits parametric EQ bands that pull the frozen deviation toward the target curve.
+          Tune the parameters below — the chart above previews the correction (magenta) and
+          the predicted result (dashed) live.
+        </p>
+
+        <div class="grid sm:grid-cols-2 gap-x-6 gap-y-4">
+          <div>
+            <RangeSlider
+              label="Target tilt"
+              :min="-2"
+              :max="1"
+              :step="0.1"
+              unit="dB/oct"
+              :decimals="1"
+              v-model="eqGen.tilt"
+            />
+            <p class="mt-1 text-xs text-vybes-text-secondary">
+              0 reproduces the source exactly; negative tilts the target down toward the
+              treble (warmer). In-room responses corrected fully flat often sound bright —
+              −0.5 to −1 is a common preference.
+            </p>
+          </div>
+          <RangeSlider
+            label="Correction strength"
+            :min="0"
+            :max="100"
+            :step="5"
+            unit="%"
+            :decimals="0"
+            v-model="eqGen.strength"
+          />
+          <RangeSlider
+            label="Max boost"
+            :min="0"
+            :max="12"
+            :step="0.5"
+            unit="dB"
+            :decimals="1"
+            v-model="eqGen.maxBoost"
+          />
+          <RangeSlider
+            label="Max cut"
+            :min="0"
+            :max="15"
+            :step="0.5"
+            unit="dB"
+            :decimals="1"
+            v-model="eqGen.maxCut"
+          />
+          <RangeSlider
+            label="Low frequency limit"
+            :min="20"
+            :max="500"
+            :step="1"
+            unit="Hz"
+            :decimals="0"
+            :logarithmic="true"
+            v-model="eqGen.loHz"
+          />
+          <RangeSlider
+            label="High frequency limit"
+            :min="1000"
+            :max="20000"
+            :step="10"
+            unit="Hz"
+            :decimals="0"
+            :logarithmic="true"
+            v-model="eqGen.hiHz"
+          />
+          <RangeSlider
+            label="Max bands"
+            :min="1"
+            :max="12"
+            :step="1"
+            unit=""
+            :decimals="0"
+            v-model="eqGen.maxBands"
+          />
+        </div>
+
+        <div class="mt-5 pt-4 border-t border-vybes-dark-input">
+          <template v-if="generatedPoints.length">
+            <div class="flex flex-wrap gap-2 mb-4">
+              <span
+                v-for="(p, i) in generatedPoints"
+                :key="'gen' + i"
+                class="px-2.5 py-1 rounded-full text-xs font-mono bg-black/30 border border-vybes-dark-input text-vybes-text-primary"
+              >
+                {{ fmtHz(p.freq) }} · {{ p.gain > 0 ? '+' : '' }}{{ p.gain.toFixed(1) }} dB · Q {{ p.q.toFixed(2) }}
+              </span>
+            </div>
+            <button
+              class="btn-primary"
+              :disabled="!activePresetName || applyState.busy"
+              @click="showApplyModal = true"
+            >
+              Apply {{ generatedPoints.length }} band{{ generatedPoints.length === 1 ? '' : 's' }}
+              to “{{ activePresetName || '…' }}”
+            </button>
+            <p v-if="!activePresetName" class="mt-2 text-xs text-vybes-text-secondary">
+              Waiting for the active preset name from the device…
+            </p>
+          </template>
+          <p v-else class="text-xs text-vybes-text-secondary">
+            Nothing to correct — the deviation stays within ±1 dB of the target inside the
+            current frequency limits.
+          </p>
+          <p v-if="applyState.message" class="mt-3 text-xs" :class="applyState.error ? 'text-red-400' : 'text-green-400'">
+            {{ applyState.message }}
+            <router-link
+              v-if="!applyState.error && activePresetName"
+              :to="`/preset/${encodeURIComponent(activePresetName)}`"
+              class="text-vybes-accent underline ml-1"
+            >
+              Fine-tune in the preset editor
+            </router-link>
+          </p>
+        </div>
       </CardSection>
 
       <CardSection title="Controls">
@@ -108,6 +255,9 @@
             <button class="w-full mt-3 btn-secondary" @click="frozen = !frozen">
               {{ frozen ? 'Resume' : 'Freeze' }}
             </button>
+            <p v-if="!frozen && micActive && sourceLive" class="mt-2 text-xs text-vybes-text-secondary">
+              Freeze to convert the deviation into parametric EQ bands.
+            </p>
           </div>
 
           <div>
@@ -146,14 +296,31 @@
         </div>
       </CardSection>
     </div>
+
+    <ModalDialog
+      v-model="showApplyModal"
+      title="Apply EQ correction"
+      confirm-text="Apply &amp; save"
+      @confirm="applyGeneratedEq"
+    >
+      <p class="text-sm text-vybes-text-secondary">
+        This replaces the preference EQ of preset
+        <span class="font-semibold text-vybes-text-primary">“{{ activePresetName }}”</span>
+        with the {{ generatedPoints.length }} generated band{{ generatedPoints.length === 1 ? '' : 's' }}
+        and saves it to the device. Any EQ bands currently in that preset will be overwritten.
+      </p>
+    </ModalDialog>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
 import apiClient from '../api-client.js';
 import CardSection from '../components/shared/CardSection.vue';
 import SelectGroup from '../components/shared/SelectGroup.vue';
+import RangeSlider from '../components/shared/RangeSlider.vue';
+import ModalDialog from '../components/shared/ModalDialog.vue';
+import { peqSumDb, fitPeqPoints } from '../eq-math.js';
 import {
   RTA_BAND_CENTERS,
   RTA_NUM_BANDS,
@@ -234,7 +401,12 @@ let sourceAvgPower = new Float32Array(RTA_NUM_BANDS);
 let lastSourceEmaAt = 0;
 
 function onLiveMessage(data) {
-  if (!data || data.type !== 'rta' || typeof data.d !== 'string') return;
+  if (!data) return;
+  if (data.messageType === 'activePresetChanged' && data.activePresetName) {
+    activePresetName.value = data.activePresetName;
+    return;
+  }
+  if (data.type !== 'rta' || typeof data.d !== 'string') return;
   const frame = decodeRtaFrame(data.d);
   if (!frame) return;
   const now = Date.now();
@@ -411,15 +583,29 @@ const deltaGridLines = computed(() =>
   [-20, -10, 10, 20].map((db) => ({ db, y: deltaDbToY(db) }))
 );
 
+// Per-band deviation (mic − source, level-aligned), NaN where the source has
+// effectively no content - the delta there is just noise-floor arithmetic,
+// not room response.
+const deltaValues = computed(() => {
+  if (!micDb.value || !sourceDb.value || !sourceLive.value) return null;
+  const out = new Array(RTA_NUM_BANDS);
+  for (let i = 0; i < RTA_NUM_BANDS; i++) {
+    out[i] = sourceDb.value[i] <= -85 || micDb.value[i] <= -110
+      ? NaN
+      : micDb.value[i] - offset.value - sourceDb.value[i];
+  }
+  return out;
+});
+
+const clampDelta = (d) => Math.max(-DELTA_RANGE_DB, Math.min(DELTA_RANGE_DB, d));
+
 const deltaBars = computed(() => {
-  if (!micDb.value || !sourceDb.value || !sourceLive.value) return [];
+  if (!deltaValues.value) return [];
   const bars = [];
   const bw = ((width.value - padLeft) / RTA_NUM_BANDS) * 0.66;
   for (let i = 0; i < RTA_NUM_BANDS; i++) {
-    // Skip bands where the source has effectively no content - the delta
-    // there is just noise-floor arithmetic, not room response.
-    if (sourceDb.value[i] <= -85 || micDb.value[i] <= -110) continue;
-    const d = Math.max(-DELTA_RANGE_DB, Math.min(DELTA_RANGE_DB, micDb.value[i] - offset.value - sourceDb.value[i]));
+    if (!Number.isFinite(deltaValues.value[i])) continue;
+    const d = clampDelta(deltaValues.value[i]);
     const y0 = deltaDbToY(Math.max(0, d));
     bars.push({
       index: i,
@@ -433,6 +619,121 @@ const deltaBars = computed(() => {
   }
   return bars;
 });
+
+// --- Delta chart crosshair ---
+const fmtHz = (f) => (f >= 1000 ? `${f / 1000} kHz` : `${f} Hz`);
+const hoverBandIndex = ref(null);
+
+function onDeltaHover(event) {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const bw = (width.value - padLeft) / RTA_NUM_BANDS;
+  const i = Math.round((event.clientX - rect.left - padLeft) / bw - 0.5);
+  hoverBandIndex.value = Math.min(RTA_NUM_BANDS - 1, Math.max(0, i));
+}
+
+function onDeltaLeave(event) {
+  // A finger lifting fires pointerleave too; keep the touch crosshair
+  // sticky so the reading survives to be acted on.
+  if (event.pointerType === 'mouse') hoverBandIndex.value = null;
+}
+
+const deltaHover = computed(() => {
+  if (hoverBandIndex.value === null) return null;
+  const i = hoverBandIndex.value;
+  const x = bandX(i);
+  const d = deltaValues.value ? deltaValues.value[i] : NaN;
+  const hasValue = Number.isFinite(d);
+  return {
+    x,
+    y: hasValue ? deltaDbToY(clampDelta(d)) : deltaZeroY,
+    hasValue,
+    labelX: Math.min(width.value - 50, Math.max(padLeft + 50, x)),
+    freqLabel: fmtHz(RTA_BAND_CENTERS[i]),
+    valueLabel: hasValue ? `${d >= 0 ? '+' : ''}${d.toFixed(1)} dB` : 'no signal',
+  };
+});
+
+// --- Diff → parametric EQ conversion (available while frozen) ---
+const eqGen = reactive({
+  tilt: -0.5, // dB/octave, pivoted at 1kHz
+  strength: 100, // % of the deviation to correct
+  maxBoost: 6, // dB - boosting room nulls wastes headroom, so capped low
+  maxCut: 12, // dB
+  loHz: 25,
+  hiHz: 10000, // above ~10kHz a single mic position isn't trustworthy
+  maxBands: 8,
+});
+
+const activePresetName = ref('');
+const showApplyModal = ref(false);
+const applyState = reactive({ busy: false, message: '', error: false });
+
+// Desired EQ gain per band: negate the deviation from the tilted target,
+// scale by strength, clamp to the boost/cut limits. NaN = leave alone.
+const correctionTarget = computed(() => {
+  if (!frozen.value || !deltaValues.value) return null;
+  return RTA_BAND_CENTERS.map((fc, i) => {
+    const d = deltaValues.value[i];
+    if (!Number.isFinite(d) || fc < eqGen.loHz || fc > eqGen.hiHz) return NaN;
+    const target = eqGen.tilt * Math.log2(fc / 1000);
+    const c = -(d - target) * (eqGen.strength / 100);
+    return Math.min(eqGen.maxBoost, Math.max(-eqGen.maxCut, c));
+  });
+});
+
+const generatedPoints = computed(() => {
+  if (!correctionTarget.value) return [];
+  return fitPeqPoints(RTA_BAND_CENTERS, correctionTarget.value, {
+    maxBands: Math.round(eqGen.maxBands),
+  });
+});
+
+// The delta chart's x axis is linear in band index, and the band centers
+// are log-spaced (fc ≈ 10^(1.3 + i/10)), so x maps back to frequency.
+const xToBandFreq = (x) => {
+  const bw = (width.value - padLeft) / RTA_NUM_BANDS;
+  return Math.pow(10, 1.3 + ((x - padLeft) / bw - 0.5) / 10);
+};
+
+const correctionPath = computed(() => {
+  if (!generatedPoints.value.length) return '';
+  const seg = [];
+  for (let x = padLeft; x <= width.value; x += 4) {
+    const db = clampDelta(peqSumDb(generatedPoints.value, xToBandFreq(x)));
+    seg.push(`${x.toFixed(1)},${deltaDbToY(db).toFixed(1)}`);
+  }
+  return `M ${seg.join(' L ')}`;
+});
+
+const predictedPath = computed(() => {
+  if (!generatedPoints.value.length || !deltaValues.value) return '';
+  const seg = [];
+  for (let i = 0; i < RTA_NUM_BANDS; i++) {
+    const d = deltaValues.value[i];
+    if (!Number.isFinite(d)) continue;
+    const db = clampDelta(d + peqSumDb(generatedPoints.value, RTA_BAND_CENTERS[i]));
+    seg.push(`${bandX(i).toFixed(1)},${deltaDbToY(db).toFixed(1)}`);
+  }
+  return seg.length > 1 ? `M ${seg.join(' L ')}` : '';
+});
+
+async function applyGeneratedEq() {
+  showApplyModal.value = false;
+  if (!activePresetName.value || !generatedPoints.value.length) return;
+  applyState.busy = true;
+  applyState.message = '';
+  const points = generatedPoints.value.map((p, id) => ({ id, freq: p.freq, gain: p.gain, q: p.q }));
+  try {
+    await apiClient.savePrefEqSet(activePresetName.value, points);
+    applyState.error = false;
+    applyState.message = `Saved ${points.length} band${points.length === 1 ? '' : 's'} to “${activePresetName.value}”.`;
+  } catch (err) {
+    applyState.error = true;
+    applyState.message = `Failed to apply EQ: ${err.message}`;
+  } finally {
+    applyState.busy = false;
+  }
+}
 
 // --- Lifecycle ---
 let resizeObserver = null;
@@ -448,6 +749,15 @@ onMounted(() => {
   } catch (e) { /* ignore corrupt storage */ }
 
   unsubscribeLive = apiClient.connectLiveUpdates(onLiveMessage);
+
+  // Needed to know where "Apply EQ" saves; refreshed by activePresetChanged
+  apiClient
+    .getPresets()
+    .then((presets) => {
+      const current = presets.find((p) => p.isCurrent);
+      if (current) activePresetName.value = current.name;
+    })
+    .catch(() => { /* device offline - the apply button stays disabled */ });
 
   // Keepalive: tells the device to stream RTA frames while this page is open
   apiClient.sendLiveMessage('rta:keepalive');
