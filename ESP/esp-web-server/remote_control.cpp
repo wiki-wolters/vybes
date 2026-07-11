@@ -11,9 +11,9 @@
 #include <IRrecv.h>
 #include <IRutils.h>
 
-// IR receiver input. GPIO4 is free on the ESP32 (the old NodeMCU D3/GPIO0
-// is a strapping pin on both chips - avoid it).
-const uint16_t kIrRecvPin = 4;
+#include "board_pins.h"
+
+const uint16_t kIrRecvPin = PIN_IR_RECV;
 IRrecv irrecv(kIrRecvPin);
 decode_results results;
 

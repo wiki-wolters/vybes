@@ -13,22 +13,30 @@ ESP is used only for the 1602 LCD backpack.
              └────────────┘                        └─────────────┘
 ```
 
-## ESP32 DevKitC (WROOM-32) pins
+## ESP32 pins
 
-| GPIO       | Connects to                    | Purpose |
-|------------|--------------------------------|---------|
-| **17** (TX2) | Teensy **pin 0** (RX1)       | ESP → Teensy commands (UART2, 115200) |
-| **16** (RX2) | Teensy **pin 1** (TX1)       | Teensy → ESP replies/events |
-| **22**     | LCD backpack SCL               | I2C clock — 1602 LCD via PCF8574 @ 0x27 |
-| **21**     | LCD backpack SDA               | I2C data |
-| **4**      | IR receiver data out           | IR remote input (`remote_control.cpp`) |
-| **32**     | Front button, other leg to GND | Preset cycling / pairing (internal pull-up) |
-| **33**     | Bluetooth module pairing input | Driven HIGH while the button is held (`button.cpp`) |
-| USB port   | —                              | Debug console (115200) and flashing |
-| GND        | Common ground                  | Shared with Teensy, DACs, BT module |
+Two boards are supported; pin maps live in `ESP/esp-web-server/board_pins.h`
+and the build env picks the right one (`pio run -d ESP` for the classic
+DevKitC, `-e esp32s3` for the S3 — see `ESP/platformio.ini`).
 
-Avoid rewiring onto GPIO 0, 2, 5, 12 or 15 (boot strapping pins) and GPIO
-34-39 (input-only, no internal pull-ups).
+| Signal                          | ESP32 DevKitC (WROOM-32) | ESP32-S3 DevKitC-1 | Purpose |
+|---------------------------------|--------------------------|--------------------|---------|
+| TX2 → Teensy **pin 0** (RX1)    | GPIO **17**              | GPIO **17**        | ESP → Teensy commands (UART2, 115200) |
+| RX2 ← Teensy **pin 1** (TX1)    | GPIO **16**              | GPIO **16**        | Teensy → ESP replies/events |
+| LCD backpack SCL                | GPIO **22**              | GPIO **9**         | I2C clock — 1602 LCD via PCF8574 @ 0x27 |
+| LCD backpack SDA                | GPIO **21**              | GPIO **8**         | I2C data |
+| IR receiver data out            | GPIO **4**               | GPIO **4**         | IR remote input (`remote_control.cpp`) |
+| Front button (other leg to GND) | GPIO **32**              | GPIO **5**         | Preset cycling / pairing (internal pull-up) |
+| Bluetooth module pairing input  | GPIO **33**              | GPIO **6**         | Driven HIGH while the button is held (`button.cpp`) |
+| Debug console + flashing        | USB port                 | USB port labeled "UART" | 115200 baud |
+| Common ground                   | GND                      | GND                | Shared with Teensy, DACs, BT module |
+
+When rewiring onto other pins, avoid:
+
+- **Classic ESP32**: GPIO 0, 2, 5, 12, 15 (boot strapping) and 34-39
+  (input-only, no internal pull-ups)
+- **ESP32-S3**: GPIO 0, 3, 45, 46 (strapping), 19/20 (native USB),
+  26-32 (SPI flash) and 33-37 (used by octal-PSRAM modules)
 
 ## Teensy 4.1 pins
 

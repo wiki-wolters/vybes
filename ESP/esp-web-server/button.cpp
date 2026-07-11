@@ -8,10 +8,10 @@
 #include <ArduinoJson.h>
 #include <string.h>
 
-// ESP32 pins: 32/33 have internal pullups and no strapping/boot duties
-// (GPIO12/MTDI would change the flash voltage if held high at boot).
-const int BUTTON_PIN = 32;
-const int BLUETOOTH_PAIRING_PIN = 33; // output to the BT module's pair pin
+#include "board_pins.h"
+
+const int BUTTON_PIN = PIN_BUTTON;
+const int BLUETOOTH_PAIRING_PIN = PIN_BT_PAIRING; // output to the BT module's pair pin
 
 unsigned long pressStart = 0;
 String lastMessage = "";

@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install platformio
-      - run: pio run -d ESP
+      - run: pio run -d ESP -e esp32dev -e esp32s3
 
   teensy:
     runs-on: ubuntu-latest

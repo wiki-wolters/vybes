@@ -10,7 +10,7 @@ At the core of the device is a Teensy 4.1 with a 600MHz processor. The Teensy is
 responsible for all the digital audio manipulation: input mixing, parametric EQ, FIR
 filtering, speaker delays, subwoofer crossover, and tone/pink-noise generation.
 
-An ESP32 DevKitC (WROOM-32) development board is responsible for connecting to WIFI, serving the
+An ESP32 development board (classic DevKitC/WROOM-32 or ESP32-S3 DevKitC-1 - both are supported build targets) is responsible for connecting to WIFI, serving the
 web UI and API, and managing Teensy state. Preset configuration is stored on the
 ESP32's flash (LittleFS, as MessagePack), alongside the built web UI assets.
 
@@ -233,7 +233,7 @@ web UI assets, TLS certificates, plus presets saved at runtime).
 1. Flash the firmware:
 
    ```sh
-   pio run -d ESP -t upload
+   pio run -d ESP -t upload            # classic ESP32 (add -e esp32s3 for the S3)
    ```
 
 2. (Optional, for HTTPS) generate TLS certificates into the filesystem staging
@@ -254,7 +254,7 @@ web UI assets, TLS certificates, plus presets saved at runtime).
 4. Pack `ESP/esp-web-server/data` into a LittleFS image and flash it:
 
    ```sh
-   pio run -d ESP -t uploadfs
+   pio run -d ESP -t uploadfs          # add -e esp32s3 for the S3
    ```
 
 Note: `uploadfs` replaces the *entire* filesystem, including presets saved on the
