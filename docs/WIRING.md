@@ -123,11 +123,20 @@ Newline-delimited text, same command vocabulary as before:
 - Teensy → ESP: `PONG <uptime-ms>`, `EVENT boot`, and for `getFiles`:
   a `FILES` line, one filename per line, then `EOT`.
 
-## FIR latency compensation
+## FIR engine and latency compensation
+
+The FIR filters run through a fast convolution engine (uniformly partitioned
+overlap-save: the filter is split into 128-tap partitions convolved in the
+frequency domain), which supports filters up to 4096 taps per channel using
+a few percent of the CPU. `FIR_USE_FAST_CONVOLUTION` in
+`Teensy/fir_filters/fir_filters.ino` switches back to the original
+direct-form engine (max 2048 taps, CPU-bound); both engines produce
+identical, sample-aligned output.
 
 The Teensy automatically pads the delay lines so channels with different
 FIR tap counts stay time-aligned (a linear-phase FIR delays its channel by
-(taps−1)/2 samples ≈ 23ms at 2048 taps). If your existing speaker-delay
-settings were manually tuned to absorb FIR latency, re-check them after this
-update. If you use minimum-phase FIR files (which have no inherent latency),
-this compensation will overshoot — say so and it can be made configurable.
+(taps−1)/2 samples ≈ 23ms at 2048 taps, ≈ 46ms at 4096). If your existing
+speaker-delay settings were manually tuned to absorb FIR latency, re-check
+them after this update. If you use minimum-phase FIR files (which have no
+inherent latency), this compensation will overshoot — say so and it can be
+made configurable.

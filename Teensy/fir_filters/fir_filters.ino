@@ -18,7 +18,19 @@ SerialCommandRouter router(Serial1);
 #define EQ_MORPH_MS 50
 
 #define MAX_FILENAME_LEN 64 // Maximum length for FIR filenames
+
+// FIR engine: 1 = fast convolution (FFT-based uniformly partitioned
+// overlap-save; long filters at a fraction of the CPU), 0 = the original
+// direct-form CMSIS FIR. Both engines produce identical, block-aligned output.
+#define FIR_USE_FAST_CONVOLUTION 1
+
+#if FIR_USE_FAST_CONVOLUTION
+// Fast convolution is limited by RAM (~16 bytes/tap/channel), not CPU
+#define MAX_FIR_TAPS 4096
+#else
+// Direct form runs out of CPU around 2048 taps across three channels
 #define MAX_FIR_TAPS 2048
+#endif
 
 // Audio generators
 AudioSynthWaveform       Tone_generator;
@@ -305,9 +317,10 @@ void setup() {
   }
   
   // Audio connections require memory to work. The delay lines need headroom
-  // for FIR group-delay compensation (up to ~23ms/channel at 2048 taps).
+  // for FIR group-delay compensation (~23ms/channel at 2048 taps, ~49ms at
+  // 4096 taps with the fast convolution engine).
   Serial.println("Allocating audio memory");
-  AudioMemory(120);
+  AudioMemory(FIR_USE_FAST_CONVOLUTION ? 200 : 120);
   Serial.println("=== Audio Memory Debug ===");
   Serial.print("AudioMemoryUsage(): ");
   Serial.println(AudioMemoryUsage());
@@ -318,6 +331,11 @@ void setup() {
   // Initialize PEQ processors
   peqLeft.begin(AUDIO_SAMPLE_RATE);
   peqRight.begin(AUDIO_SAMPLE_RATE);
+
+  // Select the FIR engine (takes effect when coefficients are loaded)
+  Left_FIR_Filter.setFastConvolution(FIR_USE_FAST_CONVOLUTION);
+  Right_FIR_Filter.setFastConvolution(FIR_USE_FAST_CONVOLUTION);
+  Sub_FIR_Filter.setFastConvolution(FIR_USE_FAST_CONVOLUTION);
 
   // Explicitly set all amps to gain=1.0
   Left_Post_EQ_amp.gain(1.0);
@@ -817,6 +835,8 @@ void loadFirFiles() {
 }
 
 // Group delay of a linear-phase FIR filter in microseconds: (N-1)/2 samples.
+// Both FIR engines produce block-aligned output, so no engine-specific
+// processing latency needs to be added here.
 // (For minimum-phase FIR files this over-compensates; see docs/WIRING.md.)
 static float firGroupDelayUs(uint16_t taps) {
   if (taps == 0) return 0.0f;
