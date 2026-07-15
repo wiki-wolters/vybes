@@ -277,3 +277,10 @@ protocol. On boot the Teensy sends `EVENT boot` and the ESP pushes the full DSP 
 so either device can restart independently and the system converges. See
 [docs/WIRING.md](docs/WIRING.md) for the wiring, the serial protocol, and the
 debug-console pinout.
+
+## License
+
+Vybes is free software, released under the [GNU General Public License v3.0](LICENSE)
+(or any later version). You may use, modify, and distribute it under the terms of that
+license; if you distribute modified versions, the source for your changes must be made
+available under the same license.
