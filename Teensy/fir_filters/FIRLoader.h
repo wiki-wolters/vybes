@@ -2,26 +2,31 @@
 #define FIR_LOADER_H
 
 #include <Arduino.h>
+#include "CoeffSource.h"
+#ifndef VYBES_NATIVE
 #include <SD.h>      // For File class and SD operations
-#include "AudioFilterFIRFloat.h" // Include your new float FIR filter class
-
-// Forward declaration of specific Teensy Audio FIR filter (if you still use it)
-// This is not strictly needed if you only use AudioFilterFIRFloat now.
-// #include <Audio.h> // If AudioFilterFIR is still used directly somewhere else
+#endif
 
 class FIRLoader {
 public:
+#ifndef VYBES_NATIVE
     // This method loads coefficients into a float array and returns a pointer to it.
     // The caller is responsible for deleting the returned float array.
     // The method will read the entire file to determine the number of taps.
     // Returns a pointer to the coefficients array and sets actualTaps to the number of taps found.
     static float* loadCoefficients(String filename, uint16_t& actualTaps, uint16_t maxTaps = 0);
+#endif
+
+    // Core parse/load logic, operating on an abstract byte source so it can
+    // be exercised host-side with in-memory fixtures. 'filename' is only
+    // used for format detection (extension) and log messages.
+    static float* loadCoefficients(CoeffSource& src, const String& filename,
+                                   uint16_t& actualTaps, uint16_t maxTaps = 0);
 
 private:
     // Helper methods, now static as they don't depend on FIRLoader instance state.
-    static int loadFromTXT(File& file, float* coeffs, int maxTaps);
-    static int loadFromWAV(File& file, float* coeffs, int maxTaps);
-    static void normalizeCoefficients(float* coeffs, uint16_t numTaps);
+    static int loadFromTXT(CoeffSource& file, float* coeffs, int maxTaps);
+    static int loadFromWAV(CoeffSource& file, float* coeffs, int maxTaps);
     static bool isValidWAVHeader(const char* header);
     static void logError(String message);
     static void logInfo(String message);

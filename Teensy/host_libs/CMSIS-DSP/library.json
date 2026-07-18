@@ -1,0 +1,11 @@
+{
+  "name": "CMSIS-DSP",
+  "version": "1.16.2",
+  "description": "Vendored subset of ARM CMSIS-DSP 1.16.2 (Apache-2.0) used by the host-native test build: direct-form FIR, real/complex FFT and their constant tables. On the Teensy the framework's CMSIS build is used instead; this library is only picked up by [env:native] via lib_extra_dirs.",
+  "license": "Apache-2.0",
+  "build": {
+    "flags": ["-IInclude", "-IPrivateInclude"],
+    "srcDir": "Source",
+    "srcFilter": "+<*.c>"
+  }
+}

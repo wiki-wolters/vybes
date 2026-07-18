@@ -5,6 +5,7 @@
 #include "FIRLoader.h"
 #include "PEQProcessor.h"
 #include "SerialCommandRouter.h"
+#include "TeensyCommands.h"
 #include "OutputStream.h"
 #include "AudioFilterFIRFloat.h"
 #include "IntervalTimer.h"
@@ -18,6 +19,11 @@ SerialCommandRouter router(Serial1);
 #define EQ_MORPH_MS 50
 
 #define MAX_FILENAME_LEN 64 // Maximum length for FIR filenames
+
+// Maximum per-channel speaker delay in microseconds. AudioEffectDelay holds
+// the delayed audio in the AudioMemory pool, so an unbounded delay would
+// exhaust it and kill all audio.
+#define MAX_DELAY_US 20000
 
 // FIR engine: 1 = fast convolution (FFT-based uniformly partitioned
 // overlap-save; long filters at a fraction of the CPU), 0 = the original
@@ -407,29 +413,13 @@ void setup() {
   Serial.println(AudioMemoryUsageMax());
   Serial.println("================================");
 
-  //Register handlers for commands arriving over the ESP serial link
+  //Register handlers for commands arriving over the ESP serial link.
+  //The command list lives in TeensyCommands.h so the test suite can verify
+  //it against the commands the ESP sends.
   Serial.println("Registering command handlers");
-  router.on("setSpeakerGains", handleSetSpeakerGains);
-  router.on("setMute", handleSetMute);
-  router.on("setMutePercent", handleSetMutePercent);
-  router.on("setVolume", handleSetVolume);
-  router.on("getFiles", handleGetFiles);
-  router.on("setInputGains", handleSetInputGains);
-  router.on("setCrossoverFrequency", handleSetCrossoverFrequency);
-  router.on("setEqEnabled", handleSetEQEnabled);
-  router.on("setCrossoverEnabled", handleSetCrossoverEnabled);
-  router.on("setFirEnabled", handleSetFIREnabled);
-  router.on("loadFirFiles", handleLoadFirFiles);
-  router.on("setDelayEnabled", handleSetDelayEnabled);
-  router.on("setFir", handleSetFIR);
-  router.on("setDelays", handleSetDelays);
-  router.on("setEq", handleSetEQFilter);
-  router.on("resetEqFilters", handleResetEQFilters);
-  router.on("setTone", handleSetTone);
-  router.on("stopTone", handleStopTone);
-  router.on("setNoise", handleSetNoise);
-  router.on("setRta", handleSetRta);
-  router.on("ping", handlePing);
+#define VYBES_REGISTER_COMMAND(name, handler) router.on(#name, handler);
+  TEENSY_COMMAND_LIST(VYBES_REGISTER_COMMAND)
+#undef VYBES_REGISTER_COMMAND
   router.begin(ESP_LINK_BAUD);
 
   // Extra RX buffering so command bursts survive long SD-card reads.
@@ -816,8 +806,10 @@ void setFIR(String leftFile, String rightFile, String subFile) {
 }
 
 // Load one channel's FIR file into its filter. Returns the tap count
-// (0 = no filter loaded).
-static uint16_t loadFirChannel(const char* filename, AudioFilterFIRFloat& filter, const char* label) {
+// (0 = no filter loaded). If the filter's buffers can't be allocated, the
+// previously loaded filter stays active and currentTaps is returned so the
+// caller's state (which feeds the group-delay compensation) stays correct.
+static uint16_t loadFirChannel(const char* filename, AudioFilterFIRFloat& filter, const char* label, uint16_t currentTaps) {
   if (strlen(filename) == 0) {
     filter.loadCoefficients(nullptr, 0);
     return 0;
@@ -828,8 +820,14 @@ static uint16_t loadFirChannel(const char* filename, AudioFilterFIRFloat& filter
     filter.loadCoefficients(nullptr, 0);
     return 0;
   }
-  filter.loadCoefficients(coeffs, actualTaps);
+  bool loaded = filter.loadCoefficients(coeffs, actualTaps);
   delete[] coeffs;
+  if (!loaded) {
+    Serial.printf("%s FIR load failed (out of memory), keeping previous filter\n", label);
+    // Tell the ESP too, so the failure shows up in its debug log
+    Serial1.printf("ERROR %s FIR load failed: out of memory\n", label);
+    return currentTaps;
+  }
   Serial.printf("%s FIR file loaded, taps: %u\n", label, actualTaps);
   return actualTaps;
 }
@@ -848,9 +846,9 @@ void loadFirFiles() {
     return;
   }
 
-  state.firTapsLeft = loadFirChannel(state.firFileLeft, Left_FIR_Filter, "Left");
-  state.firTapsRight = loadFirChannel(state.firFileRight, Right_FIR_Filter, "Right");
-  state.firTapsSub = loadFirChannel(state.firFileSub, Sub_FIR_Filter, "Sub");
+  state.firTapsLeft = loadFirChannel(state.firFileLeft, Left_FIR_Filter, "Left", state.firTapsLeft);
+  state.firTapsRight = loadFirChannel(state.firFileRight, Right_FIR_Filter, "Right", state.firTapsRight);
+  state.firTapsSub = loadFirChannel(state.firFileSub, Sub_FIR_Filter, "Sub", state.firTapsSub);
 
   // FIR latencies may have changed - realign the channels
   applyDelays();
@@ -887,9 +885,11 @@ void applyDelays() {
 }
 
 void setDelays(int delayL_us, int delayR_us, int delayS_us) {
-  state.delayLeftMicroSeconds = delayL_us;
-  state.delayRightMicroSeconds = delayR_us;
-  state.delaySubMicroSeconds = delayS_us;
+  // Clamp rather than reject: delays also arrive during the boot sync, and a
+  // bad value must never take the audio down (see MAX_DELAY_US).
+  state.delayLeftMicroSeconds = constrain(delayL_us, 0, MAX_DELAY_US);
+  state.delayRightMicroSeconds = constrain(delayR_us, 0, MAX_DELAY_US);
+  state.delaySubMicroSeconds = constrain(delayS_us, 0, MAX_DELAY_US);
   state.isDirty = true;
   applyDelays();
 }
@@ -1087,10 +1087,10 @@ void handleSetDelays(const String& command, String* args, int argCount, OutputSt
     Serial.println(args[2]);
     
     setDelays(args[0].toInt(), args[1].toInt(), args[2].toInt());
-    stream.write("OK", 2);  // Send acknowledgment back
+    stream.print("OK\n");  // Send acknowledgment back
   } else {
     Serial.println("Wrong number of arguments for setDelays");
-    stream.write("ERROR", 5);
+    stream.print("ERROR\n");
   }
 }
 

@@ -22,13 +22,22 @@ void copyFile(const char* sourcePath, const char* destPath) {
 #include "file_system.h"
 
 void initLittleFS() {
-    if (!LittleFS.begin()) {
-        DebugSerial.println("LittleFS mount failed, formatting...");
-        LittleFS.format();
-        if (!LittleFS.begin()) {
-            DebugSerial.println("LittleFS format failed!");
-            ESP.restart();
-        }
+    // Never auto-format on the first failure: a transient mount error would
+    // wipe the web UI, TLS certs and config. Retry, and only format when the
+    // filesystem is truly unusable.
+    if (LittleFS.begin(false)) {
+        return;
+    }
+    DebugSerial.println("LittleFS mount failed, retrying...");
+    delay(100);
+    if (LittleFS.begin(false)) {
+        return;
+    }
+    DebugSerial.println("LittleFS mount failed twice - formatting as a last resort (web UI, certs and config will be lost)");
+    LittleFS.format();
+    if (!LittleFS.begin(false)) {
+        DebugSerial.println("LittleFS format failed!");
+        ESP.restart();
     }
 }
 

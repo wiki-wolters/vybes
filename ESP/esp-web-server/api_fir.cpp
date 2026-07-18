@@ -13,15 +13,34 @@
 
 using namespace ArduinoJson;
 
+// The filename travels inside a single space-separated UART line, so it must
+// be one clean token that fits the message buffer: "setFir right <name>\n"
+// must stay under TEENSY_MSG_MAX or buildMessage truncates it.
+#define FIR_FILENAME_MAX (TEENSY_MSG_MAX - (int)sizeof("setFir right \n"))
+
+static bool isValidFirFilename(const String& filename) {
+    if (filename.length() > FIR_FILENAME_MAX) {
+        return false;
+    }
+    for (size_t i = 0; i < filename.length(); i++) {
+        unsigned char c = filename[i];
+        if (c <= ' ' || c == 0x7F) { // spaces and control characters
+            return false;
+        }
+    }
+    return true;
+}
+
 esp_err_t handleGetFirFiles(PsychicRequest *request) {
     // The file list is served from a cache that is refreshed asynchronously
     // over the Teensy link (at boot, when the Teensy reboots, and after each
     // request so the next fetch is fresh).
     requestFirFilesRefresh();
 
-    // strtok modifies its input, so work on a copy of the cache
-    static char listCopy[768];
-    strlcpy(listCopy, getCachedFirFiles(), sizeof(listCopy));
+    // strtok modifies its input, so work on a copy of the cache (a stack
+    // copy - this handler runs concurrently on both server tasks)
+    char listCopy[768];
+    copyCachedFirFiles(listCopy, sizeof(listCopy));
 
     if (strlen(listCopy) == 0) {
         return request->reply(200, "application/json", "[]");
@@ -29,7 +48,7 @@ esp_err_t handleGetFirFiles(PsychicRequest *request) {
 
     // The cache is a newline-separated list of filenames
     // We need to convert this into a JSON array
-    DynamicJsonDocument doc(1024);
+    JsonDocument doc;
     JsonArray files = doc.to<JsonArray>();
 
     // Parse the newline-separated list
@@ -63,6 +82,12 @@ esp_err_t handlePutPresetFir(PsychicRequest *request) {
         return request->reply(400, "text/plain", "Invalid speaker");
     }
 
+    // An empty filename clears the filter; anything else must survive the
+    // UART line protocol intact
+    if (!isValidFirFilename(filename)) {
+        return request->reply(400, "text/plain", "Invalid FIR filename: too long, or contains spaces/control characters");
+    }
+
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
         return request->reply(404, "text/plain", "Preset not found");
@@ -70,15 +95,17 @@ esp_err_t handlePutPresetFir(PsychicRequest *request) {
 
     // Update the FIR filter filename for the specified speaker
     Preset* preset = &current_config.presets[presetIndex];
-    if (speaker == "left") {
-        preset->FIRFilters.left = filename;
-    } else if (speaker == "right") {
-        preset->FIRFilters.right = filename;
-    } else if (speaker == "sub") {
-        preset->FIRFilters.sub = filename;
+    {
+        ConfigLock lock;
+        if (speaker == "left") {
+            preset->FIRFilters.left = filename;
+        } else if (speaker == "right") {
+            preset->FIRFilters.right = filename;
+        } else if (speaker == "sub") {
+            preset->FIRFilters.sub = filename;
+        }
+        scheduleConfigWrite();
     }
-
-    scheduleConfigWrite();
 
     // Push the new filename to the Teensy and reload if this preset is active
     if (presetIndex == current_config.active_preset_index) {
@@ -87,7 +114,7 @@ esp_err_t handlePutPresetFir(PsychicRequest *request) {
     }
 
     // Prepare and send response
-    StaticJsonDocument<192> doc;
+    JsonDocument doc;
     doc["messageType"] = "firChanged";
     doc["presetName"] = presetName;
     doc["status"] = "ok";
@@ -117,8 +144,11 @@ esp_err_t handlePutPresetFirEnabled(PsychicRequest *request) {
 
     // Update the FIR filter enabled state
     bool enabled = (state == "on");
-    current_config.presets[presetIndex].FIRFiltersEnabled = enabled;
-    scheduleConfigWrite();
+    {
+        ConfigLock lock;
+        current_config.presets[presetIndex].FIRFiltersEnabled = enabled;
+        scheduleConfigWrite();
+    }
 
     if (presetIndex == current_config.active_preset_index) {
         sendOnOffToTeensy(CMD_SET_FIR_ENABLED, enabled);
@@ -128,7 +158,7 @@ esp_err_t handlePutPresetFirEnabled(PsychicRequest *request) {
     }
 
     // Prepare and send response
-    StaticJsonDocument<192> doc;
+    JsonDocument doc;
     doc["messageType"] = "firEnabledChanged";
     doc["presetName"] = presetName;
     doc["status"] = "ok";

@@ -21,8 +21,11 @@ const unsigned long WRITE_DELAY = 5000;
 void handleDebounceWrite() {
     if (configChanged && (millis() - lastConfigChange > WRITE_DELAY)) {
         DebugSerial.println("Debouncing: Saving configuration ...");
-        save_config();
+        // Clear the flag before serializing: a change landing mid-save
+        // re-dirties the config and gets picked up by the next cycle,
+        // instead of being lost when the flag is cleared afterwards.
         configChanged = false;
+        save_config();
     }
 }
 
@@ -39,27 +42,32 @@ void setup() {
     // UART2 is the Teensy link. See docs/WIRING.md.
     TeensySerial.begin(TEENSY_BAUD, SERIAL_8N1, TEENSY_RX_PIN, TEENSY_TX_PIN);
 
-    setupButton();
-    initLittleFS(); // For serving web files
-
-    remoteControl.setup();
-
-    bool standalone = setupWiFi();
+    initLittleFS(); // Config file and web assets
     initI2C(); // LCD only - the Teensy link is UART now
     setupScreen();
     writeToScreen("Vybes DSP");
 
+    // The config must be loaded before anything captures the active preset
+    // (button, IR remote) or serves it (web server). initTeensyComm comes
+    // first: init_config queues the DSP sync commands.
+    initTeensyComm();
+    init_config();
+
+    setupButton();
+    remoteControl.setup();
+
+    bool standalone = setupWiFi();
+
     if (MDNS.begin("vybes")) {
         MDNS.addService("http", "tcp", 80);
+#ifdef CONFIG_IDF_TARGET_ESP32S3
         MDNS.addService("https", "tcp", 443);
+#endif
         DebugSerial.println("mDNS responder started: vybes.local");
     }
 
-    setupWebServer();
     setupWebSocket();
-
-    initTeensyComm();
-    init_config();  // Load configuration
+    setupWebServer();
 
     DebugSerial.println("Vybes DSP ready!");
     DebugSerial.println(standalone ? WiFi.softAPIP() : WiFi.localIP());

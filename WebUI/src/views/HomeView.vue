@@ -246,8 +246,8 @@ async function loadSystemData() {
         left: status.speakerGains.left !== 0.0,
         right: status.speakerGains.right !== 0.0
       };
-      muteEnabled.value = status.muteState === 'on';
-      mutePercentage.value = status.mutePercent || 100;
+      muteEnabled.value = Boolean(status.mute?.muted);
+      mutePercentage.value = status.mute?.percent ?? 100;
       if (status.inputGains) {
         inputGainsLinear.value = { ...status.inputGains };
         inputGainsDB.value.bluetooth = linearToDb(status.inputGains.bluetooth);
@@ -256,7 +256,7 @@ async function loadSystemData() {
         inputGainsDB.value.tone = linearToDb(status.inputGains.tone);
         inputGainsDB.value.analog = linearToDb(status.inputGains.analog);
       }
-      volume.value = status.volume || 50;
+      volume.value = status.volume ?? 50;
     } catch (statusError) {
       console.warn('Could not load system status:', statusError);
     }
@@ -356,7 +356,8 @@ async function createNewPreset() {
 // System controls
 async function toggleSpeaker(speaker) {
   try {
-    await apiClient.setGlobalSpeakerGain(speaker, speakersEnabled.value[speaker] ? '1.0' : '0.0');
+    // The API talks percent (0-100), same scale as /status speakerGains
+    await apiClient.setGlobalSpeakerGain(speaker, speakersEnabled.value[speaker] ? 100 : 0);
   } catch (error) {
     console.error('Failed to toggle speaker:', error);
     errorMessage.value = `Failed to toggle speaker: ${error.message}`;

@@ -7,7 +7,7 @@
 #include "api_helpers.h"
 
 esp_err_t handleGetStatus(PsychicRequest *request) {
-    DynamicJsonDocument doc(1024);
+    JsonDocument doc;
 
     JsonObject speakerGains = doc.createNestedObject("speakerGains");
     speakerGains["left"] = current_config.speakerGains.left * 100.0f;
@@ -54,13 +54,16 @@ esp_err_t handlePutMute(PsychicRequest *request) {
         return request->reply(400, "text/plain", "Invalid state");
     }
 
-    current_config.muted = (state == "on");
-    scheduleConfigWrite();
+    {
+        ConfigLock lock;
+        current_config.muted = (state == "on");
+        scheduleConfigWrite();
+    }
 
     sendOnOffToTeensy(CMD_SET_MUTE, current_config.muted);
 
     // Same shape as the broadcast sent by toggle_mute (IR remote path)
-    StaticJsonDocument<96> doc;
+    JsonDocument doc;
     doc["messageType"] = "muteChanged";
     doc["muted"] = current_config.muted;
     return sendJsonAndBroadcast(request, doc);
@@ -77,12 +80,15 @@ esp_err_t handlePutMutePercent(PsychicRequest *request) {
         return request->reply(400, "text/plain", "Invalid percent value");
     }
 
-    current_config.mutePercent = percent;
-    scheduleConfigWrite();
+    {
+        ConfigLock lock;
+        current_config.mutePercent = percent;
+        scheduleConfigWrite();
+    }
 
     sendFloatToTeensy(CMD_SET_MUTE_PERCENT, percent);
 
-    StaticJsonDocument<96> doc;
+    JsonDocument doc;
     doc["messageType"] = "mutePercentChanged";
     doc["mutePercent"] = current_config.mutePercent;
     return sendJsonAndBroadcast(request, doc);

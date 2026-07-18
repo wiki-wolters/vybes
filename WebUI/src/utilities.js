@@ -43,15 +43,22 @@ function throttleAndDebounce(func, throttleWait = 500, debounceWait = 200) {
 
   function asyncDebounce(func, wait = 200) {
     let timeout;
+    let waiters = [];
     return function(...args) {
       return new Promise((resolve, reject) => {
+        // Every caller gets settled: superseded calls share the final
+        // invocation's result instead of leaving their promises pending
+        // forever (which would hang any await on them).
+        waiters.push({ resolve, reject });
         clearTimeout(timeout);
         timeout = setTimeout(async () => {
+          const settled = waiters;
+          waiters = [];
           try {
             const result = await func.apply(this, args);
-            resolve(result);
+            settled.forEach(w => w.resolve(result));
           } catch (error) {
-            reject(error);
+            settled.forEach(w => w.reject(error));
           }
         }, wait);
       });

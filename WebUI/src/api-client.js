@@ -23,6 +23,9 @@ class VybesAPI {
     this.connectionState = 'disconnected'; // 'disconnected' | 'connecting' | 'connected'
     this.reconnectTimer = null;
     this.reconnectDelay = 1000;
+    // Latest message handed to sendLiveMessage while the socket wasn't
+    // open yet; flushed as soon as it opens.
+    this.pendingLiveMessage = null;
   }
 
   get isWebSocketConnected() {
@@ -81,11 +84,11 @@ class VybesAPI {
 
   /**
    * Set mute percentage
-   * @param {number} percent - Mute percentage (1-100)
+   * @param {number} percent - Mute percentage (0-100)
    */
   async setMutePercent(percent) {
-    if (percent < 1 || percent > 100) {
-      throw new Error('Mute percent must be between 1 and 100');
+    if (percent < 0 || percent > 100) {
+      throw new Error('Mute percent must be between 0 and 100');
     }
     return this.request('PUT', `/mute/percent?percent=${percent}`);
   }
@@ -152,22 +155,20 @@ class VybesAPI {
   }
 
   /**
-   * Set speaker delay for a specific channel
-   * @param {string} presetName - Name of the preset
-   * @param {string} speaker - Speaker channel ('left', 'right', or 'sub')
-   * @param {number} delayMs - Delay in milliseconds
-   */
-  async setSpeakerDelay(presetName, speaker, delayMs) {
-    return this.request('PUT', `/preset/delay?preset_name=${encodeURIComponent(presetName)}&speaker=${speaker}&value=${delayMs}`);
-  }
-
-  /**
    * Set crossover frequency for a preset
    * @param {string} presetName - Name of the preset
    * @param {number} frequency - Crossover frequency in Hz
    */
   async setCrossoverFreq(presetName, frequency) {
     return this.request('PUT', `/preset/crossover?preset_name=${encodeURIComponent(presetName)}&frequency=${frequency}`);
+  }
+
+  /**
+   * Get the list of FIR filter files on the Teensy's SD card
+   * @returns {Promise<Array<string>>} Array of filenames (empty when none)
+   */
+  async getFirFiles() {
+    return this.request('GET', '/fir/files');
   }
 
   async updateFIREnabled(presetName, value) {
@@ -311,18 +312,6 @@ class VybesAPI {
     return this.request('PUT', `/preset/crossover?preset_name=${encodeURIComponent(presetName)}&frequency=${frequency}`);
   }
 
-  // ===== EQUAL LOUDNESS =====
-
-  /**
-   * Set equal loudness compensation
-   * @param {string} presetName - Preset name
-   * @param {boolean} state - true for on, false for off
-   */
-  async setEqualLoudness(presetName, state) {
-    const stateStr = state ? 'on' : 'off';
-    return this.request('PUT', `/preset/equal-loudness?preset_name=${encodeURIComponent(presetName)}&state=${stateStr}`);
-  }
-
   // ===== CONFIGURATION =====
 
   /**
@@ -391,6 +380,10 @@ class VybesAPI {
     this.socket.onopen = () => {
       this.reconnectDelay = 1000;
       this._setConnectionState('connected');
+      if (this.pendingLiveMessage !== null) {
+        this.socket.send(this.pendingLiveMessage);
+        this.pendingLiveMessage = null;
+      }
     };
 
     this.socket.onmessage = (event) => {
@@ -471,12 +464,16 @@ class VybesAPI {
   }
 
   /**
-   * Send a raw text message over the live-updates socket. No-op when the
-   * socket isn't open. Used by the analyzer's "rta:keepalive".
+   * Send a raw text message over the live-updates socket. While the socket
+   * is still connecting, the latest message is queued and flushed on open,
+   * so the analyzer's first "rta:keepalive" isn't lost (that would delay
+   * RTA streaming until the next keepalive tick).
    */
   sendLiveMessage(text) {
     if (this.isWebSocketConnected) {
       this.socket.send(text);
+    } else {
+      this.pendingLiveMessage = text;
     }
   }
 
@@ -509,15 +506,7 @@ class VybesAPI {
   }
 }
 
-// Export for different module systems
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = new VybesAPI();
-  module.exports.default = VybesAPI;
-} else if (typeof window !== 'undefined') {
-  window.VybesAPI = new VybesAPI();
-}
-
-// ES6 default export
+// Shared singleton instance
 export default new VybesAPI();
 
 // Named export for class definition

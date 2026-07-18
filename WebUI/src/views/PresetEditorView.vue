@@ -50,24 +50,40 @@
 
           <CollapsibleSection title="FIR Filters" :model-value="selectedPresetData.isFIREnabled" @update:modelValue="updateFIREnabled($event)" :animate="animationsEnabled">
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6" :class="{ 'opacity-50': !selectedPresetData.isFIREnabled }">
-              <InputGroup
-                v-model="selectedPresetData.firLeft"
-                :label="'Left'"
-                :disabled="!selectedPresetData.isFIREnabled"
-                @update:modelValue="updateFIRFilter('left', $event)"
-              />
-              <InputGroup
-                v-model="selectedPresetData.firRight"
-                :label="'Right'"
-                :disabled="!selectedPresetData.isFIREnabled"
-                @update:modelValue="updateFIRFilter('right', $event)"
-              />
-              <InputGroup
-                v-model="selectedPresetData.firSub"
-                :label="'Sub'"
-                :disabled="!selectedPresetData.isFIREnabled"
-                @update:modelValue="updateFIRFilter('sub', $event)"
-              />
+              <template v-for="channel in FIR_CHANNELS" :key="channel.speaker">
+                <SelectGroup
+                  v-if="firFiles.length > 0"
+                  :model-value="selectedPresetData[channel.key]"
+                  :label="channel.label"
+                  :disabled="!selectedPresetData.isFIREnabled"
+                  @update:modelValue="updateFIRFilter(channel.speaker, $event)"
+                >
+                  <option value="">None</option>
+                  <!-- Keep a configured file selectable even when it's no
+                       longer on the SD card, so opening the editor can't
+                       silently blank it -->
+                  <option
+                    v-if="selectedPresetData[channel.key] && !firFiles.includes(selectedPresetData[channel.key])"
+                    :value="selectedPresetData[channel.key]"
+                  >
+                    {{ selectedPresetData[channel.key] }} (missing)
+                  </option>
+                  <option v-for="file in firFiles" :key="file" :value="file">{{ file }}</option>
+                </SelectGroup>
+                <!-- Fallback when the device reports no files (e.g. SD card
+                     unavailable): keep the current value editable as text -->
+                <InputGroup
+                  v-else
+                  :model-value="selectedPresetData[channel.key]"
+                  :label="channel.label"
+                  :disabled="!selectedPresetData.isFIREnabled"
+                  @update:modelValue="updateFIRFilter(channel.speaker, $event)"
+                />
+              </template>
+            </div>
+            <div v-if="firFiles.length === 0" class="flex items-center gap-3 mt-4">
+              <span class="text-sm text-vybes-text-secondary">No FIR files found on the device.</span>
+              <button @click="loadFirFiles" class="btn-secondary">Refresh</button>
             </div>
           </CollapsibleSection>
 
@@ -144,6 +160,7 @@ import { ref, reactive, onMounted, inject, onUnmounted, nextTick } from 'vue';
 import { asyncDebounce } from '../utilities.js'; // Utility for rate limiting function calls
 import RangeSlider from '../components/shared/RangeSlider.vue';
 import InputGroup from '../components/shared/InputGroup.vue';
+import SelectGroup from '../components/shared/SelectGroup.vue';
 import ModalDialog from '../components/shared/ModalDialog.vue';
 import SpeakerDelayInput from '../components/shared/SpeakerDelayInput.vue';
 import VolumeControlGroup from '../components/shared/VolumeControlGroup.vue';
@@ -205,6 +222,25 @@ const modalInput = ref(null);
 const speakerDelays = reactive({ left: 0, right: 0, sub: 0 });
 const presetGains = reactive({ left: 100, right: 100, sub: 100 });
 
+// FIR filter file selection (list comes from the Teensy's SD card)
+const FIR_CHANNELS = [
+  { speaker: 'left', key: 'firLeft', label: 'Left' },
+  { speaker: 'right', key: 'firRight', label: 'Right' },
+  { speaker: 'sub', key: 'firSub', label: 'Sub' },
+];
+const firFiles = ref([]);
+
+async function loadFirFiles() {
+  try {
+    const files = await apiClient.getFirFiles();
+    firFiles.value = Array.isArray(files) ? files : [];
+  } catch (error) {
+    // Not fatal: the UI falls back to free-text filename inputs
+    console.error('Failed to load FIR file list:', error);
+    firFiles.value = [];
+  }
+}
+
 // EQ States
 const prefEQSets = ref([]); // Array of preference curve EQ sets ({ spl: Number, peqSet: Array })
 const currentPrefSPL = ref(0); // Default SPL value for preference curve
@@ -234,9 +270,19 @@ async function performApiCall(apiCall, successCallback, failureMessage, failureC
   }
 }
 
-const debouncedApiCall = asyncDebounce(async (apiCall, successCallback, failureMessage, failureCallback) => {
-  return await performApiCall(apiCall, successCallback, failureMessage, failureCallback);
-}, 500);
+// Each continuous control gets its own debounced instance: with a single
+// shared debouncer, touching a second control within the wait window would
+// silently cancel the first control's pending save.
+const makeDebouncedApiCall = () => asyncDebounce(performApiCall, 500);
+const debouncedCrossoverEnabledCall = makeDebouncedApiCall();
+const debouncedCrossoverFreqCall = makeDebouncedApiCall();
+const debouncedDelayEnabledCall = makeDebouncedApiCall();
+const debouncedSpeakerDelayCalls = {
+  left: makeDebouncedApiCall(),
+  right: makeDebouncedApiCall(),
+  sub: makeDebouncedApiCall(),
+};
+const debouncedPresetGainsCall = makeDebouncedApiCall();
 
 
 // API methods for updating preset settings
@@ -296,7 +342,7 @@ const updateFIRFilter = async (speaker, value) => {
 const updateCrossoverEnabled = async (value) => {
   const currentValue = selectedPresetData.value.isCrossoverEnabled;
   selectedPresetData.value.isCrossoverEnabled = value;
-  await debouncedApiCall(() => apiClient.updateCrossoverEnabled(
+  await debouncedCrossoverEnabledCall(() => apiClient.updateCrossoverEnabled(
     selectedPresetName.value,
     value
   ), null, 'Failed to update crossover setting', () => {
@@ -308,7 +354,7 @@ let prevValue = null;
 const updateCrossoverFreq = async (value) => {
   if (prevValue === null) prevValue = selectedPresetData.value.crossoverFreq;
   selectedPresetData.value.crossoverFreq = value;
-  await debouncedApiCall(() => apiClient.updateCrossoverFreq(
+  await debouncedCrossoverFreqCall(() => apiClient.updateCrossoverFreq(
     selectedPresetName.value,
     value
   ), () => {
@@ -322,7 +368,7 @@ const updateCrossoverFreq = async (value) => {
 const updateSpeakerDelayEnabled = async (value) => {
   const currentValue = selectedPresetData.value.isSpeakerDelayEnabled;
   selectedPresetData.value.isSpeakerDelayEnabled = value;
-  await debouncedApiCall(() => apiClient.setSpeakerDelayEnabled(
+  await debouncedDelayEnabledCall(() => apiClient.setSpeakerDelayEnabled(
     selectedPresetName.value,
     value
   ), null, 'Failed to update speaker delay setting', () => {
@@ -332,7 +378,7 @@ const updateSpeakerDelayEnabled = async (value) => {
 
 const updateSpeakerDelay = async (speaker, value) => {
   speakerDelays[speaker] = value;
-  await debouncedApiCall(() => apiClient.setSpeakerDelay(
+  await debouncedSpeakerDelayCalls[speaker](() => apiClient.setSpeakerDelay(
     selectedPresetName.value,
     speaker,
     value
@@ -341,7 +387,7 @@ const updateSpeakerDelay = async (speaker, value) => {
 
 const updatePresetGains = async (newGains) => {
   Object.assign(presetGains, newGains);
-  await debouncedApiCall(() => apiClient.setPresetGains(
+  await debouncedPresetGainsCall(() => apiClient.setPresetGains(
     selectedPresetName.value,
     newGains
   ), null, 'Failed to update preset gains');
@@ -397,6 +443,7 @@ let unsubscribeLive = null;
 
 // Component lifecycle hook
 onMounted(async () => {
+  loadFirFiles();
   await selectPreset(props.name);
 
   // Setup WebSocket listener for active preset changes

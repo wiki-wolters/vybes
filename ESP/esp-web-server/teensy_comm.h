@@ -4,6 +4,10 @@
 #include <Arduino.h>
 
 #include "board_pins.h"
+// Command names, TEENSY_MSG_MAX and the message builder live in
+// teensy_protocol.h (kept Arduino-free so the Teensy's host-native test
+// suite can round-trip the protocol).
+#include "teensy_protocol.h"
 
 // The Teensy link is UART2 (pins per board_pins.h). Debug output stays on
 // USB - see docs/WIRING.md.
@@ -11,48 +15,6 @@
 #define TEENSY_RX_PIN PIN_TEENSY_RX
 #define TEENSY_TX_PIN PIN_TEENSY_TX
 #define TEENSY_BAUD 115200
-
-// Speaker and Gain Commands
-#define CMD_SET_SPEAKER_GAINS "setSpeakerGains"
-#define CMD_SET_INPUT_GAINS "setInputGains"
-#define CMD_SET_VOLUME "setVolume"
-
-// Crossover Commands
-#define CMD_SET_CROSSOVER_FREQ "setCrossoverFrequency"
-#define CMD_SET_CROSSOVER_ENABLED "setCrossoverEnabled"
-
-// EQ Commands
-#define CMD_SET_EQ_ENABLED "setEqEnabled"
-#define CMD_SET_EQ_FILTER "setEq"
-#define CMD_RESET_EQ_FILTERS "resetEqFilters"
-
-// FIR Filter Commands
-#define CMD_SET_FIR "setFir"
-#define CMD_SET_FIR_ENABLED "setFirEnabled"
-#define CMD_LOAD_FIR_FILES "loadFirFiles"
-#define CMD_GET_FILES "getFiles"
-
-// Delay Commands
-#define CMD_SET_DELAYS "setDelays"
-#define CMD_SET_DELAY_ENABLED "setDelayEnabled"
-
-// Signal Generator Commands
-#define CMD_SET_TONE "setTone"
-#define CMD_STOP_TONE "stopTone"
-#define CMD_SET_NOISE "setNoise"
-
-// RTA (real-time analyzer) streaming: "setRta 1" starts/keeps-alive,
-// "setRta 0" stops. The Teensy replies with "RTA <hex>" frames.
-#define CMD_SET_RTA "setRta"
-
-// System Commands
-#define CMD_SET_MUTE "setMute"
-#define CMD_SET_MUTE_PERCENT "setMutePercent"
-#define CMD_PING "ping"
-
-// Maximum length of a single message, including trailing newline and null.
-// Longest realistic message is "setFir right <63-char filename>\n".
-#define TEENSY_MSG_MAX 80
 
 // Initialise the UART link. Call once from setup() after TeensySerial is up.
 void initTeensyComm();
@@ -83,9 +45,10 @@ void sendStringToTeensy(const char* command, const String& value);
 void teensyCommLoop();
 
 // The SD file list is fetched asynchronously and cached (requested at boot,
-// when the Teensy reboots, and by requestFirFilesRefresh). Returns a
-// newline-separated list; empty string if nothing cached yet.
-const char* getCachedFirFiles();
+// when the Teensy reboots, and by requestFirFilesRefresh). Copies the
+// newline-separated list into dst (empty string if nothing cached yet) under
+// the cache lock, so it is safe to call from any task. Returns the list length.
+size_t copyCachedFirFiles(char* dst, size_t dstSize);
 void requestFirFilesRefresh();
 
 #endif // TEENSY_COMM_H

@@ -4,11 +4,30 @@
 #include "screen.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 // Define the global configuration instance
 Config current_config;
 
 const char* CONFIG_FILE = "/config.msgpack";
+
+// Guards current_config against the httpd tasks mutating it while the loop
+// task serializes it (see config.h). Created in init_config, which runs
+// before the web servers start; until then everything is single-threaded.
+static SemaphoreHandle_t configMutex = nullptr;
+
+void config_lock() {
+    if (configMutex != nullptr) {
+        xSemaphoreTake(configMutex, portMAX_DELAY);
+    }
+}
+
+void config_unlock() {
+    if (configMutex != nullptr) {
+        xSemaphoreGive(configMutex);
+    }
+}
 
 bool load_config() {
     return load_config_from(CONFIG_FILE);
@@ -39,7 +58,7 @@ bool load_config_from(const char* path) {
     file.close();
 
     // Deserialize MessagePack
-    DynamicJsonDocument doc(8192); // Adjust size as needed
+    JsonDocument doc;
     DeserializationError error = deserializeMsgPack(doc, buffer.get(), fileSize);
     
     if (error) {
@@ -57,7 +76,12 @@ bool load_config_from(const char* path) {
 
     // Load global settings
     current_config.version = CONFIG_CURRENT_VERSION;
-    current_config.active_preset_index = doc["active_preset_index"] | 0;
+    // Clamp: a corrupt/hand-edited file must not index outside presets[]
+    int active_preset_index = doc["active_preset_index"] | 0;
+    if (active_preset_index < 0 || active_preset_index >= MAX_PRESETS) {
+        active_preset_index = 0;
+    }
+    current_config.active_preset_index = active_preset_index;
     current_config.toneFrequency = doc["toneFrequency"] | 0;
     current_config.toneVolume = doc["toneVolume"] | 0;
     current_config.noiseVolume = doc["noiseVolume"] | 0;
@@ -180,10 +204,13 @@ bool load_config_from(const char* path) {
 
 void save_config() {
     DebugSerial.println("Saving configuration to LittleFS...");
-    
-    // Create JSON document
-    DynamicJsonDocument doc(8192); // Adjust size as needed
-    
+
+    // Snapshot current_config into a JSON document under the config lock so
+    // an API handler can't mutate it mid-serialization. The lock is released
+    // before the slow flash writes below.
+    JsonDocument doc;
+    config_lock();
+
     // Save version and global settings
     doc["version"] = current_config.version;
     doc["active_preset_index"] = current_config.active_preset_index;
@@ -261,6 +288,8 @@ void save_config() {
             firFilters["sub"] = current_config.presets[i].FIRFilters.sub;
         }
     }
+
+    config_unlock();
 
     // Serialize to MessagePack. Write to a temp file first, then rename over
     // the live config so a power loss mid-write can't corrupt it.
@@ -347,6 +376,8 @@ void reset_config_to_defaults() {
 }
 
 void init_config() {
+    configMutex = xSemaphoreCreateMutex();
+
     // Initialize LittleFS
     if (!LittleFS.begin()) {
         DebugSerial.println("Failed to initialize LittleFS");
@@ -461,9 +492,18 @@ bool config_get_preset_gains(const String& presetName, JsonDocument& doc) {
 bool config_set_preset_gains(const String& presetName, const JsonObject& gains) {
     for (int i = 0; i < MAX_PRESETS; ++i) {
         if (presetName == current_config.presets[i].name) {
-            current_config.presets[i].gains.left = gains["left"].as<float>() / 100.0f;
-            current_config.presets[i].gains.right = gains["right"].as<float>() / 100.0f;
-            current_config.presets[i].gains.sub = gains["sub"].as<float>() / 100.0f;
+            // Only update channels present in the body - a partial payload
+            // must not zero the omitted ones
+            ConfigLock lock;
+            if (gains["left"].is<float>()) {
+                current_config.presets[i].gains.left = gains["left"].as<float>() / 100.0f;
+            }
+            if (gains["right"].is<float>()) {
+                current_config.presets[i].gains.right = gains["right"].as<float>() / 100.0f;
+            }
+            if (gains["sub"].is<float>()) {
+                current_config.presets[i].gains.sub = gains["sub"].as<float>() / 100.0f;
+            }
             scheduleConfigWrite();
             if (i == current_config.active_preset_index) {
                 Preset* activePreset = &current_config.presets[current_config.active_preset_index];

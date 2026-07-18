@@ -52,15 +52,18 @@ esp_err_t handlePutPresetCrossover(PsychicRequest *request) {
     }
 
     // Update the preset
-    current_config.presets[presetIndex].crossoverFreq = freq;
-    scheduleConfigWrite();
+    {
+        ConfigLock lock;
+        current_config.presets[presetIndex].crossoverFreq = freq;
+        scheduleConfigWrite();
+    }
 
     // Only push to the Teensy when the edited preset is the active one
     if (presetIndex == current_config.active_preset_index) {
         sendFloatToTeensy(CMD_SET_CROSSOVER_FREQ, freq);
     }
 
-    StaticJsonDocument<192> doc;
+    JsonDocument doc;
     doc["messageType"] = "crossoverChanged";
     doc["presetName"] = presetName;
     doc["status"] = "ok";
@@ -87,14 +90,17 @@ esp_err_t handlePutPresetCrossoverEnabled(PsychicRequest *request) {
     }
 
     // Update the preset
-    current_config.presets[presetIndex].crossoverEnabled = enabled;
-    scheduleConfigWrite();
+    {
+        ConfigLock lock;
+        current_config.presets[presetIndex].crossoverEnabled = enabled;
+        scheduleConfigWrite();
+    }
 
     if (presetIndex == current_config.active_preset_index) {
         sendOnOffToTeensy(CMD_SET_CROSSOVER_ENABLED, enabled);
     }
 
-    StaticJsonDocument<192> doc;
+    JsonDocument doc;
     doc["messageType"] = "crossoverEnabledChanged";
     doc["presetName"] = presetName;
     doc["status"] = "ok";
@@ -132,23 +138,26 @@ esp_err_t handlePutPresetEQPoints(PsychicRequest *request, JsonVariant &json) {
     int count = 0;
     bool changed[MAX_PEQ_POINTS];
 
-    for (JsonObject point : pointsArray) {
-        float new_freq = clampf(point["freq"] | 1000.0f, 20.0f, 20000.0f);
-        float new_gain = clampf(point["gain"] | 0.0f, -15.0f, 15.0f);
-        float new_q    = clampf(point["q"] | 1.0f, 0.1f, 10.0f);
+    {
+        ConfigLock lock;
+        for (JsonObject point : pointsArray) {
+            float new_freq = clampf(point["freq"] | 1000.0f, 20.0f, 20000.0f);
+            float new_gain = clampf(point["gain"] | 0.0f, -15.0f, 15.0f);
+            float new_q    = clampf(point["q"] | 1.0f, 0.1f, 10.0f);
 
-        PEQPoint& stored = target_set->points[count];
-        changed[count] = (count >= prev_num_points) ||
-                         (new_freq != stored.freq) ||
-                         (new_gain != stored.gain) ||
-                         (new_q != stored.q);
-        stored.freq = new_freq;
-        stored.gain = new_gain;
-        stored.q = new_q;
-        count++;
+            PEQPoint& stored = target_set->points[count];
+            changed[count] = (count >= prev_num_points) ||
+                             (new_freq != stored.freq) ||
+                             (new_gain != stored.gain) ||
+                             (new_q != stored.q);
+            stored.freq = new_freq;
+            stored.gain = new_gain;
+            stored.q = new_q;
+            count++;
+        }
+        target_set->num_points = count;
+        scheduleConfigWrite();
     }
-    target_set->num_points = count;
-    scheduleConfigWrite();
 
     if (presetIndex == current_config.active_preset_index) {
         // Queue only the points that actually changed...
@@ -163,7 +172,7 @@ esp_err_t handlePutPresetEQPoints(PsychicRequest *request, JsonVariant &json) {
         sendToTeensy(CMD_RESET_EQ_FILTERS, fromIndex);
     }
 
-    StaticJsonDocument<192> responseDoc;
+    JsonDocument responseDoc;
     responseDoc["messageType"] = "eqPointsChanged";
     responseDoc["presetName"] = presetName;
     responseDoc["status"] = "ok";
@@ -206,17 +215,26 @@ esp_err_t handlePutPresetEQPoint(PsychicRequest *request, JsonVariant &json) {
         return request->reply(507, "text/plain", "No available EQ set slots to create default spl=0 set.");
     }
 
-    PEQPoint& stored = target_set->points[id];
-    stored.freq = clampf(point["freq"] | 1000.0f, 20.0f, 20000.0f);
-    stored.gain = clampf(point["gain"] | 0.0f, -15.0f, 15.0f);
-    stored.q    = clampf(point["q"] | 1.0f, 0.1f, 10.0f);
-    if (id >= target_set->num_points) {
-        target_set->num_points = id + 1;
+    // Allow updating an existing point or appending directly after the last
+    // one; a larger id would mark the skipped-over stale points as active.
+    if (id > target_set->num_points) {
+        return request->reply(400, "text/plain", "PEQ point ID would leave a gap");
     }
-    scheduleConfigWrite();
+
+    {
+        ConfigLock lock;
+        PEQPoint& stored = target_set->points[id];
+        stored.freq = clampf(point["freq"] | 1000.0f, 20.0f, 20000.0f);
+        stored.gain = clampf(point["gain"] | 0.0f, -15.0f, 15.0f);
+        stored.q    = clampf(point["q"] | 1.0f, 0.1f, 10.0f);
+        if (id >= target_set->num_points) {
+            target_set->num_points = id + 1;
+        }
+        scheduleConfigWrite();
+    }
 
     if (presetIndex == current_config.active_preset_index) {
-        sendEqPointToTeensy(id, stored);
+        sendEqPointToTeensy(id, target_set->points[id]);
     }
 
     return request->reply(204);
@@ -244,14 +262,17 @@ esp_err_t handlePutPresetEQEnabled(PsychicRequest *request) {
     }
 
     bool enabled = (state == "on");
-    preset->EQEnabled = enabled;
-    scheduleConfigWrite();
+    {
+        ConfigLock lock;
+        preset->EQEnabled = enabled;
+        scheduleConfigWrite();
+    }
 
     if (presetIndex == current_config.active_preset_index) {
         sendOnOffToTeensy(CMD_SET_EQ_ENABLED, enabled);
     }
 
-    StaticJsonDocument<192> doc;
+    JsonDocument doc;
     doc["messageType"] = "eqEnabledChanged";
     doc["presetName"] = presetName;
     doc["status"] = "ok";

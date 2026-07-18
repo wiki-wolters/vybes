@@ -96,6 +96,21 @@ struct Config {
 // --- Global Configuration Variable ---
 extern Config current_config;
 
+// current_config is shared between the two httpd server tasks (API handlers)
+// and the loop task (debounced save, IR remote, button). Handlers must hold
+// this lock while mutating it, and save_config holds it while serializing,
+// so a save can't capture a half-written preset. Scope a ConfigLock around
+// each mutation site.
+void config_lock();
+void config_unlock();
+
+struct ConfigLock {
+    ConfigLock() { config_lock(); }
+    ~ConfigLock() { config_unlock(); }
+    ConfigLock(const ConfigLock&) = delete;
+    ConfigLock& operator=(const ConfigLock&) = delete;
+};
+
 // --- Function Prototypes ---
 
 /**

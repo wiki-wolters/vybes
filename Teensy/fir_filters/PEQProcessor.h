@@ -5,6 +5,7 @@
 #include <AudioStream.h>
 #include <arm_math.h>
 #include <Audio.h>
+#include "PEQMath.h"
 
 #ifndef PI
 #define PI 3.14159265359f
@@ -96,9 +97,7 @@ private:
   float interpolate(float start, float end, float progress);
 };
 
-// Exact magnitude response of a bell (peaking) filter in dB at 'freq'.
-// This is the same math used by the WebUI to draw the curve, so what you
-// see, what is compensated for, and what you hear all agree.
-float calculateBellFilter(float freq, float centerFreq, float gain, float q);
+// calculateBellFilter (exact bell magnitude response in dB) is declared in
+// PEQMath.h, included above.
 
 #endif

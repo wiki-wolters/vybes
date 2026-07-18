@@ -14,10 +14,11 @@ An ESP32 development board (classic DevKitC/WROOM-32 or ESP32-S3 DevKitC-1 - bot
 web UI and API, and managing Teensy state. Preset configuration is stored on the
 ESP32's flash (LittleFS, as MessagePack), alongside the built web UI assets.
 
-Audio inputs (all digital, into the Teensy):
+Audio inputs (into the Teensy):
 * SPDIF Toslink optical
 * Bluetooth receiver via I2S
 * USB audio (the Teensy enumerates as a USB sound card; built with `USB_MIDI_AUDIO_SERIAL`)
+* Analogue stereo line-in via a second I2S input (an ADC board)
 
 Audio outputs:
 * Analog L & R via an I2S DAC board (PCM5102A)
@@ -72,7 +73,8 @@ Up to 8 presets are stored (see `ESP/esp-web-server/config.h`). Each preset cont
 * FIR filters: a filter filename per channel (left, right, sub) + enabled flag
 
 Global (non-preset) state includes master volume, mute state and mute percentage,
-input gains (spdif, bluetooth, usb, tone), and the tone/noise generator settings.
+input gains (spdif, bluetooth, usb, tone, analog), and the tone/noise generator
+settings.
 
 ## Web UI
 
@@ -82,7 +84,7 @@ A Vue 3 + Vite single-page app (in `/WebUI`), served by the ESP32. Four views:
 * Presets: a button for each, and a plus icon to add new. Tapping the active preset's
   edit icon navigates to the preset editor.
 * Master volume slider
-* Input source gain sliders: Bluetooth, TV (SPDIF), USB, Tone
+* Input source gain sliders: Bluetooth, TV (SPDIF), USB, Tone, Analog
 * Speaker on/off toggles: left, right, subwoofer
 * Mute: volume-reduction percentage slider and on/off toggle
 * Configuration: backup and restore buttons (download/upload the full device config)
@@ -113,7 +115,8 @@ Rename, copy, and delete buttons for the selected preset, plus collapsible secti
 (each with its own enable toggle):
 * EQ: interactive parametric EQ chart with draggable points and a calculated
   frequency-response curve
-* FIR filters: a file selector per channel (left, right, sub)
+* FIR filters: a dropdown per channel (left, right, sub) listing the filter files on
+  the device's SD card (with a free-text fallback when the list is unavailable)
 * Subwoofer crossover: frequency slider
 * Speaker delays: an input per speaker, in microseconds
 
@@ -131,8 +134,8 @@ HTTP on port 80 and HTTPS on 443 (same routes; HTTPS only when certificates are 
 * **POST /restore** — upload a previously downloaded configuration (multipart file)
 
 ### Gains
-* **PUT /gains/speaker?speaker={left|right|sub}&value={gain}**
-* **PUT /gains/input** — JSON body, any of: `{ "spdif": n, "bluetooth": n, "usb": n, "tone": n }`
+* **PUT /gains/speaker?speaker={left|right|sub}&value={0-100}** — gain in percent
+* **PUT /gains/input** — JSON body, any of: `{ "spdif": n, "bluetooth": n, "usb": n, "tone": n, "analog": n }`
 * **GET /preset/gains?preset_name={name}**
 * **PUT /preset/gains?preset_name={name}** — JSON body of per-speaker gains
 
@@ -151,7 +154,7 @@ HTTP on port 80 and HTTPS on 443 (same routes; HTTPS only when certificates are 
 * **PUT /preset/active?name={name}** — switch the active preset
 
 ### Preset configuration
-* **PUT /preset/delay?preset_name={name}&speaker={left|right|sub}&value={0-10000}** — delay in µs
+* **PUT /preset/delay?preset_name={name}&speaker={left|right|sub}&value={0-20000}** — delay in µs (20 ms max)
 * **PUT /preset/delay/enabled?preset_name={name}&state={on|off}**
 * **PUT /preset/eq?preset_name={name}** — JSON body: array of `{ "freq": 20-20000, "gain": -15-15, "q": 0.1-10 }`
 * **PUT /preset/eq/point?preset_name={name}** — JSON body: single point `{ "id": 0-14, "freq": n, "gain": n, "q": n }`
@@ -181,8 +184,7 @@ HTTP on port 80 and HTTPS on 443 (same routes; HTTPS only when certificates are 
 
 ## Directories
 * `/ESP`: ESP32 web server firmware (API, WebSocket, HTTPS, LCD, button, IR remote, WIFI)
-* `/Teensy`: Teensy DSP firmware. `fir_filters/` is the firmware that builds; `direct/`
-  and `fir_test/` are earlier experiments/test sketches.
+* `/Teensy`: Teensy DSP firmware (`fir_filters/`)
 * `/WebUI`: Vue 3 web UI
 * `/mock-server`: Express + SQLite mock of the device API, for developing the web UI
   without hardware (includes the WebSocket endpoint)

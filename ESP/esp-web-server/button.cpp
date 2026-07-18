@@ -37,11 +37,16 @@ unsigned long lastButtonScreenUpdateTime = 0;
 const unsigned long BUTTON_SCREEN_UPDATE_INTERVAL = 200; // milliseconds
 
 void nextPreset() {
-    currentPresetIndex++;
-    if (currentPresetIndex >= MAX_PRESETS || strlen(current_config.presets[currentPresetIndex].name) == 0) {
-        currentPresetIndex = 0;
+    // Advance to the next in-use slot, skipping holes left by deleted
+    // presets. Bounded so an all-empty table can't hang the loop task.
+    int index = currentPresetIndex;
+    for (int i = 0; i < MAX_PRESETS; i++) {
+        index = (index + 1) % MAX_PRESETS;
+        if (strlen(current_config.presets[index].name) > 0) {
+            currentPresetIndex = index;
+            break;
+        }
     }
-    // writeToScreen(current_config.presets[currentPresetIndex].name); // REMOVED THIS LINE
     lastButtonPressTime = millis();
 }
 
@@ -105,7 +110,7 @@ void handleButton() {
             scheduleConfigWrite();
 
             // Prepare data for WebSocket broadcast
-            StaticJsonDocument<192> doc;
+            JsonDocument doc;
             doc["messageType"] = "activePresetChanged";
             doc["activePresetName"] = current_config.presets[current_config.active_preset_index].name;
             doc["activePresetIndex"] = current_config.active_preset_index;

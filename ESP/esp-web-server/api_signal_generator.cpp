@@ -21,13 +21,16 @@ esp_err_t handlePutTone(PsychicRequest *request) {
         return request->reply(400, "text/plain", "Invalid volume value");
     }
 
-    current_config.toneFrequency = freq;
-    current_config.toneVolume = vol;
-    scheduleConfigWrite();
+    {
+        ConfigLock lock;
+        current_config.toneFrequency = freq;
+        current_config.toneVolume = vol;
+        scheduleConfigWrite();
+    }
 
     sendToTeensy(CMD_SET_TONE, freqStr, volStr);
 
-        DynamicJsonDocument doc(1024);
+        JsonDocument doc;
     doc["toneFrequency"] = current_config.toneFrequency;
     doc["toneVolume"] = current_config.toneVolume;
 
@@ -42,13 +45,16 @@ esp_err_t handlePutTone(PsychicRequest *request) {
 }
 
 esp_err_t handlePutToneStop(PsychicRequest *request) {
-    current_config.toneFrequency = 0;
-    current_config.toneVolume = 0;
-    scheduleConfigWrite();
+    {
+        ConfigLock lock;
+        current_config.toneFrequency = 0;
+        current_config.toneVolume = 0;
+        scheduleConfigWrite();
+    }
 
     sendToTeensy(CMD_STOP_TONE, "");
 
-        DynamicJsonDocument doc(1024);
+        JsonDocument doc;
     doc["toneFrequency"] = 0;
     doc["toneVolume"] = 0;
 
@@ -73,12 +79,15 @@ esp_err_t handlePutNoise(PsychicRequest *request) {
         return request->reply(400, "text/plain", "Invalid volume value");
     }
 
-    current_config.noiseVolume = vol;
-    scheduleConfigWrite();
+    {
+        ConfigLock lock;
+        current_config.noiseVolume = vol;
+        scheduleConfigWrite();
+    }
 
     sendToTeensy(CMD_SET_NOISE, volStr);
 
-        DynamicJsonDocument doc(1024);
+        JsonDocument doc;
     doc["noiseVolume"] = current_config.noiseVolume;
 
     char responseBuffer[1024]; // Adjust size as needed

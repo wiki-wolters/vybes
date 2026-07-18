@@ -418,18 +418,23 @@ watch(selectedPoint, async () => {
 
 // Throttling and request queuing
 let throttleTimeout = null;
-let pendingRequest = null; // To hold the promise of the ongoing API call
+let pendingRequest = null; // Promise of the single in-flight per-point PUT
 let trailingCall = false; // To track if a call was made during the throttle period
 let trailingFullUpdate = false; // Whether the deferred call must be a full-set update
+let trailingTimeout = null; // Deferred trailing send scheduled after an in-flight PUT
+let isUnmounted = false; // Blocks API traffic scheduled to run after navigation
 const THROTTLE_DELAY = 100; // milliseconds
 
 const sendUpdateToAPI = async () => {
-  // If a request is already pending, skip this update attempt
+  // The full set supersedes any queued per-point send...
+  trailingCall = false;
+  trailingFullUpdate = false;
+  // ...and must not race an in-flight one: wait it out so a straggling
+  // point PUT can't land on the backend after the full save.
   if (pendingRequest) {
-    trailingCall = true; // Mark that a call is waiting
-    trailingFullUpdate = true; // A full-set update supersedes point updates
-    return;
+    try { await pendingRequest; } catch (e) { /* already logged by the sender */ }
   }
+  if (isUnmounted) return;
 
   const pointsToEmit = localEqPoints.map((point, index) => ({
     id: index,
@@ -438,30 +443,13 @@ const sendUpdateToAPI = async () => {
     q: point.q
   }));
 
-  // Emit change immediately to keep the UI responsive
+  // Single save path: the parent listens for `change` and PUTs the full set.
   emit('change', pointsToEmit);
-
-  try {
-    // Store the promise of the current API call
-    pendingRequest = VybesAPI.savePrefEqSet(props.presetName, pointsToEmit);
-    await pendingRequest;
-  } catch (error) {
-    console.error('Failed to update EQ settings:', error);
-    // Handle error (e.g., show a notification to the user)
-  } finally {
-    pendingRequest = null; // Clear the pending request
-    // If there was a trailing call, immediately trigger another update
-    if (trailingCall) {
-      trailingCall = false;
-      const full = trailingFullUpdate;
-      trailingFullUpdate = false;
-      // Use a small delay to prevent immediate re-triggering if the API call was very fast
-      setTimeout(() => requestUpdate(full), 0);
-    }
-  }
 };
 
 const requestUpdate = (fullUpdate = false) => {
+  if (isUnmounted) return;
+
   // Set interaction flag and timeout to clear it
   isInteracting.value = true;
   if (interactionEndTimeout) {
@@ -503,6 +491,13 @@ const sendPointUpdateToAPI = async () => {
   const point = localEqPoints[selectedPoint.value];
   if (!point) return;
 
+  // Serialize point PUTs: never two in flight at once. Queue a trailing
+  // send instead so the latest values still reach the backend.
+  if (pendingRequest) {
+    trailingCall = true;
+    return;
+  }
+
   const pointToEmit = {
     id: selectedPoint.value,
     freq: point.freq,
@@ -511,9 +506,19 @@ const sendPointUpdateToAPI = async () => {
   };
 
   try {
-    await VybesAPI.updateEqPoint(props.presetName, pointToEmit);
+    pendingRequest = VybesAPI.updateEqPoint(props.presetName, pointToEmit);
+    await pendingRequest;
   } catch (error) {
     console.error('Failed to update EQ point:', error);
+  } finally {
+    pendingRequest = null;
+    if (trailingCall && !isUnmounted) {
+      trailingCall = false;
+      const full = trailingFullUpdate;
+      trailingFullUpdate = false;
+      // Small delay to prevent immediate re-triggering on a fast API
+      trailingTimeout = setTimeout(() => requestUpdate(full), 0);
+    }
   }
 };
 
@@ -837,6 +842,8 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  isUnmounted = true; // No API call may fire after navigation
+
   window.removeEventListener('resize', updateDimensions);
   window.removeEventListener('resize', checkOrientation);
 
@@ -850,6 +857,8 @@ onUnmounted(() => {
   if (throttleTimeout) {
     clearTimeout(throttleTimeout);
   }
+  clearTimeout(interactionEndTimeout);
+  clearTimeout(trailingTimeout);
   clearTimeout(readoutHideTimer);
   pendingRequest = null; // Ensure no pending requests block future operations if component unmounts
 });

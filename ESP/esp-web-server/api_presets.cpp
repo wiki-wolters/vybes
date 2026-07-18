@@ -11,7 +11,7 @@
 // --- API Handlers ---
 
 esp_err_t handleGetPresets(PsychicRequest *request) {
-    DynamicJsonDocument doc(2048); // Increased size to accommodate the larger JSON structure
+    JsonDocument doc;
     JsonArray presets = doc.to<JsonArray>();
     
     for (int i = 0; i < MAX_PRESETS; i++) {
@@ -39,7 +39,7 @@ esp_err_t handleGetPreset(PsychicRequest *request) {
     }
 
     const Preset& preset = current_config.presets[presetIndex];
-    DynamicJsonDocument doc(3072); // Increased size for complex presets
+    JsonDocument doc;
     doc["name"] = preset.name;
 
     doc["isCurrent"] = presetIndex == current_config.active_preset_index;
@@ -104,6 +104,7 @@ esp_err_t handlePostPresetCreate(PsychicRequest *request) {
     }
 
     // Create new preset with default values
+    ConfigLock lock;
     current_config.presets[newIndex] = Preset();
     strcpy(current_config.presets[newIndex].name, presetName.c_str());
     
@@ -154,6 +155,7 @@ esp_err_t handlePostPresetCopy(PsychicRequest *request) {
     }
 
     // Copy the preset struct
+    ConfigLock lock;
     current_config.presets[destIndex] = current_config.presets[sourceIndex];
     // Update the name
     strcpy(current_config.presets[destIndex].name, destName.c_str());
@@ -184,6 +186,7 @@ esp_err_t handlePutPresetRename(PsychicRequest *request) {
     }
 
     // Update name in config
+    ConfigLock lock;
     strcpy(current_config.presets[presetIndex].name, newName.c_str());
     scheduleConfigWrite();
 
@@ -196,22 +199,37 @@ esp_err_t handleDeletePreset(PsychicRequest *request) {
     }
     String presetName = request->getParam("name")->value();
 
-    if (presetName == "Default") {
-        return request->reply(400, "text/plain", "Cannot delete the default preset");
-    }
-
     int presetIndex = find_preset_by_name(presetName.c_str());
 
     if (presetIndex == -1) {
         return request->reply(404, "text/plain", "Preset not found");
     }
 
+    // Refuse to delete the last remaining preset (names can be changed, so
+    // checking for "Default" wouldn't protect anything)
+    int usedPresets = 0;
+    for (int i = 0; i < MAX_PRESETS; i++) {
+        if (strlen(current_config.presets[i].name) > 0) {
+            usedPresets++;
+        }
+    }
+    if (usedPresets <= 1) {
+        return request->reply(400, "text/plain", "Cannot delete the last remaining preset");
+    }
+
+    ConfigLock lock;
     // "Delete" by clearing the name, making the slot available
     current_config.presets[presetIndex].name[0] = '\0';
 
-    // If the deleted preset was the active one, switch to the default preset
+    // If the deleted preset was the active one, switch to the first
+    // remaining preset (slot 0 may itself have been deleted earlier)
     if (current_config.active_preset_index == presetIndex) {
-        current_config.active_preset_index = 0; // Default is always at index 0
+        for (int i = 0; i < MAX_PRESETS; i++) {
+            if (strlen(current_config.presets[i].name) > 0) {
+                current_config.active_preset_index = i;
+                break;
+            }
+        }
     }
 
     updateTeensyWithActivePresetParameters();
@@ -232,15 +250,18 @@ esp_err_t handlePutActivePreset(PsychicRequest *request) {
         return request->reply(404, "text/plain", "Preset not found");
     }
 
-    current_config.active_preset_index = presetIndex;
+    {
+        ConfigLock lock;
+        current_config.active_preset_index = presetIndex;
+        scheduleConfigWrite();
+    }
     updateTeensyWithActivePresetParameters();
     loadFirFilters();
-    scheduleConfigWrite();
 
     // Broadcast first, then reply (reply ends the request)
 
     // Prepare data for WebSocket broadcast
-    StaticJsonDocument<192> doc;
+    JsonDocument doc;
     doc["messageType"] = "activePresetChanged";
     doc["activePresetName"] = current_config.presets[current_config.active_preset_index].name;
     doc["activePresetIndex"] = current_config.active_preset_index;
@@ -271,8 +292,11 @@ esp_err_t handlePutPresetDelayEnabled(PsychicRequest *request) {
     }
     
     bool enabled = (state == "on");
-    current_config.presets[presetIndex].delayEnabled = enabled;
-    scheduleConfigWrite();
+    {
+        ConfigLock lock;
+        current_config.presets[presetIndex].delayEnabled = enabled;
+        scheduleConfigWrite();
+    }
 
     // Send command to Teensy only when editing the active preset
     if (presetIndex == current_config.active_preset_index) {
@@ -280,7 +304,7 @@ esp_err_t handlePutPresetDelayEnabled(PsychicRequest *request) {
     }
 
     // Prepare response
-    StaticJsonDocument<192> doc;
+    JsonDocument doc;
     doc["messageType"] = "delayEnabledChanged";
     doc["presetName"] = presetName;
     doc["status"] = "ok";
@@ -301,8 +325,8 @@ esp_err_t handlePutPresetDelayNamed(PsychicRequest *request) {
     }
     
     float delayUs = delayUsStr.toFloat();
-    if (delayUs < 0 || delayUs > 10000.0f) {
-        return request->reply(400, "text/plain", "Delay must be between 0 and 10,000 microseconds");
+    if (delayUs < 0 || delayUs > 20000.0f) {
+        return request->reply(400, "text/plain", "Delay must be between 0 and 20,000 microseconds");
     }
     
     int presetIndex = find_preset_by_name(presetName.c_str());
@@ -311,15 +335,17 @@ esp_err_t handlePutPresetDelayNamed(PsychicRequest *request) {
     }
     
     // Update the delay in the config
-    if (speaker == "left") {
-        current_config.presets[presetIndex].delay.left = delayUs;
-    } else if (speaker == "right") {
-        current_config.presets[presetIndex].delay.right = delayUs;
-    } else if (speaker == "sub") {
-        current_config.presets[presetIndex].delay.sub = delayUs;
+    {
+        ConfigLock lock;
+        if (speaker == "left") {
+            current_config.presets[presetIndex].delay.left = delayUs;
+        } else if (speaker == "right") {
+            current_config.presets[presetIndex].delay.right = delayUs;
+        } else if (speaker == "sub") {
+            current_config.presets[presetIndex].delay.sub = delayUs;
+        }
+        scheduleConfigWrite();
     }
-    
-    scheduleConfigWrite();
 
     // Send command to Teensy only when editing the active preset
     if (presetIndex == current_config.active_preset_index) {
@@ -330,7 +356,7 @@ esp_err_t handlePutPresetDelayNamed(PsychicRequest *request) {
     }
 
     // Prepare response
-    StaticJsonDocument<192> doc;
+    JsonDocument doc;
     doc["messageType"] = "delayChanged";
     doc["presetName"] = presetName;
     doc["status"] = "ok";

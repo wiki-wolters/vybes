@@ -2,6 +2,8 @@
 #include "teensy_comm.h"
 #include "config.h"
 #include "websocket.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 // Outgoing queue. A full preset sync is ~30 commands.
 #define QUEUE_SIZE 40
@@ -20,42 +22,37 @@ static QueuedCommand cmdQueue[QUEUE_SIZE];
 static uint8_t queueHead = 0;     // index of next command to send
 static uint8_t queueCount = 0;
 
+// Guards cmdQueue/queueHead/queueCount: commands are enqueued from the two
+// httpd server tasks (API handlers) and the loop task (heartbeat, RTA
+// keepalive) while the loop task drains. Created in initTeensyComm, which
+// must run before the web servers start.
+static SemaphoreHandle_t queueMutex = nullptr;
+
 // RX state
 static char rxLine[RX_LINE_MAX];
 static size_t rxLen = 0;
 static bool rxOverflow = false;
 
-// FIR file list cache, filled asynchronously from "FILES ... EOT" replies
+// FIR file list cache, filled asynchronously from "FILES ... EOT" replies.
+// Written by the loop task, read by the httpd tasks - firCacheMutex guards it.
 static char firFilesCache[FIR_CACHE_MAX] = {0};
+static SemaphoreHandle_t firCacheMutex = nullptr;
 static char firFilesPending[FIR_CACHE_MAX];
 static size_t firFilesPendingLen = 0;
 static bool collectingFiles = false;
 
 // --- Message building ---
 
+// The actual formatting lives in teensy_protocol.h (shared with the Teensy
+// test suite); this wrapper just adds the debug log on truncation.
 static size_t buildMessage(char* out, size_t outSize, const char* command,
                            const char* p1, const char* p2, const char* p3, const char* p4,
                            const char* p5) {
-    size_t offset = strlcpy(out, command, outSize);
-    const char* params[5] = {p1, p2, p3, p4, p5};
-    for (int i = 0; i < 5; i++) {
-        if (!params[i]) continue;
-        if (offset < outSize - 1) {
-            out[offset++] = ' ';
-            out[offset] = '\0';
-        }
-        offset += strlcpy(out + offset, params[i], outSize - offset);
-        if (offset >= outSize) offset = outSize - 1; // strlcpy reports intended length
-    }
-    if (offset < outSize - 1) {
-        out[offset++] = '\n';
-        out[offset] = '\0';
-    } else {
+    bool truncated = false;
+    size_t offset = teensyBuildMessage(out, outSize, command, p1, p2, p3, p4, p5, &truncated);
+    if (truncated) {
         DebugSerial.print("Teensy command truncated: ");
         DebugSerial.println(out);
-        out[outSize - 2] = '\n';
-        out[outSize - 1] = '\0';
-        offset = outSize - 1;
     }
     return offset;
 }
@@ -133,10 +130,13 @@ bool sendToTeensy(const char* command, const char* param1, const char* param2,
                   const char* param3, const char* param4, const char* param5) {
     char message[TEENSY_MSG_MAX];
     buildMessage(message, sizeof(message), command, param1, param2, param3, param4, param5);
+    xSemaphoreTake(queueMutex, portMAX_DELAY);
     if (strcmp(command, CMD_RESET_EQ_FILTERS) == 0) {
         cancelSupersededEqCommands(message);
     }
-    return enqueueMessage(message);
+    bool queued = enqueueMessage(message);
+    xSemaphoreGive(queueMutex);
+    return queued;
 }
 
 bool sendToTeensy(const char* command, const String& param1,
@@ -178,8 +178,11 @@ void sendStringToTeensy(const char* command, const String& value) {
 
 // --- FIR file cache ---
 
-const char* getCachedFirFiles() {
-    return firFilesCache;
+size_t copyCachedFirFiles(char* dst, size_t dstSize) {
+    xSemaphoreTake(firCacheMutex, portMAX_DELAY);
+    size_t len = strlcpy(dst, firFilesCache, dstSize);
+    xSemaphoreGive(firCacheMutex);
+    return len;
 }
 
 void requestFirFilesRefresh() {
@@ -203,8 +206,10 @@ static void handleTeensyLine(const char* line) {
 
     if (collectingFiles) {
         if (strcmp(line, "EOT") == 0) {
+            xSemaphoreTake(firCacheMutex, portMAX_DELAY);
             memcpy(firFilesCache, firFilesPending, firFilesPendingLen);
             firFilesCache[firFilesPendingLen] = '\0';
+            xSemaphoreGive(firCacheMutex);
             collectingFiles = false;
             DebugSerial.println("FIR file list updated");
         } else {
@@ -255,6 +260,8 @@ static void handleTeensyLine(const char* line) {
 
 void initTeensyComm() {
     memset(cmdQueue, 0, sizeof(cmdQueue));
+    queueMutex = xSemaphoreCreateMutex();
+    firCacheMutex = xSemaphoreCreateMutex();
     // Ask for the file list in case the Teensy was already running when we
     // booted (its boot event would have been missed).
     requestFirFilesRefresh();
@@ -262,21 +269,34 @@ void initTeensyComm() {
 
 void teensyCommLoop() {
     // Drain the outgoing queue without ever blocking: only write a message
-    // when it fits in the UART TX buffer in one go.
-    while (queueCount > 0) {
-        QueuedCommand& e = cmdQueue[queueHead];
-        if (e.msg[0] == '\0') { // cancelled slot
+    // when it fits in the UART TX buffer in one go. Each entry is copied out
+    // under the queue mutex so the UART write happens without holding it.
+    for (;;) {
+        char msg[TEENSY_MSG_MAX];
+        size_t len = 0;
+
+        xSemaphoreTake(queueMutex, portMAX_DELAY);
+        while (queueCount > 0 && cmdQueue[queueHead].msg[0] == '\0') {
+            // cancelled slot
             queueHead = (queueHead + 1) % QUEUE_SIZE;
             queueCount--;
-            continue;
         }
-        size_t len = strlen(e.msg);
-        if ((size_t)TeensySerial.availableForWrite() < len) {
-            break; // TX buffer full; try again next loop()
+        if (queueCount > 0) {
+            len = strlen(cmdQueue[queueHead].msg);
+            if ((size_t)TeensySerial.availableForWrite() >= len) {
+                memcpy(msg, cmdQueue[queueHead].msg, len);
+                queueHead = (queueHead + 1) % QUEUE_SIZE;
+                queueCount--;
+            } else {
+                len = 0; // TX buffer full; try again next loop()
+            }
         }
-        TeensySerial.write((const uint8_t*)e.msg, len);
-        queueHead = (queueHead + 1) % QUEUE_SIZE;
-        queueCount--;
+        xSemaphoreGive(queueMutex);
+
+        if (len == 0) {
+            break;
+        }
+        TeensySerial.write((const uint8_t*)msg, len);
     }
 
     // Read incoming bytes and assemble lines

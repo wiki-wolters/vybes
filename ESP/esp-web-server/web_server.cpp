@@ -16,9 +16,11 @@
 
 // Both listeners serve identical routes. HTTPS exists so browsers grant
 // microphone access to the analyzer page (getUserMedia requires a secure
-// origin); it only starts when certificates are present on LittleFS -
-// generate them with ESP/make-certs.sh and upload with `pio run -t uploadfs`.
+// origin). It is only built on the ESP32-S3 - the classic ESP32 doesn't have
+// the RAM for TLS - and only starts when certificates are present on
+// LittleFS: generate them with ESP/make-certs.sh, upload `pio run -t uploadfs`.
 PsychicHttpServer server;
+#ifdef CONFIG_IDF_TARGET_ESP32S3
 PsychicHttpsServer serverHttps;
 
 static const char* CERT_PATH = "/certs/server.crt";
@@ -42,6 +44,7 @@ static bool loadCertificates() {
     key.close();
     return serverCert.length() > 0 && serverKey.length() > 0;
 }
+#endif // CONFIG_IDF_TARGET_ESP32S3
 
 static esp_err_t handleBackup(PsychicRequest *request) {
     PsychicFileResponse response(request, LittleFS, CONFIG_FILE, "application/msgpack", true);
@@ -52,18 +55,50 @@ static esp_err_t handleBackup(PsychicRequest *request) {
 // Chunks stream into a temp file; validation and the reply happen in the
 // completion handler so a bad/aborted upload can't destroy the live config.
 static const char* RESTORE_TMP = "/config.restore";
+// A config backup is a few KB - anything near this limit is not one.
+static const uint64_t RESTORE_MAX_SIZE = 64 * 1024;
+// A restore that hasn't completed within this window was aborted mid-upload
+// (completion handler never ran); let a new one take over.
+static const unsigned long RESTORE_STALE_MS = 30000;
+
+// Shared across the listeners - the in-progress flag (guarded by the config
+// mutex) rejects a second concurrent restore so they can't interleave.
 static File restoreFile;
 static bool restoreError;
+static bool restoreInProgress = false;
+static unsigned long restoreStartedAt = 0;
 
 static esp_err_t handleRestoreUpload(PsychicRequest *request, const String& filename,
                                      uint64_t index, uint8_t *data, size_t len, bool last) {
     if (index == 0) {
+        bool busy;
+        {
+            ConfigLock lock;
+            busy = restoreInProgress && (millis() - restoreStartedAt < RESTORE_STALE_MS);
+            if (!busy) {
+                restoreInProgress = true;
+                restoreStartedAt = millis();
+            }
+        }
+        if (busy) {
+            DebugSerial.println("Restore rejected: another restore is in progress");
+            return ESP_FAIL; // aborts the request with an error response
+        }
         DebugSerial.printf("Restore started: %s\n", filename.c_str());
         restoreError = false;
         restoreFile = LittleFS.open(RESTORE_TMP, "w");
         if (!restoreFile) {
             restoreError = true;
         }
+    }
+
+    if (!restoreError && index + len > RESTORE_MAX_SIZE) {
+        DebugSerial.println("Restore aborted: upload exceeds size limit");
+        restoreFile.close();
+        LittleFS.remove(RESTORE_TMP);
+        ConfigLock lock;
+        restoreInProgress = false;
+        return ESP_FAIL; // aborts the request with an error response
     }
 
     if (!restoreError && len) {
@@ -81,23 +116,32 @@ static esp_err_t handleRestoreUpload(PsychicRequest *request, const String& file
     return ESP_OK;
 }
 
-static esp_err_t handleRestoreComplete(PsychicRequest *request) {
+static esp_err_t finishRestore(PsychicRequest *request) {
     if (restoreError) {
         return request->reply(500, "text/plain", "Error writing uploaded configuration");
     }
 
     // Validate by loading it. On failure the previous config file is
     // untouched; reload it to undo any partial changes to current_config.
-    if (!load_config_from(RESTORE_TMP)) {
-        LittleFS.remove(RESTORE_TMP);
-        load_config();
-        return request->reply(400, "text/plain", "Invalid configuration file - restore aborted");
+    // Hold the config lock so a debounced save can't serialize a half-loaded
+    // config while we swap current_config around.
+    {
+        ConfigLock lock;
+        if (!load_config_from(RESTORE_TMP)) {
+            LittleFS.remove(RESTORE_TMP);
+            load_config();
+            return request->reply(400, "text/plain", "Invalid configuration file - restore aborted");
+        }
     }
 
     // Valid: make it the live config file
     if (!LittleFS.rename(RESTORE_TMP, CONFIG_FILE)) {
+        // Some FS implementations refuse to rename over an existing file
         LittleFS.remove(CONFIG_FILE);
-        LittleFS.rename(RESTORE_TMP, CONFIG_FILE);
+        if (!LittleFS.rename(RESTORE_TMP, CONFIG_FILE)) {
+            DebugSerial.println("Failed to move restored config into place");
+            return request->reply(500, "text/plain", "Failed to move restored configuration into place");
+        }
     }
 
     // Apply the restored state to the DSP
@@ -107,9 +151,16 @@ static esp_err_t handleRestoreComplete(PsychicRequest *request) {
     return request->reply(200, "text/plain", "Configuration restored successfully.");
 }
 
+static esp_err_t handleRestoreComplete(PsychicRequest *request) {
+    esp_err_t result = finishRestore(request);
+    ConfigLock lock;
+    restoreInProgress = false;
+    return result;
+}
+
 // Register every route on the given server. Called once per listener - the
-// handlers and the websocket instance are shared, endpoints are per-server.
-static void registerRoutes(PsychicHttpServer &s) {
+// handlers are shared, endpoints (and the websocket handler) are per-server.
+static void registerRoutes(PsychicHttpServer &s, PsychicWebSocketHandler *ws) {
     // API Routes - System Status
     s.on("/status", HTTP_GET, handleGetStatus);
     s.on("/mute/percent", HTTP_PUT, handlePutMutePercent);
@@ -179,13 +230,14 @@ static void registerRoutes(PsychicHttpServer &s) {
 
     // API Routes - Backup and Restore
     s.on("/backup", HTTP_GET, handleBackup);
+    s.maxUploadSize = RESTORE_MAX_SIZE; // rejects oversized Content-Lengths up front
     PsychicUploadHandler *restoreHandler = new PsychicUploadHandler();
     restoreHandler->onUpload(handleRestoreUpload);
     restoreHandler->onRequest(handleRestoreComplete);
     s.on("/restore", HTTP_POST, restoreHandler);
 
-    // Live updates websocket (handler shared across both listeners)
-    s.on("/live-updates", &ws);
+    // Live updates websocket (one handler per listener - see websocket.h)
+    s.on("/live-updates", ws);
 
     // Static assets: hashed filenames under /assets cache forever; the rest
     // of the dist (index.html, favicon, manifest, icons) serves from root.
@@ -201,17 +253,21 @@ void setupWebServer() {
     // ~35 routes per listener (esp-idf's default cap is 8)
     server.config.max_uri_handlers = 60;
     server.listen(80);
-    registerRoutes(server);
+    registerRoutes(server, &wsHttp);
     DebugSerial.println("HTTP server started on port 80");
 
+#ifdef CONFIG_IDF_TARGET_ESP32S3
     if (loadCertificates()) {
         serverHttps.ssl_config.httpd.max_uri_handlers = 60;
         // Each TLS connection costs ~45KB of heap - keep the count low
         serverHttps.ssl_config.httpd.max_open_sockets = 3;
         serverHttps.listen(443, serverCert.c_str(), serverKey.c_str());
-        registerRoutes(serverHttps);
+        registerRoutes(serverHttps, &wsHttps);
         DebugSerial.println("HTTPS server started on port 443");
     } else {
         DebugSerial.println("No certificates in /certs - HTTPS disabled (see ESP/make-certs.sh)");
     }
+#else
+    DebugSerial.println("HTTPS not built on this target (ESP32-S3 only)");
+#endif
 }

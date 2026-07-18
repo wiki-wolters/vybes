@@ -22,6 +22,10 @@ void PEQProcessor::begin(float sampleRate) {
 void PEQProcessor::setBand(int bandIndex, float frequency, float gain, float q, bool enabled) {
   if (bandIndex < 0 || bandIndex >= MAX_PEQ_BANDS) return;
 
+  // Called from serial (loop) context; update() reads this state from the
+  // audio interrupt.
+  AudioNoInterrupts();
+
   bands[bandIndex].frequency = constrain(frequency, 20.0f, 20000.0f);
   bands[bandIndex].gain = constrain(gain, -15.0f, 15.0f);
   bands[bandIndex].q = constrain(q, 0.1f, 10.0f);
@@ -30,6 +34,8 @@ void PEQProcessor::setBand(int bandIndex, float frequency, float gain, float q, 
   if (initialized) {
     updateFilter(bandIndex);
   }
+
+  AudioInterrupts();
 }
 
 void PEQProcessor::setBand(int bandIndex, const PEQBand& band) {
@@ -53,18 +59,30 @@ void PEQProcessor::updateBands(const PEQBand* newBands, int numBands) {
 void PEQProcessor::enableBand(int bandIndex, bool enabled) {
   if (bandIndex < 0 || bandIndex >= MAX_PEQ_BANDS) return;
 
+  // Called from serial (loop) context; update() reads this state from the
+  // audio interrupt.
+  AudioNoInterrupts();
+
   bands[bandIndex].enabled = enabled;
 
   if (initialized) {
     updateFilter(bandIndex);
   }
+
+  AudioInterrupts();
 }
 
 void PEQProcessor::clearAll() {
+  // Called from serial (loop) context; update() reads this state from the
+  // audio interrupt.
+  AudioNoInterrupts();
+
   for (int i = 0; i < MAX_PEQ_BANDS; i++) {
     bands[i].enabled = false;
     updateFilter(i);
   }
+
+  AudioInterrupts();
 }
 
 PEQBand PEQProcessor::getBand(int bandIndex) const {
@@ -117,9 +135,8 @@ void PEQProcessor::applyPreEQGain(float maxBoost, AudioAmplifier& leftAmp, Audio
 }
 
 // Recompute the SVF coefficients for one band from bands[bandIndex].
-// Cytomic/Simper trapezoidal SVF, bell configuration - matches the RBJ
-// peaking EQ response exactly (see "Solving the continuous SVF equations
-// using trapezoidal integration", Andrew Simper).
+// The coefficient math itself lives in PEQMath.cpp so it can be verified
+// host-side against the RBJ peaking-EQ reference.
 void PEQProcessor::updateFilter(int bandIndex) {
   if (bandIndex < 0 || bandIndex >= MAX_PEQ_BANDS) return;
 
@@ -137,25 +154,17 @@ void PEQProcessor::updateFilter(int bandIndex) {
     return;
   }
 
-  float freq = constrain(band.frequency, 20.0f, min(20000.0f, sampleRate * 0.49f));
-  float q = constrain(band.q, 0.1f, 10.0f);
-  float gain = constrain(band.gain, -15.0f, 15.0f);
-
-  // Double precision for the coefficient math only; the audio path is float32
-  double A = pow(10.0, (double)gain / 40.0);
-  double g = tan(PI * (double)freq / (double)sampleRate);
-  double k = 1.0 / ((double)q * A);
-  double a1 = 1.0 / (1.0 + g * (g + k));
+  PeqSvfCoeffs c = peqComputeBellSvf(band.frequency, band.gain, band.q, sampleRate);
 
   if (!f.active) {
     // Band is (re)activating - start from silent integrators
     f.ic1eq = 0.0f;
     f.ic2eq = 0.0f;
   }
-  f.a1 = (float)a1;
-  f.a2 = (float)(g * a1);
-  f.a3 = (float)(g * g * a1);
-  f.m1 = (float)(k * (A * A - 1.0));
+  f.a1 = c.a1;
+  f.a2 = c.a2;
+  f.a3 = c.a3;
+  f.m1 = c.m1;
   f.active = true;
 }
 
@@ -180,6 +189,10 @@ void PEQProcessor::processBand(int bandIndex, float32_t* buffer, int numSamples)
 
 void PEQProcessor::animateToBands(const PEQBand* targetBands, int numBands, unsigned long durationMs) {
   if (!initialized) return;
+
+  // This runs in serial (loop) context while update() reads and writes the
+  // same animation state from the audio interrupt - keep the two apart.
+  AudioNoInterrupts();
 
   int maxBands = min(numBands, MAX_PEQ_BANDS);
   for (int i = 0; i < MAX_PEQ_BANDS; i++) {
@@ -206,12 +219,15 @@ void PEQProcessor::animateToBands(const PEQBand* targetBands, int numBands, unsi
       }
     }
     animation.active = false;
+    AudioInterrupts();
     return;
   }
 
   animation.active = true;
   animation.startTime = millis();
   animation.duration = durationMs;
+
+  AudioInterrupts();
 }
 
 void PEQProcessor::setAnimationSpeed(unsigned long durationMs) {
@@ -317,19 +333,5 @@ void PEQProcessor::update(void) {
   release(output_block);
 }
 
-// Exact bell (peaking EQ) magnitude in dB, from the RBJ analog prototype:
-//   H(s) = (s^2 + s*(A/Q) + 1) / (s^2 + s/(A*Q) + 1), evaluated at s = j*w/w0
-// The SVF above is the bilinear (frequency-warped) realisation of the same
-// prototype, so this matches the audible response.
-float calculateBellFilter(float freq, float centerFreq, float gain, float q) {
-  if (gain == 0.0f || q <= 0.0f || centerFreq <= 0.0f || freq <= 0.0f) return 0.0f;
-  float A = powf(10.0f, gain / 40.0f);
-  float O = freq / centerFreq;
-  float c = 1.0f - O * O;
-  c *= c;
-  float nb = A * O / q;
-  float db = O / (A * q);
-  float num = c + nb * nb;
-  float den = c + db * db;
-  return 10.0f * log10f(num / den);
-}
+// calculateBellFilter (the exact bell magnitude response used for gain
+// compensation) lives in PEQMath.cpp alongside the coefficient math.

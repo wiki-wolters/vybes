@@ -13,7 +13,7 @@ esp_err_t handleGetPresetGains(PsychicRequest* request) {
         return request->reply(400, "application/json", "{\"error\":\"Missing preset_name\"}");
     }
 
-    StaticJsonDocument<256> doc;
+    JsonDocument doc;
     if (config_get_preset_gains(presetName, doc)) {
         String output;
         serializeJson(doc, output);
@@ -42,8 +42,14 @@ esp_err_t handleSetPresetGains(PsychicRequest* request, JsonVariant& json) {
 esp_err_t handlePutSpeakerGain(PsychicRequest* request) {
     if (request->hasParam("speaker") && request->hasParam("value")) {
         String speaker = request->getParam("speaker")->value();
+        // value is on the same 0-100 scale as the JSON body path and
+        // GET /status; stored linearly as 0.0-1.0
         float value = request->getParam("value")->value().toFloat();
+        if (value < 0.0f) value = 0.0f;
+        if (value > 100.0f) value = 100.0f;
+        value /= 100.0f;
 
+        ConfigLock lock;
         if (speaker.equalsIgnoreCase("left")) {
             current_config.speakerGains.left = value;
         } else if (speaker.equalsIgnoreCase("right")) {
@@ -64,7 +70,7 @@ esp_err_t handlePutSpeakerGain(PsychicRequest* request) {
         return request->reply(400, "application/json", "{\"error\":\"Missing JSON body or speaker/value parameters\"}");
     }
 
-    DynamicJsonDocument doc(256);
+    JsonDocument doc;
     DeserializationError error = deserializeJson(doc, request->body());
 
     if (error) {
@@ -75,6 +81,7 @@ esp_err_t handlePutSpeakerGain(PsychicRequest* request) {
     float right = (doc["right"] | current_config.speakerGains.right * 100.0f) / 100.0f;
     float sub = (doc["sub"] | current_config.speakerGains.sub * 100.0f) / 100.0f;
 
+    ConfigLock lock;
     current_config.speakerGains.left = left;
     current_config.speakerGains.right = right;
     current_config.speakerGains.sub = sub;
@@ -93,6 +100,7 @@ esp_err_t handlePutInputGains(PsychicRequest* request, JsonVariant& json) {
     float tone = gains["tone"] | current_config.inputGains.tone;
     float analog = gains["analog"] | current_config.inputGains.analog;
 
+    ConfigLock lock;
     current_config.inputGains.spdif = spdif;
     current_config.inputGains.bluetooth = bluetooth;
     current_config.inputGains.usb = usb;

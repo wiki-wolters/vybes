@@ -18,13 +18,16 @@ esp_err_t handlePutVolume(PsychicRequest *request) {
                               "{\"success\":false,\"error\":\"Volume must be between 0 and 100\"}");
     }
 
-    current_config.volume = volume;
+    {
+        ConfigLock lock;
+        current_config.volume = volume;
+        scheduleConfigWrite();
+    }
     float volumeFloat = volume / 100.0f;
     sendFloatToTeensy(CMD_SET_VOLUME, volumeFloat);
-    scheduleConfigWrite();
 
     // Prepare data for WebSocket broadcast
-    DynamicJsonDocument doc(128);
+    JsonDocument doc;
     doc["messageType"] = "volumeChanged";
     doc["volume"] = current_config.volume;
     char messageBuffer[128];
@@ -50,7 +53,7 @@ void increase_volume(int amount) {
         sendFloatToTeensy(CMD_SET_VOLUME, volumeFloat);
         scheduleConfigWrite();
         // Prepare data for WebSocket broadcast
-        DynamicJsonDocument doc(128);
+        JsonDocument doc;
         doc["messageType"] = "volumeChanged";
         doc["volume"] = current_config.volume;
         char messageBuffer[128]; // Adjust size as needed
@@ -73,7 +76,7 @@ void decrease_volume(int amount) {
         sendFloatToTeensy(CMD_SET_VOLUME, volumeFloat);
         scheduleConfigWrite();
         // Prepare data for WebSocket broadcast
-        DynamicJsonDocument doc(128);
+        JsonDocument doc;
         doc["messageType"] = "volumeChanged";
         doc["volume"] = current_config.volume;
         char messageBuffer[128]; // Adjust size as needed
@@ -91,7 +94,7 @@ void toggle_mute() {
     sendOnOffToTeensy(CMD_SET_MUTE, current_config.muted);
     scheduleConfigWrite();
     // Prepare data for WebSocket broadcast
-    DynamicJsonDocument doc(128);
+    JsonDocument doc;
     doc["messageType"] = "muteChanged";
     doc["muted"] = current_config.muted;
     char messageBuffer[128]; // Adjust size as needed

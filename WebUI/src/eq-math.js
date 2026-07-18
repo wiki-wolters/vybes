@@ -27,7 +27,7 @@ export function peqSumDb(points, freq) {
 }
 
 // Convert a bandwidth in octaves to the equivalent bell Q.
-const octavesToQ = (octaves) =>
+export const octavesToQ = (octaves) =>
   Math.pow(2, octaves / 2) / (Math.pow(2, octaves) - 1);
 
 /*

@@ -57,9 +57,15 @@ public:
     // Parse and dispatch a raw command line (exposed for testing)
     void processCommand(const String& rawCommand, OutputStream& output);
 
+    // Split a space-separated argument string; runs of spaces count as one
+    // delimiter. Returns a new[]'d array (caller deletes) and sets count,
+    // or nullptr with count 0. (Exposed for testing.)
+    String* parseArgs(const String& argsString, int& count);
+
+    static const int LINE_BUFFER_SIZE = 256;
+
 private:
     static const int MAX_COMMANDS = 24;
-    static const int LINE_BUFFER_SIZE = 256;
 
     struct Command {
         String name;
@@ -74,8 +80,6 @@ private:
     char lineBuffer[LINE_BUFFER_SIZE];
     size_t lineLength;
     bool lineOverflow;
-
-    String* parseArgs(const String& argsString, int& count);
 };
 
 #endif // SERIAL_COMMAND_ROUTER_H

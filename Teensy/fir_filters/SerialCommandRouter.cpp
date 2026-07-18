@@ -84,27 +84,34 @@ void SerialCommandRouter::processCommand(const String& rawCommand, OutputStream&
 }
 
 String* SerialCommandRouter::parseArgs(const String& argsString, int& count) {
-    if (argsString.length() == 0) {
-        count = 0;
+    // Count tokens, treating runs of spaces as a single delimiter so
+    // repeated spaces don't produce empty arguments
+    count = 0;
+    bool inToken = false;
+    for (unsigned int i = 0; i < argsString.length(); i++) {
+        if (argsString.charAt(i) == ' ') {
+            inToken = false;
+        } else if (!inToken) {
+            inToken = true;
+            count++;
+        }
+    }
+
+    if (count == 0) {
         return nullptr;
     }
 
-    // Count delimiters to determine array size
-    count = 1;
-    for (unsigned int i = 0; i < argsString.length(); i++) {
-        if (argsString.charAt(i) == ' ') count++;
-    }
-
     String* result = new String[count];
-    int start = 0;
     int index = 0;
+    int start = -1;
 
     for (unsigned int i = 0; i <= argsString.length(); i++) {
-        if (i == argsString.length() || argsString.charAt(i) == ' ') {
-            result[index] = argsString.substring(start, i);
-            result[index].trim();
-            start = i + 1;
-            index++;
+        bool isSpace = (i == argsString.length()) || argsString.charAt(i) == ' ';
+        if (!isSpace && start < 0) {
+            start = i;
+        } else if (isSpace && start >= 0) {
+            result[index++] = argsString.substring(start, i);
+            start = -1;
         }
     }
 

@@ -71,10 +71,12 @@ balance.value = calculateBalance();
 
 function updateBalance(value) {
   balance.value = value;
-  const left = value > 0 ? 100 - value : 100;
-  const right = value < 0 ? 100 + value : 100;
-  gains.left = left;
-  gains.right = right;
+  // Scale from the current level rather than a fixed 100% baseline, so
+  // nudging balance attenuates one side of the existing levels instead of
+  // jumping both channels to full scale.
+  const level = Math.max(gains.left, gains.right);
+  gains.left = value > 0 ? Math.round(level * (100 - value) / 100) : level;
+  gains.right = value < 0 ? Math.round(level * (100 + value) / 100) : level;
   emit('update:gains', { ...gains });
 }
 

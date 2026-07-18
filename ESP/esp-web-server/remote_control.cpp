@@ -184,26 +184,36 @@ void RemoteControl::handle_ir_code(uint64_t code) {
     }
 }
 
-void RemoteControl::next_preset() {
-    _selected_preset_index++;
-    if (_selected_preset_index >= MAX_PRESETS || strlen(current_config.presets[_selected_preset_index].name) == 0) {
-        _selected_preset_index = 0;
+// Step through the preset slots in the given direction (+1/-1), skipping
+// empty ones (deleted presets leave holes). Bounded by MAX_PRESETS so an
+// all-empty table can't hang the loop task. Returns -1 if nothing is in use.
+static int findAdjacentPreset(int from, int step) {
+    int index = from;
+    for (int i = 0; i < MAX_PRESETS; i++) {
+        index = (index + step + MAX_PRESETS) % MAX_PRESETS;
+        if (strlen(current_config.presets[index].name) > 0) {
+            return index;
+        }
     }
+    return -1;
+}
+
+void RemoteControl::next_preset() {
+    int index = findAdjacentPreset(_selected_preset_index, +1);
+    if (index == -1) {
+        return; // no presets in use
+    }
+    _selected_preset_index = index;
     writeToScreen(current_config.presets[_selected_preset_index].name);
     _preset_selection_time = millis();
 }
 
 void RemoteControl::previous_preset() {
-    _selected_preset_index--;
-    if (_selected_preset_index < 0) {
-        _selected_preset_index = MAX_PRESETS - 1;
+    int index = findAdjacentPreset(_selected_preset_index, -1);
+    if (index == -1) {
+        return; // no presets in use
     }
-    while (strlen(current_config.presets[_selected_preset_index].name) == 0) {
-        _selected_preset_index--;
-        if (_selected_preset_index < 0) {
-            _selected_preset_index = MAX_PRESETS - 1;
-        }
-    }
+    _selected_preset_index = index;
     writeToScreen(current_config.presets[_selected_preset_index].name);
     _preset_selection_time = millis();
 }
@@ -216,7 +226,7 @@ void RemoteControl::apply_preset() {
         scheduleConfigWrite();
 
         // Prepare data for WebSocket broadcast
-        StaticJsonDocument<192> doc;
+        JsonDocument doc;
         doc["messageType"] = "activePresetChanged";
         doc["activePresetName"] = current_config.presets[current_config.active_preset_index].name;
         doc["activePresetIndex"] = current_config.active_preset_index;
