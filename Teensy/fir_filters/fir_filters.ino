@@ -92,9 +92,12 @@ AudioEffectDelay         Sub_delay;
 AudioEffectDelay         Right_delay;  
 
 // Outputs
+// Analog output is octal I2S: four data lines (pins 7, 32, 6, 9) sharing the
+// I2S1 clocks (BCLK=21, LRCLK=20), each feeding a stereo PCM5102A board.
+// Channel map: 0=Left, 1=Right (pin 7 board), 2+3=Sub mirrored to both
+// outputs of the pin 32 board (supports two subwoofers), 4-7 spare.
 AudioOutputSPDIF3        L_R_Spdif_Out;
-AudioOutputI2S           L_R_Analog_Out;
-AudioOutputI2S2          Sub_Analog_Out;
+AudioOutputI2SOct        Analog_Out;
 
 // RTA spectrum tap: the L+R source mix (pre-DSP) feeds an FFT whose
 // 1/3-octave band levels stream to the web UI over the ESP link. The FFT
@@ -208,10 +211,10 @@ const size_t bypassDelayConnections_len = sizeof(bypassDelayConnections) / sizeo
 
 //Connect from Post-delay checkpoint to outputs
 //Analog outs
-AudioConnection          patchCord_LeftPostDelayAmpToAnalogOut(Left_Post_Delay_amp, 0, L_R_Analog_Out, 0);
-AudioConnection          patchCord_RightPostDelayAmpToAnalogOut(Right_Post_Delay_amp, 0, L_R_Analog_Out, 1);
-AudioConnection          patchCord_SubPostDelayAmpToAnalogOutL(Sub_Post_Delay_amp, 0, Sub_Analog_Out, 0);
-AudioConnection          patchCord_SubPostDelayAmpToAnalogOutR(Sub_Post_Delay_amp, 0, Sub_Analog_Out, 1);
+AudioConnection          patchCord_LeftPostDelayAmpToAnalogOut(Left_Post_Delay_amp, 0, Analog_Out, 0);
+AudioConnection          patchCord_RightPostDelayAmpToAnalogOut(Right_Post_Delay_amp, 0, Analog_Out, 1);
+AudioConnection          patchCord_SubPostDelayAmpToAnalogOutL(Sub_Post_Delay_amp, 0, Analog_Out, 2);
+AudioConnection          patchCord_SubPostDelayAmpToAnalogOutR(Sub_Post_Delay_amp, 0, Analog_Out, 3);
 // Digital outs
 AudioConnection          patchCord_LeftPostDelayAmpToSpdifOut(Left_Post_Delay_amp, 0, L_R_Spdif_Out, 0);
 AudioConnection          patchCord_RightPostDelayAmpToSpdifOut(Right_Post_Delay_amp, 0, L_R_Spdif_Out, 1);

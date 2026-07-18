@@ -6,7 +6,7 @@ ESP is used only for the 1602 LCD backpack.
 
 ```
               WIFI / web UI                            audio in: SPDIF, I2S (BT), USB
-                   │                                   audio out: 2x I2S DAC, SPDIF
+                   │                                   audio out: octal I2S DACs, SPDIF
              ┌─────┴──────┐      UART 115200       ┌─────────────┐
   LCD, IR,   │   ESP32    │  GPIO17 ──────→ pin 0  │  Teensy 4.1 │── SD card
   button ────│  DevKitC   │  GPIO16 ←────── pin 1  │             │   (built-in slot)
@@ -45,15 +45,24 @@ These pins are fixed by the Audio library objects used in
 
 ### Outputs
 
+Analog output is octal I2S (`AudioOutputI2SOct`): up to four stereo DAC
+boards on four data lines, all sharing the I2S1 clocks. Every DAC board
+wires its BCK to pin 21 and LCK to pin 20; only DIN differs per board.
+
 | Teensy pin | Signal        | Connects to                | Purpose |
 |------------|---------------|----------------------------|---------|
-| **7**      | OUT1A (data)  | L/R DAC (PCM5102A) DIN     | `AudioOutputI2S` — main L & R |
-| **21**     | BCLK1         | L/R DAC BCK                | I2S1 bit clock (shared with BT input) |
-| **20**     | LRCLK1        | L/R DAC LCK                | I2S1 word clock (shared with BT input) |
-| **2**      | OUT2 (data)   | Sub DAC (PCM5102A) DIN     | `AudioOutputI2S2` — subwoofer |
-| **4**      | BCLK2         | Sub DAC BCK                | I2S2 bit clock |
-| **3**      | LRCLK2        | Sub DAC LCK                | I2S2 word clock |
+| **7**      | OUT1A (data)  | DAC board 1 (PCM5102A) DIN | Channels 1-2: main L & R |
+| **32**     | OUT1B (data)  | DAC board 2 (PCM5102A) DIN | Channels 3-4: subwoofer, mirrored to both outputs (two subs supported) |
+| **6**      | OUT1C (data)  | DAC board 3 DIN (future)   | Channels 5-6: unused |
+| **9**      | OUT1D (data)  | DAC board 4 DIN (future)   | Channels 7-8: unused |
+| **21**     | BCLK1         | All DAC boards BCK         | I2S1 bit clock (shared with BT input) |
+| **20**     | LRCLK1        | All DAC boards LCK         | I2S1 word clock (shared with BT input) |
 | **14**     | SPDIF OUT     | Toslink transmitter        | `AudioOutputSPDIF3` pass-through |
+
+The subwoofer signal is mirrored to both outputs of DAC board 2 (same as
+the old `AudioOutputI2S2` wiring), so one or two subs can be connected.
+I2S2 (pins 2/3/4/33) is fully freed for future use, e.g. an analog input
+ADC.
 
 ### Inputs
 
@@ -77,10 +86,13 @@ board must be wired to those same clock lines and run as an I2S slave.
 
 ### PCM5102A DAC boards
 
-Both DAC boards are PCM5102A modules: wire VIN (3.3V), GND, BCK, LCK and DIN
-per the tables above. The Teensy does not supply a master clock — leave the
-module's SCK tied to GND (most boards do this on-board) so the DAC generates
-its own.
+All DAC boards are PCM5102A modules: wire VIN (3.3V), GND, BCK, LCK and DIN
+per the tables above. BCK and LCK are daisy-chained across every board;
+each board gets its own DIN line. The Teensy does not supply a master
+clock — leave the module's SCK tied to GND (most boards do this on-board)
+so the DAC generates its own. Keep the shared clock runs short; a 100 Ω
+series resistor at the Teensy end of BCK and LCK is cheap insurance
+against ringing once several boards hang off them.
 
 ## Front button & Bluetooth pairing
 
