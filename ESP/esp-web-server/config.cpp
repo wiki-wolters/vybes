@@ -85,6 +85,7 @@ bool load_config_from(const char* path) {
         current_config.inputGains.bluetooth = gains["bluetooth"] | 1.0f;
         current_config.inputGains.usb = gains["usb"] | 1.0f;
         current_config.inputGains.tone = gains["tone"] | 0.0f;
+        current_config.inputGains.analog = gains["analog"] | 1.0f;
     }
 
     // Reset all presets to defaults so fields absent from the file (and
@@ -205,6 +206,7 @@ void save_config() {
     inputGains["bluetooth"] = current_config.inputGains.bluetooth;
     inputGains["usb"] = current_config.inputGains.usb;
     inputGains["tone"] = current_config.inputGains.tone;
+    inputGains["analog"] = current_config.inputGains.analog;
 
     // Save presets
     JsonArray presets = doc.createNestedArray("presets");
@@ -312,6 +314,7 @@ void reset_config_to_defaults() {
     current_config.inputGains.bluetooth = 1.0f;
     current_config.inputGains.usb = 1.0f;
     current_config.inputGains.tone = 0.0f;
+    current_config.inputGains.analog = 1.0f;
 
     // Initialize the first preset as 'Default'
     strcpy(current_config.presets[0].name, "Default");
@@ -379,7 +382,7 @@ void updateTeensyWithActivePresetParameters() {
     DebugSerial.print("Updating screen: ");DebugSerial.print(current_config.active_preset_index);DebugSerial.print(" ");DebugSerial.println(activePreset->name);
     writeToScreen(activePreset->name);
 
-    char a[16], b[16], c[16], d[16];
+    char a[16], b[16], c[16], d[16], e[16];
 
     // Send delay settings (microseconds)
     snprintf(a, sizeof(a), "%d", (int)activePreset->delay.left);
@@ -421,12 +424,13 @@ void updateTeensyWithActivePresetParameters() {
     snprintf(c, sizeof(c), "%.2f", activePreset->gains.sub);
     sendToTeensy(CMD_SET_SPEAKER_GAINS, a, b, c);
 
-    // Send input gains (order matches Teensy handler: bluetooth, spdif/optical, usb, tone)
+    // Send input gains (order matches Teensy handler: bluetooth, spdif/optical, usb, tone, analog)
     snprintf(a, sizeof(a), "%.2f", current_config.inputGains.bluetooth);
     snprintf(b, sizeof(b), "%.2f", current_config.inputGains.spdif);
     snprintf(c, sizeof(c), "%.2f", current_config.inputGains.usb);
     snprintf(d, sizeof(d), "%.2f", current_config.inputGains.tone);
-    sendToTeensy(CMD_SET_INPUT_GAINS, a, b, c, d);
+    snprintf(e, sizeof(e), "%.2f", current_config.inputGains.analog);
+    sendToTeensy(CMD_SET_INPUT_GAINS, a, b, c, d, e);
 
     // Send FIR filter settings
     sendOnOffToTeensy(CMD_SET_FIR_ENABLED, activePreset->FIRFiltersEnabled);

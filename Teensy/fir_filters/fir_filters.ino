@@ -36,15 +36,23 @@ SerialCommandRouter router(Serial1);
 AudioSynthWaveform       Tone_generator;
 AudioSynthNoisePink      pink1;         
 
-//Audio Inputs (Bluetooth, SPDIF, USB)
-AudioInputI2S            Bluetooth_in;  
-AsyncAudioInputSPDIF3    Optical_in; 
-AudioInputUSB            USB_in;   
+//Audio Inputs (Bluetooth, SPDIF, USB, analog)
+AudioInputI2S            Bluetooth_in;
+AsyncAudioInputSPDIF3    Optical_in;
+AudioInputUSB            USB_in;
+// Stereo ADC (e.g. PCM1808) on I2S2: data pin 5, BCLK pin 4, LRCLK pin 3,
+// MCLK pin 33. The Teensy is clock master; the ADC runs as a slave.
+AudioInputI2S2           Analog_in;
 
-// Input mixers
-AudioMixer4              Left_mixer;    
-AudioMixer4              Right_mixer;   
-AudioMixer4              Generator_mixer;   
+// Input mixers. Left/Right_mixer channels: 0=optical, 1=bluetooth, 2=USB,
+// 3=aux stage. The aux mixers carry the generator and analog inputs (the
+// main mixers have no channels left), so their gains are applied there and
+// main channel 3 stays at 1.0.
+AudioMixer4              Left_mixer;
+AudioMixer4              Right_mixer;
+AudioMixer4              Left_Aux_mixer;
+AudioMixer4              Right_Aux_mixer;
+AudioMixer4              Generator_mixer;
 
 // Parametric EQ processors (multi-band)
 AudioAmplifier           Left_Pre_EQ_amp;
@@ -110,8 +118,8 @@ AudioAnalyzeFFT1024      RTA_fft;
 // Generator connections
 AudioConnection          patchCord_GenToneToMixer(Tone_generator, 0, Generator_mixer, 0);
 AudioConnection          patchCord_PinkToMixer(pink1, 0, Generator_mixer, 1);
-AudioConnection          patchCord_GenMixerToLeftMixer(Generator_mixer, 0, Left_mixer, 3); // Assuming output 0 from Generator_mixer
-AudioConnection          patchCord_GenMixerToRightMixer(Generator_mixer, 0, Right_mixer, 3); // Assuming output 0 from Generator_mixer
+AudioConnection          patchCord_GenMixerToLeftAux(Generator_mixer, 0, Left_Aux_mixer, 0);
+AudioConnection          patchCord_GenMixerToRightAux(Generator_mixer, 0, Right_Aux_mixer, 0);
 
 // External input connections
 AudioConnection          patchCord_OpticalLToLeftMixer(Optical_in, 0, Left_mixer, 0);
@@ -120,6 +128,10 @@ AudioConnection          patchCord_BluetoothLToLeftMixer(Bluetooth_in, 0, Left_m
 AudioConnection          patchCord_BluetoothRToRightMixer(Bluetooth_in, 1, Right_mixer, 1);
 AudioConnection          patchCord_USBLToLeftMixer(USB_in, 0, Left_mixer, 2);
 AudioConnection          patchCord_USBRToRightMixer(USB_in, 1, Right_mixer, 2);
+AudioConnection          patchCord_AnalogLToLeftAux(Analog_in, 0, Left_Aux_mixer, 1);
+AudioConnection          patchCord_AnalogRToRightAux(Analog_in, 1, Right_Aux_mixer, 1);
+AudioConnection          patchCord_LeftAuxToLeftMixer(Left_Aux_mixer, 0, Left_mixer, 3);
+AudioConnection          patchCord_RightAuxToRightMixer(Right_Aux_mixer, 0, Right_mixer, 3);
 
 // RTA tap connections (the FFT link starts disconnected; see setup)
 AudioConnection          patchCord_LeftMixerToRTA(Left_mixer, 0, RTA_mixer, 0);
@@ -250,6 +262,7 @@ struct State {
   float gainOptical = 1.0;
   float gainUSB = 1.0;
   float gainGenerator = 1.0;
+  float gainAnalog = 1.0;
 
   // Master Volume
   float volume = 0.5; // User-set volume
@@ -364,7 +377,7 @@ void setup() {
 
   // Apply state
   Serial.println("Applying state");
-  setInputGains(state.gainBluetooth, state.gainOptical, state.gainUSB, state.gainGenerator);
+  setInputGains(state.gainBluetooth, state.gainOptical, state.gainUSB, state.gainGenerator, state.gainAnalog);
   setSpeakerGains(state.gainLeft, state.gainRight, state.gainSub);
   setEQEnabled(state.eqEnabled);
   setFIREnabled(state.firEnabled);
@@ -697,12 +710,13 @@ void setVolume(float volume) {
   // Do NOT apply gain directly here. It will be smoothed in updateAudioVolume().
 }
 
-void setInputGains(float bluetoothGain, float opticalGain, float usbGain, float generatorGain) {
-  Serial.println("Set input gains: bluetooth " + String(bluetoothGain) + ", optical " + String(opticalGain) + ", usb " + String(usbGain));
+void setInputGains(float bluetoothGain, float opticalGain, float usbGain, float generatorGain, float analogGain) {
+  Serial.println("Set input gains: bluetooth " + String(bluetoothGain) + ", optical " + String(opticalGain) + ", usb " + String(usbGain) + ", generator " + String(generatorGain) + ", analog " + String(analogGain));
   state.gainBluetooth = bluetoothGain;
   state.gainOptical = opticalGain;
   state.gainUSB = usbGain;
   state.gainGenerator = generatorGain;
+  state.gainAnalog = analogGain;
   state.isDirty = true;
   Left_mixer.gain(0, state.gainOptical);
   Right_mixer.gain(0, state.gainOptical);
@@ -710,8 +724,13 @@ void setInputGains(float bluetoothGain, float opticalGain, float usbGain, float 
   Right_mixer.gain(1, state.gainBluetooth);
   Left_mixer.gain(2, state.gainUSB);
   Right_mixer.gain(2, state.gainUSB);
-  Left_mixer.gain(3, state.gainGenerator);
-  Right_mixer.gain(3, state.gainGenerator);
+  // Generator and analog gains are applied in the aux stage feeding channel 3
+  Left_mixer.gain(3, 1.0);
+  Right_mixer.gain(3, 1.0);
+  Left_Aux_mixer.gain(0, state.gainGenerator);
+  Right_Aux_mixer.gain(0, state.gainGenerator);
+  Left_Aux_mixer.gain(1, state.gainAnalog);
+  Right_Aux_mixer.gain(1, state.gainAnalog);
 }
 
 void setTone(float frequency, float volumePercent) {
@@ -949,8 +968,11 @@ void handleGetFiles(const String& command, String* args, int argCount, OutputStr
 }
 
 void handleSetInputGains(const String& command, String* args, int argCount, OutputStream& stream) {
-  if (argCount == 4) {
-    setInputGains(args[0].toFloat(), args[1].toFloat(), args[2].toFloat(), args[3].toFloat());
+  // 4-arg form predates the analog input; keep accepting it
+  if (argCount == 5) {
+    setInputGains(args[0].toFloat(), args[1].toFloat(), args[2].toFloat(), args[3].toFloat(), args[4].toFloat());
+  } else if (argCount == 4) {
+    setInputGains(args[0].toFloat(), args[1].toFloat(), args[2].toFloat(), args[3].toFloat(), state.gainAnalog);
   }
 }
 

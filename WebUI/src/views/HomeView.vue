@@ -110,6 +110,15 @@
             unit="dB"
             @update:modelValue="updateInputGain('tone', $event)"
           />
+          <RangeSlider
+            :model-value="inputGainsDB.analog"
+            label="Analog"
+            :min="-40"
+            :max="MAX_DB"
+            :step="0.1"
+            unit="dB"
+            @update:modelValue="updateInputGain('analog', $event)"
+          />
         </div>
       </CardSection>
 
@@ -195,8 +204,8 @@ const presets = ref([]);
 const speakersEnabled = ref({sub: true, left: true, right: true});
 const muteEnabled = ref(false);
 const mutePercentage = ref(100);
-const inputGainsDB = ref({ bluetooth: -40, spdif: -40, usb: -40, tone: -40 });
-const inputGainsLinear = ref({ bluetooth: 0, spdif: 0, usb: 0, tone: 0 });
+const inputGainsDB = ref({ bluetooth: -40, spdif: -40, usb: -40, tone: -40, analog: -40 });
+const inputGainsLinear = ref({ bluetooth: 0, spdif: 0, usb: 0, tone: 0, analog: 0 });
 let muteUpdateTimeout = null;
 let inputGainsUpdateTimeout = null;
 const showNewPresetDialog = ref(false);
@@ -245,6 +254,7 @@ async function loadSystemData() {
         inputGainsDB.value.spdif = linearToDb(status.inputGains.spdif);
         inputGainsDB.value.usb = linearToDb(status.inputGains.usb);
         inputGainsDB.value.tone = linearToDb(status.inputGains.tone);
+        inputGainsDB.value.analog = linearToDb(status.inputGains.analog);
       }
       volume.value = status.volume || 50;
     } catch (statusError) {
@@ -273,7 +283,8 @@ function updateInputGain(source, dbValue) {
         inputGainsLinear.value.bluetooth,
         inputGainsLinear.value.spdif,
         inputGainsLinear.value.usb,
-        inputGainsLinear.value.tone
+        inputGainsLinear.value.tone,
+        inputGainsLinear.value.analog
       );
     } catch (error) {
       console.error('Failed to update input gains:', error);

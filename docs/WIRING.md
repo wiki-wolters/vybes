@@ -5,7 +5,7 @@ Teensy talk over a **UART serial link** (115200 baud, 3.3V logic); I2C on the
 ESP is used only for the 1602 LCD backpack.
 
 ```
-              WIFI / web UI                            audio in: SPDIF, I2S (BT), USB
+              WIFI / web UI                            audio in: SPDIF, I2S (BT), USB, analog
                    │                                   audio out: octal I2S DACs, SPDIF
              ┌─────┴──────┐      UART 115200       ┌─────────────┐
   LCD, IR,   │   ESP32    │  GPIO17 ──────→ pin 0  │  Teensy 4.1 │── SD card
@@ -61,8 +61,9 @@ wires its BCK to pin 21 and LCK to pin 20; only DIN differs per board.
 
 The subwoofer signal is mirrored to both outputs of DAC board 2 (same as
 the old `AudioOutputI2S2` wiring), so one or two subs can be connected.
-I2S2 (pins 2/3/4/33) is fully freed for future use, e.g. an analog input
-ADC.
+Moving all analog outputs onto I2S1 freed the I2S2 port, which now hosts
+the analog line-in ADC (see Inputs); its output side (pin 2) is still
+unused.
 
 ### Inputs
 
@@ -70,11 +71,21 @@ ADC.
 |------------|--------------|---------------------------|---------|
 | **15**     | SPDIF IN     | Toslink receiver          | `AsyncAudioInputSPDIF3` optical input |
 | **8**      | IN1 (data)   | Bluetooth receiver I2S out| `AudioInputI2S` — BT audio |
+| **5**      | IN2 (data)   | ADC (PCM1808) DOUT        | `AudioInputI2S2` — analog line-in |
+| **4**      | BCLK2        | ADC BCK                   | I2S2 bit clock |
+| **3**      | LRCLK2       | ADC LRC                   | I2S2 word clock |
+| **33**     | MCLK2        | ADC SCK/SCKI              | I2S2 master clock (the PCM1808 needs it) |
 | USB port   | —            | Source device             | `AudioInputUSB` (USB sound card) |
 
 The Bluetooth input shares the I2S1 clocks (BCLK1 = 21, LRCLK1 = 20) with the
 L/R DAC. The Teensy is the I2S clock master on that bus, so the Bluetooth
 board must be wired to those same clock lines and run as an I2S slave.
+
+The analog line-in ADC lives on I2S2, where the Teensy is also clock master.
+A PCM1808 breakout works as-is: it defaults to I2S slave format and takes
+its system clock from MCLK2 (pin 33, 256×fs). Wire VCC (3.3V), GND, and the
+four signals per the table; line-level sources connect straight to the
+board's L/R inputs.
 
 ### Other
 

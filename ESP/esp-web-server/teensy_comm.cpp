@@ -34,10 +34,11 @@ static bool collectingFiles = false;
 // --- Message building ---
 
 static size_t buildMessage(char* out, size_t outSize, const char* command,
-                           const char* p1, const char* p2, const char* p3, const char* p4) {
+                           const char* p1, const char* p2, const char* p3, const char* p4,
+                           const char* p5) {
     size_t offset = strlcpy(out, command, outSize);
-    const char* params[4] = {p1, p2, p3, p4};
-    for (int i = 0; i < 4; i++) {
+    const char* params[5] = {p1, p2, p3, p4, p5};
+    for (int i = 0; i < 5; i++) {
         if (!params[i]) continue;
         if (offset < outSize - 1) {
             out[offset++] = ' ';
@@ -129,9 +130,9 @@ static bool enqueueMessage(const char* msg) {
 // --- Public send API ---
 
 bool sendToTeensy(const char* command, const char* param1, const char* param2,
-                  const char* param3, const char* param4) {
+                  const char* param3, const char* param4, const char* param5) {
     char message[TEENSY_MSG_MAX];
-    buildMessage(message, sizeof(message), command, param1, param2, param3, param4);
+    buildMessage(message, sizeof(message), command, param1, param2, param3, param4, param5);
     if (strcmp(command, CMD_RESET_EQ_FILTERS) == 0) {
         cancelSupersededEqCommands(message);
     }
@@ -139,13 +140,15 @@ bool sendToTeensy(const char* command, const char* param1, const char* param2,
 }
 
 bool sendToTeensy(const char* command, const String& param1,
-                  const String& param2, const String& param3, const String& param4) {
+                  const String& param2, const String& param3, const String& param4,
+                  const String& param5) {
     return sendToTeensy(
         command,
         param1.length() > 0 ? param1.c_str() : nullptr,
         param2.length() > 0 ? param2.c_str() : nullptr,
         param3.length() > 0 ? param3.c_str() : nullptr,
-        param4.length() > 0 ? param4.c_str() : nullptr
+        param4.length() > 0 ? param4.c_str() : nullptr,
+        param5.length() > 0 ? param5.c_str() : nullptr
     );
 }
 

@@ -58,6 +58,7 @@ struct InputGains {
     float bluetooth = 1.0f;
     float usb = 1.0f;
     float tone = 0.0f;
+    float analog = 1.0f;
 };
 
 // Represents a single preset

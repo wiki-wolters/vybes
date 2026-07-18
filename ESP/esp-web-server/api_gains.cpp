@@ -91,13 +91,15 @@ esp_err_t handlePutInputGains(PsychicRequest* request, JsonVariant& json) {
     float bluetooth = gains["bluetooth"] | current_config.inputGains.bluetooth;
     float usb = gains["usb"] | current_config.inputGains.usb;
     float tone = gains["tone"] | current_config.inputGains.tone;
+    float analog = gains["analog"] | current_config.inputGains.analog;
 
     current_config.inputGains.spdif = spdif;
     current_config.inputGains.bluetooth = bluetooth;
     current_config.inputGains.usb = usb;
     current_config.inputGains.tone = tone;
+    current_config.inputGains.analog = analog;
 
     scheduleConfigWrite();
-    sendToTeensy(CMD_SET_INPUT_GAINS, String(bluetooth, 2), String(spdif, 2), String(usb, 2), String(tone, 2));
+    sendToTeensy(CMD_SET_INPUT_GAINS, String(bluetooth, 2), String(spdif, 2), String(usb, 2), String(tone, 2), String(analog, 2));
     return request->reply(200, "application/json", "{\"success\":true}");
 }

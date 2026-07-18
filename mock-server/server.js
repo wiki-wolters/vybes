@@ -197,6 +197,7 @@ app.get('/status', async (req, res) => {
       spdifGain,
       usbGain,
       toneGain,
+      analogGain,
       volume
     ] = await Promise.all([
       getSetting('sub_gain'),
@@ -211,6 +212,7 @@ app.get('/status', async (req, res) => {
       getSetting('spdif_gain'),
       getSetting('usb_gain'),
       getSetting('tone_gain'),
+      getSetting('analog_gain'),
       getSetting('volume')
     ]);
 
@@ -243,7 +245,8 @@ app.get('/status', async (req, res) => {
         bluetooth: bluetoothGain ? parseFloat(bluetoothGain) : 0,
         spdif: spdifGain ? parseFloat(spdifGain) : 0,
         usb: usbGain ? parseFloat(usbGain) : 0,
-        tone: toneGain ? parseFloat(toneGain) : 0
+        tone: toneGain ? parseFloat(toneGain) : 0,
+        analog: analogGain ? parseFloat(analogGain) : 1
       },
       volume: volume ? parseInt(volume) : 50,
       currentPreset
@@ -380,7 +383,7 @@ app.put('/gains/speaker', async (req, res) => {
 });
 
 app.put('/gains/input', async (req, res) => {
-  const { bluetooth, spdif, usb, tone } = req.body;
+  const { bluetooth, spdif, usb, tone, analog } = req.body;
 
   if (bluetooth === undefined || spdif === undefined || usb === undefined || tone === undefined) {
     return res.status(400).json({ error: 'Missing gain values' });
@@ -391,6 +394,9 @@ app.put('/gains/input', async (req, res) => {
     await setSetting('spdif_gain', spdif.toString());
     await setSetting('usb_gain', usb.toString());
     await setSetting('tone_gain', tone.toString());
+    if (analog !== undefined) {
+      await setSetting('analog_gain', analog.toString());
+    }
 
     broadcast({ event: 'input_gains', gains: { bluetooth, spdif, usb, tone } });
     res.json({ success: true, gains: { bluetooth, spdif, usb, tone } });

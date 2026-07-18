@@ -17,6 +17,9 @@ esp_err_t handleGetStatus(PsychicRequest *request) {
     JsonObject inputGains = doc.createNestedObject("inputGains");
     inputGains["spdif"] = current_config.inputGains.spdif;
     inputGains["bluetooth"] = current_config.inputGains.bluetooth;
+    inputGains["usb"] = current_config.inputGains.usb;
+    inputGains["tone"] = current_config.inputGains.tone;
+    inputGains["analog"] = current_config.inputGains.analog;
     
     JsonObject mute = doc.createNestedObject("mute");
     mute["muted"] = current_config.muted;

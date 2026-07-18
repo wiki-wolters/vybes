@@ -64,11 +64,12 @@ void initTeensyComm();
 // Returns false only if the queue is full.
 bool sendToTeensy(const char* command, const char* param1 = nullptr,
                   const char* param2 = nullptr, const char* param3 = nullptr,
-                  const char* param4 = nullptr);
+                  const char* param4 = nullptr, const char* param5 = nullptr);
 
 // Overload for String parameters. Empty strings are treated as absent.
 bool sendToTeensy(const char* command, const String& param1,
-                  const String& param2 = "", const String& param3 = "", const String& param4 = "");
+                  const String& param2 = "", const String& param3 = "", const String& param4 = "",
+                  const String& param5 = "");
 
 // Helper functions for common command types
 void sendOnOffToTeensy(const char* command, bool on);
