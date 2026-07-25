@@ -280,9 +280,43 @@ static void test_empty_txt_fails_cleanly(void) {
 static void test_unsupported_extension_fails_cleanly(void) {
     uint16_t taps = 123;
     MemorySource src(std::string("0.5 0.25"));
-    float* coeffs = FIRLoader::loadCoefficients(src, String("coeffs.bin"), taps);
+    float* coeffs = FIRLoader::loadCoefficients(src, String("coeffs.dat"), taps);
     TEST_ASSERT_NULL(coeffs);
     TEST_ASSERT_EQUAL_UINT16(0, taps);
+}
+
+// --- BIN tests (raw little-endian float32, no header) ---
+
+static void test_valid_bin_loads_verbatim(void) {
+    const float expected[] = {0.5f, -0.25f, 2.0f, -1.5f};
+    std::vector<uint8_t> data;
+    for (float f : expected) putFloat(data, f);
+
+    uint16_t taps = 0;
+    std::unique_ptr<float[]> coeffs(load(data, "impulse.bin", taps));
+    TEST_ASSERT_NOT_NULL(coeffs.get());
+    TEST_ASSERT_EQUAL_UINT16(4, taps);
+    for (int i = 0; i < 4; i++) TEST_ASSERT_EQUAL_FLOAT(expected[i], coeffs[i]);
+}
+
+static void test_empty_bin_fails_cleanly(void) {
+    uint16_t taps = 123;
+    float* coeffs = load(std::vector<uint8_t>(), "empty.bin", taps);
+    TEST_ASSERT_NULL(coeffs);
+    TEST_ASSERT_EQUAL_UINT16(0, taps);
+}
+
+// --- reject-over-limit (the shared tap pool's refusal path) ---
+
+static void test_reject_over_limit_returns_requested_taps(void) {
+    std::vector<uint8_t> data;
+    for (int i = 0; i < 10; i++) putFloat(data, (float)i);
+    uint16_t taps = 0;
+    MemorySource src(buildWav(data));
+    float* coeffs = FIRLoader::loadCoefficients(src, String("long.wav"), taps, 4,
+                                                /*truncateToMax=*/false);
+    TEST_ASSERT_NULL(coeffs);
+    TEST_ASSERT_EQUAL_UINT16(10, taps); // reports what the file asked for
 }
 
 static void test_max_taps_limits_load(void) {
@@ -314,6 +348,9 @@ int main(int, char**) {
     RUN_TEST(test_txt_without_trailing_newline);
     RUN_TEST(test_empty_txt_fails_cleanly);
     RUN_TEST(test_unsupported_extension_fails_cleanly);
+    RUN_TEST(test_valid_bin_loads_verbatim);
+    RUN_TEST(test_empty_bin_fails_cleanly);
     RUN_TEST(test_max_taps_limits_load);
+    RUN_TEST(test_reject_over_limit_returns_requested_taps);
     return UNITY_END();
 }

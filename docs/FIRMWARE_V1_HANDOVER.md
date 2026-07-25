@@ -4,9 +4,11 @@ Status as of 2026-07-26: the WebUI, mock server and API contract for the
 8-output V1 architecture (docs/CHANNEL_ARCHITECTURE.md) are **done and
 verified**. The **ESP32-S3 work below is implemented** (compiles for
 esp32s3 + esp32dev; contract suite passes against the mock but has not yet
-been run against hardware). The Teensy firmware (Teensy/fir_filters) still
-implements the old 3-channel (left/right/sub) model - the remaining work
-order is the Teensy section, plus a hardware contract run.
+been run against hardware). The **Teensy work below is implemented too**
+(compiles for teensy41; all 62 host-native tests pass, including the V1
+protocol round-trip and the new crossover-response suite). Remaining:
+hardware bring-up, the benchmarks flagged at the end of the Teensy section,
+and a hardware contract run.
 
 ## Sources of truth (in priority order)
 
@@ -53,10 +55,10 @@ Decisions made during implementation that the Teensy work must honor:
   an output is disabled (effective mute = mute || !enabled); the Teensy
   needs no "enabled" concept.
 - **Legacy CMD_\* defines** (setDelays, setEq, setCrossoverFrequency, …)
-  are still in teensy_protocol.h only because Teensy/test/test_protocol
-  references them. Delete them when the Teensy protocol + tests move to
-  the setOutput* commands - the round-trip test asserts the two command
-  tables cover each other, so both sides change together.
+  were deleted from teensy_protocol.h when the Teensy protocol + tests
+  moved to the setOutput* commands (done, see below) - the round-trip test
+  asserts the two command tables cover each other, so both sides changed
+  together.
 - ESP constants: MAX_PRESETS 12 and PRESET_NAME_MAX_LEN 48 (the contract
   suite generates ~41-char names and holds ~8 presets concurrently);
   Teensy command queue QUEUE_SIZE 200 (a full V1 sync is ~180 commands).
@@ -102,32 +104,51 @@ Decisions made during implementation that the Teensy work must honor:
   references to concrete per-channel frequencies before sending - the Teensy
   never sees crossover ids or templates.
 
-## Teensy work
+## Teensy work (DONE 2026-07-26, benchmarks pending)
 
-- **Serial protocol** (teensy_protocol.h stays pure C; keep the host-native
-  round-trip tests): replace 3-channel commands with output-indexed ones:
-  `setOutputGain <ch> <dB>`, `setOutputMute <ch> <0|1>`, `setOutputInvert`,
-  `setOutputSource <ch> <l> <r>`, `setOutputDelay <ch> <us>`,
-  `setOutputHp/Lp <ch> <freq|0> <LR2|LR4|BW2>`, `setOutputEq <ch> <band>
-  <f> <q> <g>`, `setFir <ch> [file]`, `setFirEnabled <0|1>`,
-  `setInputEq <band> <f> <q> <g>` (shared input EQ), `setDelaysEnabled`.
-- **Audio graph** (fir_filters.ino): collapse the ~90 named objects into
-  arrays sized NUM_OUTPUTS built in a loop: per output a source AudioMixer4
-  (inputs: L bus, R bus post input-EQ), biquad cascade for HP+LP (up to LR4
-  each = 4 biquads), PEQProcessor (10 bands), AudioFilterFIRFloat,
-  AudioEffectDelay, output amp (gain/invert/mute). Octal I2S channels 0-7
-  map 1:1; SPDIF out mirrors outputs 0 and 1.
-- **Bypass moves inside the processing objects** (PEQProcessor already has
-  setBypass; give FIR/delay the same) - the patchcord connect/disconnect
-  arrays don't scale to 8 channels.
-- **FIR tap pool**: replace the per-channel MAX_FIR_TAPS cap with a shared
-  12288-tap pool allocated at load; reject loads that exceed it with an
-  error the ESP can relay.
-- **Input EQ stays shared** on the L/R buses ahead of the routing matrix
-  (peqLeft/peqRight, 15 bands, SPL sets) - unchanged behavior.
-- **Benchmarks before trusting the numbers** (flagged in the design doc):
-  AudioMemory sizing with 8 delay lines at the 20 ms cap, and CPU with 8
-  concurrent fast-convolution engines (current builds only ever ran 3).
+Implemented as planned; decisions made along the way:
+
+- **Serial protocol**: TeensyCommands.h + teensy_protocol.h moved to the
+  output-indexed V1 set (27 commands); the legacy 3-channel CMD_\* defines
+  are gone and test_protocol covers the new set. `setSpeakerGains` is still
+  accepted (the ESP's remote/button path sends it) but is a no-op on the
+  Teensy - global L/R/sub gains have no meaning in the 8-output model.
+  SerialCommandRouter MAX_COMMANDS went 24 -> 32.
+- **Audio graph** (fir_filters.ino): per-output arrays built in a loop
+  (source AudioMixer4 -> CrossoverFilter -> PEQProcessor (10 bands) ->
+  AudioFilterFIRFloat -> AudioEffectDelay -> AudioAmplifier), wired with
+  dynamic AudioConnection::connect(). Octal I2S 0-7 map 1:1; SPDIF mirrors
+  outputs 0/1. Outputs boot silent (source gains 0) until the ESP syncs.
+- **Crossover is a new float32 SVF cascade** (CrossoverFilter +
+  CrossoverMath, LR2/LR4/BW2), not the stock q31 AudioFilterBiquad - sub
+  crossovers live at 30-120Hz where the fixed-point biquad gets noisy, and
+  the firmware already runs its PEQ on the same (host-verified) Cytomic SVF
+  topology. test_crossover_math asserts -6dB/-3dB corners, slopes, and that
+  LR4 HP+LP sums flat.
+- **Bypass lives inside the objects**: crossover/PEQ/FIR pass through when
+  idle, delay bypass = delay time 0. No patchcord swapping remains.
+- **Gain/invert/mute/volume** collapse into the per-output amp; one smoothed
+  ramp (updateAudioVolume) covers all of them, so every change is click-free.
+- **FIR tap pool**: shared 12288-tap budget enforced at load. Oversized
+  loads are *rejected*, not truncated (FIRLoader grew a truncateToMax=false
+  mode), and the Teensy relays "ERROR FIR pool exceeded: <file> needs <n>
+  taps, <left> of 12288 left" over the ESP link. Each filter is cleared
+  before reload so peak heap holds one engine (~200KB at the pool limit),
+  not two. FIRLoader also gained `.bin` (raw float32) support to match the
+  ESP's size/4 tap estimate.
+- **FIR group-delay alignment stays active when user delays are toggled
+  off** - it corrects a FIR artifact, it isn't a user delay (the old
+  firmware's patchcord bypass dropped both).
+- **getFiles** replies with `"name size"` lines (the V1 listing the ESP
+  parses for tap estimates).
+- **Input EQ unchanged**: peqLeft/peqRight on the L/R buses, 15 bands,
+  boost compensation via the pre-EQ amps. The per-output PEQs have no boost
+  compensation - output gain staging is explicit in the channel strip.
+- **Benchmarks still required before trusting the numbers** (flagged in the
+  design doc): AudioMemory is sized at 480 blocks for the worst case (whole
+  pool on one output => ~139ms compensation on the other seven, plus the
+  20ms user cap); verify on hardware, along with CPU headroom for 8
+  concurrent fast-convolution engines (previous builds only ever ran 3).
 
 ## Suggested order
 

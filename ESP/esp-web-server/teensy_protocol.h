@@ -55,17 +55,6 @@
 #define CMD_SET_INPUT_GAINS "setInputGains"
 #define CMD_SET_VOLUME "setVolume"
 
-// Legacy 3-channel commands. The ESP no longer sends these; they stay
-// defined until the Teensy firmware and its protocol round-trip tests are
-// brought up to V1 (they reference the names).
-#define CMD_SET_CROSSOVER_FREQ "setCrossoverFrequency"
-#define CMD_SET_CROSSOVER_ENABLED "setCrossoverEnabled"
-#define CMD_SET_EQ_ENABLED "setEqEnabled"
-#define CMD_SET_EQ_FILTER "setEq"
-#define CMD_RESET_EQ_FILTERS "resetEqFilters"
-#define CMD_SET_DELAYS "setDelays"
-#define CMD_SET_DELAY_ENABLED "setDelayEnabled"
-
 // Signal Generator Commands
 #define CMD_SET_TONE "setTone"
 #define CMD_STOP_TONE "stopTone"

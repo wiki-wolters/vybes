@@ -20,7 +20,8 @@ private:
 // The caller is responsible for deleting the returned float array.
 // The method will read the entire file to determine the number of taps.
 // Returns a pointer to the coefficients array and sets actualTaps to the number of taps found.
-float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps, uint16_t maxTaps) {
+float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps, uint16_t maxTaps,
+                                   bool truncateToMax) {
     actualTaps = 0;
     if (filename == "") {
         logError("Filename cannot be empty.");
@@ -34,7 +35,7 @@ float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps, uint16
     }
 
     FileCoeffSource src(file);
-    float* coeffs = loadCoefficients(src, filename, actualTaps, maxTaps);
+    float* coeffs = loadCoefficients(src, filename, actualTaps, maxTaps, truncateToMax);
     file.close();
     return coeffs;
 }
@@ -43,7 +44,8 @@ float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps, uint16
 // Core implementation: reads the entire source once to count the taps, then
 // rewinds and loads them. See the header comment on the SD wrapper above.
 float* FIRLoader::loadCoefficients(CoeffSource& src, const String& filename,
-                                   uint16_t& actualTaps, uint16_t maxTaps) {
+                                   uint16_t& actualTaps, uint16_t maxTaps,
+                                   bool truncateToMax) {
     actualTaps = 0;
 
     // Count the number of coefficients first
@@ -157,6 +159,9 @@ float* FIRLoader::loadCoefficients(CoeffSource& src, const String& filename,
         if (line.length() > 0) {
             coeffCount++;
         }
+    } else if (filename.endsWith(".bin") || filename.endsWith(".BIN")) {
+        // Raw float32 taps, no header (matches the ESP's size/4 estimate)
+        coeffCount = src.size() / 4;
     } else {
         logError("Unsupported FIR file format: " + filename);
         return nullptr;
@@ -168,6 +173,14 @@ float* FIRLoader::loadCoefficients(CoeffSource& src, const String& filename,
     }
 
     if (maxTaps > 0 && coeffCount > maxTaps) {
+        if (!truncateToMax) {
+            // Report the requested size so the caller can relay it (capped
+            // to the out-parameter's range; the exact figure is in the log)
+            actualTaps = (coeffCount > 65535) ? 65535 : (uint16_t)coeffCount;
+            logError("File " + filename + " has " + String(coeffCount) +
+                     " taps but only " + String(maxTaps) + " fit - load rejected");
+            return nullptr;
+        }
         Serial.print("FIR Info: File has ");
         Serial.print(coeffCount);
         Serial.print(" taps, limiting to ");
@@ -197,6 +210,8 @@ float* FIRLoader::loadCoefficients(CoeffSource& src, const String& filename,
         loadedCount = loadFromWAV(src, coeffs, coeffCount);
     } else if (filename.endsWith(".txt") || filename.endsWith(".TXT")) {
         loadedCount = loadFromTXT(src, coeffs, coeffCount);
+    } else if (filename.endsWith(".bin") || filename.endsWith(".BIN")) {
+        loadedCount = loadFromBIN(src, coeffs, coeffCount);
     }
 
     if (loadedCount != coeffCount) {
@@ -495,6 +510,18 @@ int FIRLoader::loadFromWAV(CoeffSource& file, float* coeffs, int maxTaps) {
         Serial.println("). Loaded first samples only.");
     }
 
+    return coeffCount;
+}
+
+// --- loadFromBIN: raw little-endian float32 taps, no header ---
+int FIRLoader::loadFromBIN(CoeffSource& file, float* coeffs, int maxTaps) {
+    file.seek(0);
+    int coeffCount = 0;
+    while (coeffCount < maxTaps) {
+        float sample;
+        if (file.read((uint8_t*)&sample, 4) != 4) break;
+        coeffs[coeffCount++] = sample;
+    }
     return coeffCount;
 }
 

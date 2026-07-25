@@ -81,20 +81,30 @@ struct ProtocolCase {
 };
 
 static const ProtocolCase kProtocolCases[] = {
-    {CMD_SET_SPEAKER_GAINS, "1.00", "0.90", "0.80", nullptr, nullptr, 3},
-    {CMD_SET_INPUT_GAINS, "1.00", "0.50", "0.75", "1.00", "0.25", 5},
-    {CMD_SET_VOLUME, "0.75", nullptr, nullptr, nullptr, nullptr, 1},
-    {CMD_SET_CROSSOVER_FREQ, "80", nullptr, nullptr, nullptr, nullptr, 1},
-    {CMD_SET_CROSSOVER_ENABLED, "1", nullptr, nullptr, nullptr, nullptr, 1},
-    {CMD_SET_EQ_ENABLED, "1", nullptr, nullptr, nullptr, nullptr, 1},
-    {CMD_SET_EQ_FILTER, "3", "1000", "1.5", "-4.5", nullptr, 4},
-    {CMD_RESET_EQ_FILTERS, "0", nullptr, nullptr, nullptr, nullptr, 1},
-    {CMD_SET_FIR, "left", "DeskL.wav", nullptr, nullptr, nullptr, 2},
+    // Output-indexed V1 commands. setOutputEq and setInputEq carry the
+    // "<freq> <q> <gain>" triple as one builder parameter, exactly as the
+    // ESP sends it (config.cpp sendOutputEqPointToTeensy) - the router
+    // splits it back into separate arguments.
+    {CMD_SET_OUTPUT_GAIN, "3", "-4.50", nullptr, nullptr, nullptr, 2},
+    {CMD_SET_OUTPUT_MUTE, "3", "1", nullptr, nullptr, nullptr, 2},
+    {CMD_SET_OUTPUT_INVERT, "3", "0", nullptr, nullptr, nullptr, 2},
+    {CMD_SET_OUTPUT_SOURCE, "3", "0.7071", "0.7071", nullptr, nullptr, 3},
+    {CMD_SET_OUTPUT_DELAY, "3", "1500", nullptr, nullptr, nullptr, 2},
+    {CMD_SET_OUTPUT_HP, "3", "80.0", "LR4", nullptr, nullptr, 3},
+    {CMD_SET_OUTPUT_LP, "3", "2500.0", "BW2", nullptr, nullptr, 3},
+    {CMD_SET_OUTPUT_EQ, "3", "2", "1000.0 1.41 -4.50", nullptr, nullptr, 5},
+    {CMD_RESET_OUTPUT_EQ, "3", "4", nullptr, nullptr, nullptr, 2},
+    {CMD_SET_INPUT_EQ, "2", "1000.0 1.41 -4.50", nullptr, nullptr, nullptr, 4},
+    {CMD_RESET_INPUT_EQ, "5", nullptr, nullptr, nullptr, nullptr, 1},
+    {CMD_SET_INPUT_EQ_ENABLED, "1", nullptr, nullptr, nullptr, nullptr, 1},
+    {CMD_SET_FIR, "3", "DeskL.wav", nullptr, nullptr, nullptr, 2},
     {CMD_SET_FIR_ENABLED, "1", nullptr, nullptr, nullptr, nullptr, 1},
     {CMD_LOAD_FIR_FILES, nullptr, nullptr, nullptr, nullptr, nullptr, 0},
     {CMD_GET_FILES, nullptr, nullptr, nullptr, nullptr, nullptr, 0},
-    {CMD_SET_DELAYS, "100", "200", "300", nullptr, nullptr, 3},
-    {CMD_SET_DELAY_ENABLED, "1", nullptr, nullptr, nullptr, nullptr, 1},
+    {CMD_SET_DELAYS_ENABLED, "1", nullptr, nullptr, nullptr, nullptr, 1},
+    {CMD_SET_SPEAKER_GAINS, "1.00", "0.90", "0.80", nullptr, nullptr, 3},
+    {CMD_SET_INPUT_GAINS, "1.00", "0.50", "0.75", "1.00", "0.25", 5},
+    {CMD_SET_VOLUME, "0.75", nullptr, nullptr, nullptr, nullptr, 1},
     {CMD_SET_TONE, "1000.00", "50.00", nullptr, nullptr, nullptr, 2},
     {CMD_STOP_TONE, nullptr, nullptr, nullptr, nullptr, nullptr, 0},
     {CMD_SET_NOISE, "25.00", nullptr, nullptr, nullptr, nullptr, 1},
@@ -145,7 +155,7 @@ static void test_message_size_headroom(void) {
     TEST_ASSERT_TRUE(TEENSY_MSG_MAX + 1 < SerialCommandRouter::LINE_BUFFER_SIZE);
 }
 
-// A maximum-length untruncated message: "setFir right <63-char filename>"
+// A maximum-length untruncated message: "setFir <ch> <63-char filename>"
 // is the longest realistic command and must survive intact.
 static void test_max_length_setfir_round_trips(void) {
     std::string filename(63, 'f');
@@ -153,7 +163,7 @@ static void test_max_length_setfir_round_trips(void) {
     TestRig rig;
     resetCapture();
     bool truncated = true;
-    size_t len = roundTrip(rig, CMD_SET_FIR, "right", filename.c_str(),
+    size_t len = roundTrip(rig, CMD_SET_FIR, "7", filename.c_str(),
                            nullptr, nullptr, nullptr, &truncated);
     TEST_ASSERT_FALSE(truncated);
     TEST_ASSERT_TRUE(len < TEENSY_MSG_MAX); // fits the ESP buffer
@@ -168,7 +178,7 @@ static void test_overlong_message_truncates_but_keeps_framing(void) {
     std::string filename(100, 'g');
     char msg[TEENSY_MSG_MAX];
     bool truncated = false;
-    size_t len = teensyBuildMessage(msg, sizeof(msg), CMD_SET_FIR, "right",
+    size_t len = teensyBuildMessage(msg, sizeof(msg), CMD_SET_FIR, "7",
                                     filename.c_str(), nullptr, nullptr, nullptr, &truncated);
     TEST_ASSERT_TRUE(truncated);
     TEST_ASSERT_EQUAL_UINT32(TEENSY_MSG_MAX - 1, (uint32_t)len);
@@ -215,10 +225,10 @@ static void test_newline_framing_across_bursts(void) {
 static void test_carriage_return_tolerance(void) {
     TestRig rig;
     resetCapture();
-    std::string msg = std::string(CMD_SET_DELAYS) + " 100 200 300\r\n";
+    std::string msg = std::string(CMD_SET_OUTPUT_DELAY) + " 3 1500\r\n";
     rig.port.feedInput(msg.c_str(), msg.size());
     rig.router.loop();
-    assertDispatched(CMD_SET_DELAYS, 3);
+    assertDispatched(CMD_SET_OUTPUT_DELAY, 2);
 }
 
 // A line longer than the Teensy's 256-byte buffer is dropped without
