@@ -3,7 +3,9 @@
 #include "websocket.h"
 #include "utilities.h"
 #include "config.h"
+#include "templates.h"
 #include "api_helpers.h"
+#include "api_fir.h"
 #include "teensy_comm.h"
 #include <ArduinoJson.h>
 #include <string.h>
@@ -13,7 +15,7 @@
 esp_err_t handleGetPresets(PsychicRequest *request) {
     JsonDocument doc;
     JsonArray presets = doc.to<JsonArray>();
-    
+
     for (int i = 0; i < MAX_PRESETS; i++) {
         if (strlen(current_config.presets[i].name) > 0) {
             JsonObject preset = presets.createNestedObject();
@@ -27,6 +29,25 @@ esp_err_t handleGetPresets(PsychicRequest *request) {
     return request->reply(200, "application/json", response.c_str());
 }
 
+// GET /templates - the available preset templates
+esp_err_t handleGetTemplates(PsychicRequest *request) {
+    JsonDocument doc;
+    JsonArray templates = doc.to<JsonArray>();
+    for (int i = 0; i < template_count(); i++) {
+        const TemplateInfo& info = template_info(i);
+        JsonObject entry = templates.createNestedObject();
+        entry["id"] = info.id;
+        entry["label"] = info.label;
+        entry["description"] = info.description;
+        entry["outputsUsed"] = info.outputsUsed;
+    }
+
+    String response;
+    serializeJson(doc, response);
+    return request->reply(200, "application/json", response.c_str());
+}
+
+// GET /preset?name= - the full V1 preset shape (docs/CHANNEL_ARCHITECTURE.md)
 esp_err_t handleGetPreset(PsychicRequest *request) {
     if (!request->hasParam("name")) {
         return request->reply(400, "text/plain", "Missing required parameters");
@@ -41,57 +62,57 @@ esp_err_t handleGetPreset(PsychicRequest *request) {
     const Preset& preset = current_config.presets[presetIndex];
     JsonDocument doc;
     doc["name"] = preset.name;
-
     doc["isCurrent"] = presetIndex == current_config.active_preset_index;
-    
-    // Add delay information
-    JsonObject speakerDelays = doc.createNestedObject("speakerDelays");
-    speakerDelays["left"] = preset.delay.left;
-    speakerDelays["right"] = preset.delay.right;
-    speakerDelays["sub"] = preset.delay.sub;
-    doc["isSpeakerDelayEnabled"] = preset.delayEnabled;
+    doc["template"] = preset.templateId;
 
-    // Add crossover information
-    doc["crossoverFreq"] = preset.crossoverFreq;
-    doc["isCrossoverEnabled"] = preset.crossoverEnabled;
-
-    // Add EQ and FIR filter states
-    doc["isFIREnabled"] = preset.FIRFiltersEnabled;
-    
-    // Add FIR filter filenames
-    doc["firLeft"] = preset.FIRFilters.left;
-    doc["firRight"] = preset.FIRFilters.right;
-    doc["firSub"] = preset.FIRFilters.sub;
-
-    doc["isPreferenceEQEnabled"] = preset.EQEnabled;
-    JsonArray preferenceCurve = doc.createNestedArray("preferenceEQ");
-    for(int i=0; i < MAX_PEQ_SETS; i++) {
-        if(preset.preference_curve[i].spl != -1) {
-            JsonObject peqSet = preferenceCurve.createNestedObject();
-            peqSet["spl"] = preset.preference_curve[i].spl;
-            JsonArray peqs = peqSet.createNestedArray("peqs");
-            for(int j=0; j < preset.preference_curve[i].num_points; j++) {
-                JsonObject peq = peqs.createNestedObject();
-                peq["freq"] = preset.preference_curve[i].points[j].freq;
-                peq["gain"] = preset.preference_curve[i].points[j].gain;
-                peq["q"] = preset.preference_curve[i].points[j].q;
-            }
-        }
+    JsonArray crossovers = doc.createNestedArray("crossovers");
+    for (int i = 0; i < preset.num_crossovers; i++) {
+        crossover_to_json(preset.crossovers[i], crossovers.createNestedObject());
     }
+
+    input_eq_to_json(preset.inputEq, doc.createNestedObject("inputEq"));
+
+    JsonArray outputs = doc.createNestedArray("outputs");
+    for (int i = 0; i < NUM_OUTPUTS; i++) {
+        output_to_json(preset.outputs[i], outputs.createNestedObject());
+    }
+
+    doc["delaysEnabled"] = preset.delaysEnabled;
+    doc["firEnabled"] = preset.firEnabled;
+
+    JsonObject firPool = doc.createNestedObject("firPool");
+    firPool["total"] = FIR_TAP_POOL;
+    firPool["used"] = firPoolUsed(preset);
 
     String response;
     serializeJson(doc, response);
     return request->reply(200, "application/json", response.c_str());
 }
 
+// POST /preset?action=create&name=&template= - creates a preset from a
+// template (default 2.1). Does not change the active preset.
 esp_err_t handlePostPresetCreate(PsychicRequest *request) {
     if (!request->hasParam("name")) {
         return request->reply(400, "text/plain", "Missing required parameters");
     }
     String presetName = request->getParam("name")->value();
+    String templateId = request->hasParam("template") && request->getParam("template")->value().length() > 0
+                            ? request->getParam("template")->value()
+                            : DEFAULT_TEMPLATE_ID;
 
     if (presetName.length() == 0 || presetName.length() >= PRESET_NAME_MAX_LEN) {
         return request->reply(400, "text/plain", "Preset name too long");
+    }
+
+    bool knownTemplate = false;
+    for (int i = 0; i < template_count(); i++) {
+        if (templateId == template_info(i).id) {
+            knownTemplate = true;
+            break;
+        }
+    }
+    if (!knownTemplate) {
+        return request->reply(400, "text/plain", "Unknown template");
     }
 
     if (find_preset_by_name(presetName.c_str()) != -1) {
@@ -103,27 +124,10 @@ esp_err_t handlePostPresetCreate(PsychicRequest *request) {
         return request->reply(507, "text/plain", "Maximum number of presets reached");
     }
 
-    // Create new preset with default values
     ConfigLock lock;
-    current_config.presets[newIndex] = Preset();
-    strcpy(current_config.presets[newIndex].name, presetName.c_str());
-    
-    // Initialize delay and crossover settings
-    current_config.presets[newIndex].delayEnabled = false;
-    current_config.presets[newIndex].crossoverFreq = 80;
-    current_config.presets[newIndex].crossoverEnabled = false;
-    current_config.presets[newIndex].EQEnabled = false;
-    current_config.presets[newIndex].FIRFiltersEnabled = false;
-    
-    // Initialize the first PEQ set for both curves as this is what the UI expects
-    current_config.presets[newIndex].preference_curve[0].spl = 0;
-    current_config.presets[newIndex].preference_curve[0].num_points = 3;
-
-    // Set first 3 default points
-    for (int k = 0; k < 3; k++) {
-        current_config.presets[newIndex].preference_curve[0].points[k] = PEQPoint();
-        current_config.presets[newIndex].preference_curve[0].points[k].freq = 100 * pow(10, k);
-    }
+    Preset& preset = current_config.presets[newIndex];
+    build_preset_from_template(preset, templateId.c_str());
+    strlcpy(preset.name, presetName.c_str(), sizeof(preset.name));
 
     scheduleConfigWrite();
     return request->reply(201, "application/json", "{}");
@@ -158,7 +162,8 @@ esp_err_t handlePostPresetCopy(PsychicRequest *request) {
     ConfigLock lock;
     current_config.presets[destIndex] = current_config.presets[sourceIndex];
     // Update the name
-    strcpy(current_config.presets[destIndex].name, destName.c_str());
+    strlcpy(current_config.presets[destIndex].name, destName.c_str(),
+            sizeof(current_config.presets[destIndex].name));
 
     scheduleConfigWrite();
     return request->reply(201, "application/json", "{}");
@@ -187,7 +192,8 @@ esp_err_t handlePutPresetRename(PsychicRequest *request) {
 
     // Update name in config
     ConfigLock lock;
-    strcpy(current_config.presets[presetIndex].name, newName.c_str());
+    strlcpy(current_config.presets[presetIndex].name, newName.c_str(),
+            sizeof(current_config.presets[presetIndex].name));
     scheduleConfigWrite();
 
     return request->reply(200, "application/json", "{}");
@@ -275,32 +281,33 @@ esp_err_t handlePutActivePreset(PsychicRequest *request) {
     return request->reply(200, "application/json", "{}");
 }
 
+// PUT /preset/delay/enabled - the preset-level master delay toggle
 esp_err_t handlePutPresetDelayEnabled(PsychicRequest *request) {
     if (!request->hasParam("preset_name") || !request->hasParam("enabled")) {
         return request->reply(400, "text/plain", "Missing required parameters");
     }
     String presetName = request->getParam("preset_name")->value();
     String state = request->getParam("enabled")->value();
-    
+
     if (state != "on" && state != "off") {
         return request->reply(400, "text/plain", "Invalid state. Must be 'on' or 'off'");
     }
-    
+
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
         return request->reply(404, "text/plain", "Preset not found");
     }
-    
+
     bool enabled = (state == "on");
     {
         ConfigLock lock;
-        current_config.presets[presetIndex].delayEnabled = enabled;
+        current_config.presets[presetIndex].delaysEnabled = enabled;
         scheduleConfigWrite();
     }
 
     // Send command to Teensy only when editing the active preset
     if (presetIndex == current_config.active_preset_index) {
-        sendOnOffToTeensy(CMD_SET_DELAY_ENABLED, enabled);
+        sendOnOffToTeensy(CMD_SET_DELAYS_ENABLED, enabled);
     }
 
     // Prepare response
@@ -311,57 +318,3 @@ esp_err_t handlePutPresetDelayEnabled(PsychicRequest *request) {
     doc["enabled"] = enabled;
     return sendJsonAndBroadcast(request, doc);
 }
-
-esp_err_t handlePutPresetDelayNamed(PsychicRequest *request) {
-    if (!request->hasParam("preset_name") || !request->hasParam("speaker") || !request->hasParam("value")) {
-        return request->reply(400, "text/plain", "Missing required parameters");
-    }
-    String presetName = request->getParam("preset_name")->value();
-    String speaker = request->getParam("speaker")->value();
-    String delayUsStr = request->getParam("value")->value();
-    
-    if (speaker != "left" && speaker != "right" && speaker != "sub") {
-        return request->reply(400, "text/plain", "Invalid speaker. Must be 'left', 'right', or 'sub'");
-    }
-    
-    float delayUs = delayUsStr.toFloat();
-    if (delayUs < 0 || delayUs > 20000.0f) {
-        return request->reply(400, "text/plain", "Delay must be between 0 and 20,000 microseconds");
-    }
-    
-    int presetIndex = find_preset_by_name(presetName.c_str());
-    if (presetIndex == -1) {
-        return request->reply(404, "text/plain", "Preset not found");
-    }
-    
-    // Update the delay in the config
-    {
-        ConfigLock lock;
-        if (speaker == "left") {
-            current_config.presets[presetIndex].delay.left = delayUs;
-        } else if (speaker == "right") {
-            current_config.presets[presetIndex].delay.right = delayUs;
-        } else if (speaker == "sub") {
-            current_config.presets[presetIndex].delay.sub = delayUs;
-        }
-        scheduleConfigWrite();
-    }
-
-    // Send command to Teensy only when editing the active preset
-    if (presetIndex == current_config.active_preset_index) {
-        sendToTeensy(CMD_SET_DELAYS,
-            String((int)current_config.presets[presetIndex].delay.left),
-            String((int)current_config.presets[presetIndex].delay.right),
-            String((int)current_config.presets[presetIndex].delay.sub));
-    }
-
-    // Prepare response
-    JsonDocument doc;
-    doc["messageType"] = "delayChanged";
-    doc["presetName"] = presetName;
-    doc["status"] = "ok";
-    doc["speaker"] = speaker;
-    doc["delayUs"] = delayUs;
-    return sendJsonAndBroadcast(request, doc);
-}
-

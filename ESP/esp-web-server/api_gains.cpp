@@ -4,41 +4,6 @@
 #include "api_helpers.h"
 #include "teensy_comm.h"
 
-esp_err_t handleGetPresetGains(PsychicRequest* request) {
-    if (!request->hasParam("preset_name")) {
-        return request->reply(400, "application/json", "{\"error\":\"Missing preset_name\"}");
-    }
-    String presetName = request->getParam("preset_name")->value();
-    if (presetName.isEmpty()) {
-        return request->reply(400, "application/json", "{\"error\":\"Missing preset_name\"}");
-    }
-
-    JsonDocument doc;
-    if (config_get_preset_gains(presetName, doc)) {
-        String output;
-        serializeJson(doc, output);
-        return request->reply(200, "application/json", output.c_str());
-    }
-    return request->reply(404, "application/json", "{\"error\":\"Preset not found\"}");
-}
-
-esp_err_t handleSetPresetGains(PsychicRequest* request, JsonVariant& json) {
-    if (!request->hasParam("preset_name")) {
-        return request->reply(400, "application/json", "{\"error\":\"Missing preset_name\"}");
-    }
-    String presetName = request->getParam("preset_name")->value();
-    if (presetName.isEmpty()) {
-        return request->reply(400, "application/json", "{\"error\":\"Missing preset_name\"}");
-    }
-
-    JsonObject gains = json.as<JsonObject>();
-    if (config_set_preset_gains(presetName, gains)) {
-        // It might be necessary to send the updated gains to the Teensy here if the preset is active
-        return request->reply(200, "application/json", "{\"success\":true}");
-    }
-    return request->reply(404, "application/json", "{\"error\":\"Preset not found\"}");
-}
-
 esp_err_t handlePutSpeakerGain(PsychicRequest* request) {
     if (request->hasParam("speaker") && request->hasParam("value")) {
         String speaker = request->getParam("speaker")->value();

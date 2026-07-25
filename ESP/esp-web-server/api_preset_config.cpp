@@ -8,10 +8,10 @@
 #include <string.h>
 #include <ArduinoJson.h>
 
-// Find the preference-curve set for spl=0, creating it in a free slot if
-// needed. Returns nullptr when all slots are taken by other SPL values.
+// Find the input-EQ set for spl=0, creating it in a free slot if needed.
+// Returns nullptr when all slots are taken by other SPL values.
 static PEQSet* getOrCreateSpl0Set(Preset* preset) {
-    PEQSet* sets = preset->preference_curve;
+    PEQSet* sets = preset->inputEq.sets;
     for (int i = 0; i < MAX_PEQ_SETS; i++) {
         if (sets[i].spl == 0) {
             return &sets[i];
@@ -33,77 +33,171 @@ static float clampf(float value, float lo, float hi) {
     return value;
 }
 
+// 409 for a write to a locked crossover point without confirm=true. This one
+// is JSON (not text/plain): the UI dispatches on the locked flag.
+static esp_err_t replyLocked(PsychicRequest* request, const char* id) {
+    JsonDocument doc;
+    char message[96];
+    snprintf(message, sizeof(message),
+             "Crossover point %s is locked. Re-send with confirm=true to apply.", id);
+    doc["error"] = message;
+    doc["locked"] = true;
+    String buffer;
+    serializeJson(doc, buffer);
+    return request->reply(409, "application/json", buffer.c_str());
+}
+
+// 409 for an edit that would leave a floor-protected output's high-pass
+// below its hpFloor (the driver-protection backstop).
+static esp_err_t replyFloorViolation(PsychicRequest* request, const Preset& preset, int outputIndex) {
+    const Output& output = preset.outputs[outputIndex];
+    char message[128];
+    snprintf(message, sizeof(message), "Output %d (%s) requires a high-pass at or above %u Hz",
+             outputIndex + 1, output.label, output.hpFloor);
+    return request->reply(409, "text/plain", message);
+}
+
+// Re-send the resolved HP/LP frequencies of every active-preset output that
+// references the given crossover point.
+static void syncCrossoverReferencesToTeensy(int presetIndex, const Preset& preset, const char* id) {
+    if (presetIndex != current_config.active_preset_index) {
+        return;
+    }
+    for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
+        const Output& output = preset.outputs[ch];
+        if (strcmp(output.hp.xover, id) == 0 || strcmp(output.lp.xover, id) == 0) {
+            sendOutputFiltersToTeensy(ch, preset);
+        }
+    }
+}
+
+// PUT /preset/crossover?preset_name=&id=&frequency=&confirm=
+// Points are shared: every output filter referencing the id follows.
+// Safety semantics:
+//  - locked points reject writes without confirm=true (409, locked flag)
+//  - a change may never leave an output's HP below its hpFloor (409)
 esp_err_t handlePutPresetCrossover(PsychicRequest *request) {
-    if (!request->hasParam("preset_name") || !request->hasParam("frequency")) {
+    if (!request->hasParam("preset_name") || !request->hasParam("frequency") || !request->hasParam("id")) {
         return request->reply(400, "text/plain", "Missing required parameters");
     }
     String presetName = request->getParam("preset_name")->value();
-    String freqStr = request->getParam("frequency")->value();
-    unsigned int freq = freqStr.toInt();
-
-    // Validate frequency range (20Hz to 20kHz)
-    if (freq < 20 || freq > 20000) {
-        return request->reply(400, "text/plain", "Crossover frequency must be between 20 and 20000 Hz");
-    }
+    String id = request->getParam("id")->value();
+    int freq = request->getParam("frequency")->value().toInt();
+    bool confirmed = request->hasParam("confirm") && request->getParam("confirm")->value() == "true";
 
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
         return request->reply(404, "text/plain", "Preset not found");
     }
+    Preset* preset = &current_config.presets[presetIndex];
 
-    // Update the preset
+    int xoverIndex = find_crossover_by_id(*preset, id.c_str());
+    if (xoverIndex == -1) {
+        return request->reply(404, "text/plain", "Crossover point not found");
+    }
+    CrossoverPoint& point = preset->crossovers[xoverIndex];
+
+    if (freq < point.min || freq > point.max) {
+        char message[80];
+        snprintf(message, sizeof(message), "Crossover frequency must be between %u and %u Hz",
+                 point.min, point.max);
+        return request->reply(400, "text/plain", message);
+    }
+
+    if (point.locked && !confirmed) {
+        return replyLocked(request, point.id);
+    }
+
     {
         ConfigLock lock;
-        current_config.presets[presetIndex].crossoverFreq = freq;
+        uint16_t previousFreq = point.freq;
+        point.freq = freq;
+        int violation = hp_floor_violation(*preset);
+        if (violation >= 0) {
+            point.freq = previousFreq;
+            return replyFloorViolation(request, *preset, violation);
+        }
         scheduleConfigWrite();
     }
 
-    // Only push to the Teensy when the edited preset is the active one
-    if (presetIndex == current_config.active_preset_index) {
-        sendFloatToTeensy(CMD_SET_CROSSOVER_FREQ, freq);
-    }
+    syncCrossoverReferencesToTeensy(presetIndex, *preset, point.id);
 
     JsonDocument doc;
     doc["messageType"] = "crossoverChanged";
     doc["presetName"] = presetName;
     doc["status"] = "ok";
+    doc["id"] = id;
     doc["crossoverFreq"] = freq;
     return sendJsonAndBroadcast(request, doc);
 }
 
+// PUT /preset/crossover/enabled?preset_name=&id=&enabled=&confirm=
+// Bypass/enable a crossover point: toggles mode between 'xover' and 'off' on
+// every filter that references it (the xover ref is kept so re-enabling
+// restores it). Locked points need confirm=true; hpFloor blocks bypassing a
+// protective HP entirely, confirmed or not.
 esp_err_t handlePutPresetCrossoverEnabled(PsychicRequest *request) {
-    if (!request->hasParam("preset_name") || !request->hasParam("enabled")) {
+    if (!request->hasParam("preset_name") || !request->hasParam("id")) {
         return request->reply(400, "text/plain", "Missing required parameters");
     }
     String presetName = request->getParam("preset_name")->value();
-    String state = request->getParam("enabled")->value();
+    String id = request->getParam("id")->value();
+    String state = request->hasParam("enabled") ? request->getParam("enabled")->value() : "";
+    bool confirmed = request->hasParam("confirm") && request->getParam("confirm")->value() == "true";
 
     if (state != "on" && state != "off") {
         return request->reply(400, "text/plain", "Invalid state");
     }
-
     bool enabled = (state == "on");
 
     int presetIndex = find_preset_by_name(presetName.c_str());
     if (presetIndex == -1) {
         return request->reply(404, "text/plain", "Preset not found");
     }
+    Preset* preset = &current_config.presets[presetIndex];
 
-    // Update the preset
+    int xoverIndex = find_crossover_by_id(*preset, id.c_str());
+    if (xoverIndex == -1) {
+        return request->reply(404, "text/plain", "Crossover point not found");
+    }
+
+    if (preset->crossovers[xoverIndex].locked && !confirmed) {
+        return replyLocked(request, preset->crossovers[xoverIndex].id);
+    }
+
     {
         ConfigLock lock;
-        current_config.presets[presetIndex].crossoverEnabled = enabled;
+        // Flip every referencing filter, remembering the previous modes so a
+        // floor violation can undo the whole toggle
+        FilterMode previousModes[NUM_OUTPUTS][2];
+        for (int i = 0; i < NUM_OUTPUTS; i++) {
+            FilterSection* sections[2] = {&preset->outputs[i].hp, &preset->outputs[i].lp};
+            for (int s = 0; s < 2; s++) {
+                previousModes[i][s] = sections[s]->mode;
+                if (strcmp(sections[s]->xover, id.c_str()) == 0 &&
+                    sections[s]->mode != FilterMode::Manual) {
+                    sections[s]->mode = enabled ? FilterMode::Xover : FilterMode::Off;
+                }
+            }
+        }
+        int violation = hp_floor_violation(*preset);
+        if (violation >= 0) {
+            for (int i = 0; i < NUM_OUTPUTS; i++) {
+                preset->outputs[i].hp.mode = previousModes[i][0];
+                preset->outputs[i].lp.mode = previousModes[i][1];
+            }
+            return replyFloorViolation(request, *preset, violation);
+        }
         scheduleConfigWrite();
     }
 
-    if (presetIndex == current_config.active_preset_index) {
-        sendOnOffToTeensy(CMD_SET_CROSSOVER_ENABLED, enabled);
-    }
+    syncCrossoverReferencesToTeensy(presetIndex, *preset, id.c_str());
 
     JsonDocument doc;
     doc["messageType"] = "crossoverEnabledChanged";
     doc["presetName"] = presetName;
     doc["status"] = "ok";
+    doc["id"] = id;
     doc["crossoverEnabled"] = enabled;
     return sendJsonAndBroadcast(request, doc);
 }
@@ -163,13 +257,13 @@ esp_err_t handlePutPresetEQPoints(PsychicRequest *request, JsonVariant &json) {
         // Queue only the points that actually changed...
         for (int i = 0; i < count; i++) {
             if (changed[i]) {
-                sendEqPointToTeensy(i, target_set->points[i]);
+                sendInputEqPointToTeensy(i, target_set->points[i]);
             }
         }
         // ...and disable every band beyond the active points with a single command
         char fromIndex[8];
         snprintf(fromIndex, sizeof(fromIndex), "%d", count);
-        sendToTeensy(CMD_RESET_EQ_FILTERS, fromIndex);
+        sendToTeensy(CMD_RESET_INPUT_EQ, fromIndex);
     }
 
     JsonDocument responseDoc;
@@ -234,7 +328,7 @@ esp_err_t handlePutPresetEQPoint(PsychicRequest *request, JsonVariant &json) {
     }
 
     if (presetIndex == current_config.active_preset_index) {
-        sendEqPointToTeensy(id, target_set->points[id]);
+        sendInputEqPointToTeensy(id, target_set->points[id]);
     }
 
     return request->reply(204);
@@ -264,12 +358,12 @@ esp_err_t handlePutPresetEQEnabled(PsychicRequest *request) {
     bool enabled = (state == "on");
     {
         ConfigLock lock;
-        preset->EQEnabled = enabled;
+        preset->inputEq.enabled = enabled;
         scheduleConfigWrite();
     }
 
     if (presetIndex == current_config.active_preset_index) {
-        sendOnOffToTeensy(CMD_SET_EQ_ENABLED, enabled);
+        sendOnOffToTeensy(CMD_SET_INPUT_EQ_ENABLED, enabled);
     }
 
     JsonDocument doc;

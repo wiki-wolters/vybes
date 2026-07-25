@@ -5,12 +5,13 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
-// Outgoing queue. A full preset sync is ~30 commands.
-#define QUEUE_SIZE 40
+// Outgoing queue. A full V1 preset sync is ~180 commands worst case
+// (8 outputs x up to 19 commands each, plus input EQ and globals).
+#define QUEUE_SIZE 200
 // Incoming line assembly
 #define RX_LINE_MAX 160
-// Cached SD file list (newline separated)
-#define FIR_CACHE_MAX 768
+// Cached SD file list (newline separated "name size" lines)
+#define FIR_CACHE_MAX 1024
 // Heartbeat: detects a Teensy reboot even if its boot event was missed
 #define PING_INTERVAL_MS 5000
 
@@ -59,46 +60,73 @@ static size_t buildMessage(char* out, size_t outSize, const char* command,
 
 // --- Coalescing ---
 
-// Extract the first two space-separated tokens of a message.
-static void firstTokens(const char* msg, char* t1, size_t s1, char* t2, size_t s2) {
-    size_t i = 0, j = 0;
-    while (msg[i] && msg[i] != ' ' && msg[i] != '\n' && j < s1 - 1) t1[j++] = msg[i++];
-    t1[j] = '\0';
-    t2[0] = '\0';
-    if (msg[i] == ' ') {
+// Extract up to three leading space-separated tokens of a message.
+static void firstTokens(const char* msg, char* t1, size_t s1, char* t2, size_t s2,
+                        char* t3, size_t s3) {
+    char* tokens[3] = {t1, t2, t3};
+    size_t sizes[3] = {s1, s2, s3};
+    size_t i = 0;
+    for (int t = 0; t < 3; t++) {
+        size_t j = 0;
+        while (msg[i] && msg[i] != ' ' && msg[i] != '\n' && j < sizes[t] - 1) {
+            tokens[t][j++] = msg[i++];
+        }
+        tokens[t][j] = '\0';
+        if (msg[i] != ' ') {
+            for (int rest = t + 1; rest < 3; rest++) tokens[rest][0] = '\0';
+            break;
+        }
         i++;
-        j = 0;
-        while (msg[i] && msg[i] != ' ' && msg[i] != '\n' && j < s2 - 1) t2[j++] = msg[i++];
-        t2[j] = '\0';
     }
 }
 
-// Two messages coalesce when they set the same parameter: same command, and
-// for per-slot commands (setEq, setFir) the same slot argument. The newer
-// message replaces the older one in place, preserving queue order.
-static bool coalesces(const char* a, const char* b) {
-    char a1[24], a2[24], b1[24], b2[24];
-    firstTokens(a, a1, sizeof(a1), a2, sizeof(a2));
-    firstTokens(b, b1, sizeof(b1), b2, sizeof(b2));
-    if (strcmp(a1, b1) != 0) return false;
-    if (strcmp(a1, CMD_SET_EQ_FILTER) == 0 || strcmp(a1, CMD_SET_FIR) == 0) {
-        return strcmp(a2, b2) == 0;
+// How many leading tokens (including the command itself) identify the
+// parameter a message sets. Channel-indexed commands are keyed by their
+// channel/band argument, setOutputEq by channel AND band.
+static int coalesceKeyTokens(const char* command) {
+    if (strcmp(command, CMD_SET_OUTPUT_EQ) == 0) return 3;
+    if (strncmp(command, "setOutput", 9) == 0 ||
+        strcmp(command, CMD_RESET_OUTPUT_EQ) == 0 ||
+        strcmp(command, CMD_SET_FIR) == 0 ||
+        strcmp(command, CMD_SET_INPUT_EQ) == 0) {
+        return 2;
     }
+    return 1;
+}
+
+// Two messages coalesce when they set the same parameter: same command and
+// same identifying arguments. The newer message replaces the older one in
+// place, preserving queue order.
+static bool coalesces(const char* a, const char* b) {
+    char a1[24], a2[24], a3[24], b1[24], b2[24], b3[24];
+    firstTokens(a, a1, sizeof(a1), a2, sizeof(a2), a3, sizeof(a3));
+    firstTokens(b, b1, sizeof(b1), b2, sizeof(b2), b3, sizeof(b3));
+    if (strcmp(a1, b1) != 0) return false;
+    int keyTokens = coalesceKeyTokens(a1);
+    if (keyTokens >= 2 && strcmp(a2, b2) != 0) return false;
+    if (keyTokens >= 3 && strcmp(a3, b3) != 0) return false;
     return true;
 }
 
-// A "resetEqFilters N" cancels any queued setEq for a band >= N, so a stale
-// pending point can't re-enable a band the reset just disabled.
+// An EQ reset cancels any queued point-set it supersedes, so a stale pending
+// point can't re-enable a band the reset just disabled:
+//   "resetInputEq N"      cancels "setInputEq band…"      with band >= N
+//   "resetOutputEq CH N"  cancels "setOutputEq CH band…"  with band >= N
 static void cancelSupersededEqCommands(const char* resetMsg) {
-    char t1[24], t2[24];
-    firstTokens(resetMsg, t1, sizeof(t1), t2, sizeof(t2));
-    int fromIndex = atoi(t2);
+    char t1[24], t2[24], t3[24];
+    firstTokens(resetMsg, t1, sizeof(t1), t2, sizeof(t2), t3, sizeof(t3));
+    bool perOutput = strcmp(t1, CMD_RESET_OUTPUT_EQ) == 0;
+    const char* setCommand = perOutput ? CMD_SET_OUTPUT_EQ : CMD_SET_INPUT_EQ;
+    int fromIndex = atoi(perOutput ? t3 : t2);
     for (uint8_t i = 0; i < queueCount; i++) {
         QueuedCommand& e = cmdQueue[(queueHead + i) % QUEUE_SIZE];
         if (e.msg[0] == '\0') continue;
-        char e1[24], e2[24];
-        firstTokens(e.msg, e1, sizeof(e1), e2, sizeof(e2));
-        if (strcmp(e1, CMD_SET_EQ_FILTER) == 0 && atoi(e2) >= fromIndex) {
+        char e1[24], e2[24], e3[24];
+        firstTokens(e.msg, e1, sizeof(e1), e2, sizeof(e2), e3, sizeof(e3));
+        if (strcmp(e1, setCommand) != 0) continue;
+        if (perOutput) {
+            if (strcmp(e2, t2) == 0 && atoi(e3) >= fromIndex) e.msg[0] = '\0';
+        } else if (atoi(e2) >= fromIndex) {
             e.msg[0] = '\0'; // cancel; drained slots are skipped
         }
     }
@@ -131,7 +159,7 @@ bool sendToTeensy(const char* command, const char* param1, const char* param2,
     char message[TEENSY_MSG_MAX];
     buildMessage(message, sizeof(message), command, param1, param2, param3, param4, param5);
     xSemaphoreTake(queueMutex, portMAX_DELAY);
-    if (strcmp(command, CMD_RESET_EQ_FILTERS) == 0) {
+    if (strcmp(command, CMD_RESET_INPUT_EQ) == 0 || strcmp(command, CMD_RESET_OUTPUT_EQ) == 0) {
         cancelSupersededEqCommands(message);
     }
     bool queued = enqueueMessage(message);
@@ -183,6 +211,33 @@ size_t copyCachedFirFiles(char* dst, size_t dstSize) {
     size_t len = strlcpy(dst, firFilesCache, dstSize);
     xSemaphoreGive(firCacheMutex);
     return len;
+}
+
+long getCachedFirFileSize(const char* name) {
+    size_t nameLen = strlen(name);
+    if (nameLen == 0) return -1;
+
+    long size = -1;
+    xSemaphoreTake(firCacheMutex, portMAX_DELAY);
+    const char* line = firFilesCache;
+    while (*line != '\0') {
+        const char* end = strchr(line, '\n');
+        size_t lineLen = end ? (size_t)(end - line) : strlen(line);
+        // A line is "name" (old firmware) or "name size"; filenames can't
+        // contain spaces (enforced on upload), so the first token is the name
+        if (lineLen > nameLen && strncmp(line, name, nameLen) == 0 && line[nameLen] == ' ') {
+            size = strtol(line + nameLen + 1, nullptr, 10);
+            if (size < 0) size = -1;
+            break;
+        }
+        if (lineLen == nameLen && strncmp(line, name, nameLen) == 0) {
+            break; // listed without a size: known file, unknown size
+        }
+        if (!end) break;
+        line = end + 1;
+    }
+    xSemaphoreGive(firCacheMutex);
+    return size;
 }
 
 void requestFirFilesRefresh() {

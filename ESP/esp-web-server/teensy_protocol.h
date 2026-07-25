@@ -10,27 +10,59 @@
 #include <stddef.h>
 #include <string.h>
 
-// Speaker and Gain Commands
-#define CMD_SET_SPEAKER_GAINS "setSpeakerGains"
-#define CMD_SET_INPUT_GAINS "setInputGains"
-#define CMD_SET_VOLUME "setVolume"
+// Output channel commands (V1, docs/CHANNEL_ARCHITECTURE.md). Channels are
+// 0-7; the ESP resolves crossover references to concrete frequencies before
+// sending, so the Teensy only ever sees per-channel numbers.
+//   setOutputGain   <ch> <dB>
+//   setOutputMute   <ch> <0|1>
+//   setOutputInvert <ch> <0|1>
+//   setOutputSource <ch> <lGain> <rGain>
+//   setOutputDelay  <ch> <us>
+//   setOutputHp     <ch> <freq> <LR2|LR4|BW2>   (freq 0 = off)
+//   setOutputLp     <ch> <freq> <LR2|LR4|BW2>
+//   setOutputEq     <ch> <band> <freq> <q> <gain>
+//   resetOutputEq   <ch> <fromBand>             (disables bands >= fromBand)
+#define CMD_SET_OUTPUT_GAIN "setOutputGain"
+#define CMD_SET_OUTPUT_MUTE "setOutputMute"
+#define CMD_SET_OUTPUT_INVERT "setOutputInvert"
+#define CMD_SET_OUTPUT_SOURCE "setOutputSource"
+#define CMD_SET_OUTPUT_DELAY "setOutputDelay"
+#define CMD_SET_OUTPUT_HP "setOutputHp"
+#define CMD_SET_OUTPUT_LP "setOutputLp"
+#define CMD_SET_OUTPUT_EQ "setOutputEq"
+#define CMD_RESET_OUTPUT_EQ "resetOutputEq"
 
-// Crossover Commands
-#define CMD_SET_CROSSOVER_FREQ "setCrossoverFrequency"
-#define CMD_SET_CROSSOVER_ENABLED "setCrossoverEnabled"
+// Shared input EQ (L/R buses ahead of the routing matrix)
+//   setInputEq        <band> <freq> <q> <gain>
+//   resetInputEq      <fromBand>
+//   setInputEqEnabled <0|1>
+#define CMD_SET_INPUT_EQ "setInputEq"
+#define CMD_RESET_INPUT_EQ "resetInputEq"
+#define CMD_SET_INPUT_EQ_ENABLED "setInputEqEnabled"
 
-// EQ Commands
-#define CMD_SET_EQ_ENABLED "setEqEnabled"
-#define CMD_SET_EQ_FILTER "setEq"
-#define CMD_RESET_EQ_FILTERS "resetEqFilters"
-
-// FIR Filter Commands
+// FIR Filter Commands. setFir is channel-indexed: "setFir <ch> <file>",
+// bare "setFir <ch>" clears. setFirEnabled is preset-level.
 #define CMD_SET_FIR "setFir"
 #define CMD_SET_FIR_ENABLED "setFirEnabled"
 #define CMD_LOAD_FIR_FILES "loadFirFiles"
 #define CMD_GET_FILES "getFiles"
 
-// Delay Commands
+// Preset-level master delay toggle: setDelaysEnabled <0|1>
+#define CMD_SET_DELAYS_ENABLED "setDelaysEnabled"
+
+// Speaker and Gain Commands
+#define CMD_SET_SPEAKER_GAINS "setSpeakerGains" // legacy remote/button path
+#define CMD_SET_INPUT_GAINS "setInputGains"
+#define CMD_SET_VOLUME "setVolume"
+
+// Legacy 3-channel commands. The ESP no longer sends these; they stay
+// defined until the Teensy firmware and its protocol round-trip tests are
+// brought up to V1 (they reference the names).
+#define CMD_SET_CROSSOVER_FREQ "setCrossoverFrequency"
+#define CMD_SET_CROSSOVER_ENABLED "setCrossoverEnabled"
+#define CMD_SET_EQ_ENABLED "setEqEnabled"
+#define CMD_SET_EQ_FILTER "setEq"
+#define CMD_RESET_EQ_FILTERS "resetEqFilters"
 #define CMD_SET_DELAYS "setDelays"
 #define CMD_SET_DELAY_ENABLED "setDelayEnabled"
 
@@ -49,7 +81,7 @@
 #define CMD_PING "ping"
 
 // Maximum length of a single message, including trailing newline and null.
-// Longest realistic message is "setFir right <63-char filename>\n".
+// Longest realistic message is "setFir <ch> <63-char filename>\n".
 #define TEENSY_MSG_MAX 80
 
 // strlcpy with BSD semantics (returns the length of src, i.e. the intended

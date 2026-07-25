@@ -2,9 +2,11 @@
 
 Status as of 2026-07-26: the WebUI, mock server and API contract for the
 8-output V1 architecture (docs/CHANNEL_ARCHITECTURE.md) are **done and
-verified**. The ESP firmware (ESP/esp-web-server) and Teensy firmware
-(Teensy/fir_filters) still implement the old 3-channel (left/right/sub)
-model. This doc is the work order for bringing both up to V1.
+verified**. The **ESP32-S3 work below is implemented** (compiles for
+esp32s3 + esp32dev; contract suite passes against the mock but has not yet
+been run against hardware). The Teensy firmware (Teensy/fir_filters) still
+implements the old 3-channel (left/right/sub) model - the remaining work
+order is the Teensy section, plus a hardware contract run.
 
 ## Sources of truth (in priority order)
 
@@ -34,7 +36,33 @@ model. This doc is the work order for bringing both up to V1.
 | Crossover types | LR2, LR4, BW2 |
 | Templates | 2.0, 2.1 (default), 2.2, 2way-sub, 3way, 3way-2sub |
 
-## ESP32-S3 work
+## ESP32-S3 work (DONE 2026-07-26)
+
+Decisions made during implementation that the Teensy work must honor:
+
+- **FILES listing carries sizes**: the `getFiles` reply lines become
+  `"name size"` (bytes). The ESP parses the optional second token
+  (teensy_comm.cpp getCachedFirFileSize) and degrades gracefully to
+  name-only lines from older firmware (files then count as the default
+  tap estimate).
+- **Tap estimation on the ESP** (api_fir.cpp): `.bin` = size/4 (raw
+  float32 taps), any text format = size/12 (~bytes per coefficient line),
+  unknown/unsized file = flat 2048 (matches the mock). The Teensy's
+  load-time pool check remains the authoritative backstop.
+- **Disabled output = muted**: the ESP sends `setOutputMute <ch> 1` when
+  an output is disabled (effective mute = mute || !enabled); the Teensy
+  needs no "enabled" concept.
+- **Legacy CMD_\* defines** (setDelays, setEq, setCrossoverFrequency, …)
+  are still in teensy_protocol.h only because Teensy/test/test_protocol
+  references them. Delete them when the Teensy protocol + tests move to
+  the setOutput* commands - the round-trip test asserts the two command
+  tables cover each other, so both sides change together.
+- ESP constants: MAX_PRESETS 12 and PRESET_NAME_MAX_LEN 48 (the contract
+  suite generates ~41-char names and holds ~8 presets concurrently);
+  Teensy command queue QUEUE_SIZE 200 (a full V1 sync is ~180 commands).
+- Hardware contract runs: the FIR-pool tests only pass if the SD card
+  carries files whose derived tap counts match the mock's map
+  (fir_room1/2 = 4096 taps, fir_speaker1/2 = 2048, fir_flat = 1024).
 
 - **config.h/cpp rework**: replace the left/right/sub structs with
   `Output outputs[NUM_OUTPUTS]`, `CrossoverPoint crossovers[4]`, inputEq
@@ -62,9 +90,8 @@ model. This doc is the work order for bringing both up to V1.
     409, including crossover bypass and per-output filter edits, regardless
     of confirm.
   - FIR loads exceeding the tap pool → 409 with `{used, total}`. Tap counts
-    per file come from Teensy-reported file sizes (fast-conv float32: taps ≈
-    fileSize/4 for .bin; text formats need line counting — decide format
-    handling here).
+    per file come from Teensy-reported file sizes (decided: see the
+    "name size" listing + tap estimation notes above).
   - Structural edits (source, hp/lp, output enabled) flip template→"custom"
     and report `"template": "custom"` in the outputChanged payload once.
 - **Websocket broadcasts**: outputChanged {output, changes, firPool?,

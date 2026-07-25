@@ -8,6 +8,7 @@
 #include "api_fir.h"
 #include "api_presets.h"
 #include "api_preset_config.h"
+#include "api_outputs.h"
 #include "api_volume.h"
 #include "api_helpers.h"
 #include "teensy_comm.h"
@@ -168,17 +169,15 @@ static void registerRoutes(PsychicHttpServer &s, PsychicWebSocketHandler *ws) {
     s.on("/volume", HTTP_PUT, handlePutVolume);
 
     // API Routes - Speaker & Input gains (JSON-body endpoints use the
-    // PsychicJsonRequestCallback overload)
+    // PsychicJsonRequestCallback overload). /gains/speaker survives for the
+    // remote/button path until that is reworked; the UI no longer calls it.
     s.on("/gains/speaker", HTTP_PUT, handlePutSpeakerGain);
     s.on("/gains/input", HTTP_PUT, (PsychicJsonRequestCallback)handlePutInputGains);
-
-    s.on("/preset/gains", HTTP_GET, handleGetPresetGains);
-    s.on("/preset/gains", HTTP_PUT, (PsychicJsonRequestCallback)handleSetPresetGains);
 
     // API Routes - FIR Filter Management
     s.on("/fir/files", HTTP_GET, handleGetFirFiles);
     s.on("/preset/fir/enabled", HTTP_PUT, handlePutPresetFirEnabled);
-    s.on("/preset/fir", HTTP_PUT, handlePutPresetFir);
+    s.on("/preset/fir/pool", HTTP_GET, handleGetPresetFirPool);
 
     // API Routes - Signal Generator
     s.on("/generate/tone/stop", HTTP_PUT, handlePutToneStop);
@@ -192,16 +191,28 @@ static void registerRoutes(PsychicHttpServer &s, PsychicWebSocketHandler *ws) {
     s.on("/preset/eq/enabled", HTTP_PUT, handlePutPresetEQEnabled);
     s.on("/preset/crossover/enabled", HTTP_PUT, handlePutPresetCrossoverEnabled);
 
-    // API Routes - Speaker Configuration
-    s.on("/preset/delay", HTTP_PUT, handlePutPresetDelayNamed);
-
+    // API Routes - Input EQ (shared L/R preference curve + SPL sets)
     s.on("/preset/eq", HTTP_PUT, (PsychicJsonRequestCallback)handlePutPresetEQPoints);
     s.on("/preset/eq/point", HTTP_PUT, (PsychicJsonRequestCallback)handlePutPresetEQPoint);
 
-    // API Routes - Crossover
+    // API Routes - Crossover points
     s.on("/preset/crossover", HTTP_PUT, handlePutPresetCrossover);
 
+    // API Routes - Output channels (V1)
+    s.on("/preset/output/label", HTTP_PUT, handlePutOutputLabel);
+    s.on("/preset/output/enabled", HTTP_PUT, handlePutOutputEnabled);
+    s.on("/preset/output/source", HTTP_PUT, (PsychicJsonRequestCallback)handlePutOutputSource);
+    s.on("/preset/output/gain", HTTP_PUT, handlePutOutputGain);
+    s.on("/preset/output/mute", HTTP_PUT, handlePutOutputMute);
+    s.on("/preset/output/invert", HTTP_PUT, handlePutOutputInvert);
+    s.on("/preset/output/delay", HTTP_PUT, handlePutOutputDelay);
+    s.on("/preset/output/filter", HTTP_PUT, (PsychicJsonRequestCallback)handlePutOutputFilter);
+    s.on("/preset/output/eq", HTTP_PUT, (PsychicJsonRequestCallback)handlePutOutputEq);
+    s.on("/preset/output/eq/point", HTTP_PUT, (PsychicJsonRequestCallback)handlePutOutputEqPoint);
+    s.on("/preset/output/fir", HTTP_PUT, handlePutOutputFir);
+
     // API Routes - Preset Management
+    s.on("/templates", HTTP_GET, handleGetTemplates);
     s.on("/presets", HTTP_GET, handleGetPresets);
     s.on("/preset", HTTP_DELETE, handleDeletePreset);
     s.on("/preset", HTTP_GET, handleGetPreset);

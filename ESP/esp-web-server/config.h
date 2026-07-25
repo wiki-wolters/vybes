@@ -5,16 +5,32 @@
 #include <ArduinoJson.h>
 
 // --- Constants ---
-#define CONFIG_CURRENT_VERSION 2
+// V1 is a clean break for the 8-output ESP32-S3 + Teensy hardware
+// (docs/CHANNEL_ARCHITECTURE.md); there is no migration path from the old
+// 3-channel config. The version field and migrate_config hook exist from
+// day one so future schema changes migrate in place instead of silently
+// reinterpreting fields.
+#define CONFIG_CURRENT_VERSION 1
 
-// Version history:
-// 1 - Initial version
-// 2 - Added version field and PEQ support
+#define MAX_PRESETS 12
+// Long enough for the contract suite's generated "contract-test-…" names
+#define PRESET_NAME_MAX_LEN 48
 
-#define MAX_PRESETS 8
+// These must match mock-server/templates.js and the contract suite
+#define NUM_OUTPUTS 8
+#define MAX_CROSSOVER_POINTS 4
+#define MAX_OUTPUT_PEQ 10
 #define MAX_PEQ_SETS 3
-#define MAX_PEQ_POINTS 15
-#define PRESET_NAME_MAX_LEN 16
+#define MAX_PEQ_POINTS 15   // input EQ points per SPL set
+#define FIR_TAP_POOL 12288  // taps shared across all outputs
+#define MAX_DELAY_US 20000
+#define OUTPUT_GAIN_MIN_DB -40.0
+#define OUTPUT_GAIN_MAX_DB 10.0
+
+#define OUTPUT_LABEL_MAX_LEN 24
+#define XOVER_ID_MAX_LEN 15
+#define TEMPLATE_ID_MAX_LEN 15
+#define FIR_FILENAME_LEN 63
 
 extern const char* CONFIG_FILE;
 
@@ -34,17 +50,69 @@ struct PEQSet {
     int num_points = 0; // Number of active PEQ points in this set
 };
 
-// Represents delay settings for speakers
-struct Delay {
-    float left = 0.0f;
-    float right = 0.0f;
-    float sub = 0.0f;
+// Shared input EQ (preference curve + SPL sets) applied to the L/R buses
+// ahead of the routing matrix
+struct InputEq {
+    bool enabled = false;
+    PEQSet sets[MAX_PEQ_SETS];
 };
 
-struct FIRFilter {
-    String left = "";
-    String right = "";
-    String sub = "";
+// A named, shared crossover point. Output filters reference it by id so one
+// edit moves every filter that uses it. locked points reject writes without
+// confirm=true (driver protection); min/max bound the frequency.
+struct CrossoverPoint {
+    char id[XOVER_ID_MAX_LEN + 1] = "";
+    uint16_t freq = 80;
+    char type[4] = "LR4"; // LR2 | LR4 | BW2
+    bool locked = false;
+    uint16_t min = 20;
+    uint16_t max = 20000;
+};
+
+enum class FilterMode : uint8_t { Off, Xover, Manual };
+
+// One HP or LP section of an output. In Xover mode the frequency and type
+// come from the referenced crossover point; the xover id is kept while the
+// mode is Off so re-enabling restores the reference. freq/type only apply
+// in Manual mode.
+struct FilterSection {
+    FilterMode mode = FilterMode::Off;
+    char xover[XOVER_ID_MAX_LEN + 1] = "";
+    double freq = 0.0; // double: echoed verbatim by the API, see Output
+    char type[4] = "LR4";
+};
+
+// One of the eight output channels.
+// source/gainDb/delayUs are doubles: the API echoes these values back
+// verbatim and the contract suite compares some of them exactly, so they
+// must survive a JSON round-trip without float32 noise (0.7f != 0.7).
+struct Output {
+    char label[OUTPUT_LABEL_MAX_LEN + 1] = "";
+    bool enabled = false;
+    double sourceLeft = 0.0;
+    double sourceRight = 0.0;
+    FilterSection hp;
+    FilterSection lp;
+    uint16_t hpFloor = 0; // Hz, 0 = none; see hp_floor_violation
+    PEQPoint peq[MAX_OUTPUT_PEQ];
+    int num_peq = 0;
+    char fir[FIR_FILENAME_LEN + 1] = ""; // filename on the Teensy SD, "" = none
+    double delayUs = 0.0;
+    double gainDb = 0.0;
+    bool invert = false;
+    bool mute = false;
+};
+
+// Represents a single preset (V1 schema)
+struct Preset {
+    char name[PRESET_NAME_MAX_LEN] = "";
+    char templateId[TEMPLATE_ID_MAX_LEN + 1] = "2.1"; // or "custom" once edited beyond it
+    CrossoverPoint crossovers[MAX_CROSSOVER_POINTS];
+    int num_crossovers = 0;
+    InputEq inputEq;
+    Output outputs[NUM_OUTPUTS];
+    bool delaysEnabled = false;
+    bool firEnabled = false;
 };
 
 struct SpeakerGains {
@@ -61,20 +129,6 @@ struct InputGains {
     float analog = 1.0f;
 };
 
-// Represents a single preset
-struct Preset {
-    char name[PRESET_NAME_MAX_LEN] = "Default";
-    SpeakerGains gains;
-    Delay delay;
-    bool delayEnabled = false;
-    uint16_t crossoverFreq = 80;
-    bool crossoverEnabled = false;
-    PEQSet preference_curve[MAX_PEQ_SETS];
-    bool EQEnabled = false;
-    bool FIRFiltersEnabled = false;
-    FIRFilter FIRFilters;
-};
-
 // Main configuration structure that holds everything
 struct Config {
     uint8_t version = CONFIG_CURRENT_VERSION; // Current version of the config structure
@@ -85,8 +139,10 @@ struct Config {
     int toneVolume = 0;
     int noiseVolume = 0;
 
-    // System states from old systemSettings
-    bool muted = false; 
+    // System states from old systemSettings. speakerGains is legacy-only:
+    // the remote/button and /gains/speaker still use it until they are
+    // reworked onto output gains.
+    bool muted = false;
     int mutePercent = 0;            // 0-100
     SpeakerGains speakerGains;
     InputGains inputGains;
@@ -137,23 +193,51 @@ bool load_config();
  */
 bool load_config_from(const char* path);
 
-
-
-
 /**
  * @brief Resets the configuration to its default state and saves to LittleFS.
  */
 void reset_config_to_defaults();
 
+// --- V1 preset model helpers (shared by the API handlers and Teensy sync) ---
+
+// Index of the crossover point with the given id, or -1
+int find_crossover_by_id(const Preset& preset, const char* id);
+
+// The concrete frequency of a filter section: the manual value, the
+// referenced crossover's frequency, or 0 when off/unresolvable.
+double resolve_filter_freq(const Preset& preset, const FilterSection& section);
+
+// The filter's slope type as a string: the crossover point's type in Xover
+// mode, the section's own type in Manual mode.
+const char* resolve_filter_type(const Preset& preset, const FilterSection& section);
+
+// Driver-protection backstop: returns the index of the first enabled output
+// whose effective high-pass sits below its hpFloor, or -1 when the preset is
+// safe. Must hold no matter which endpoint made the edit.
+int hp_floor_violation(const Preset& preset);
+
+// Structural edits flip the preset's template to "custom" so the UI stops
+// rendering the template's simple view. Returns true when this call flipped
+// it (callers report "template":"custom" in that payload only).
+bool flip_template_to_custom(Preset& preset);
+
+// JSON serialization of model pieces (shared by GET /preset and broadcasts)
+void filter_to_json(const FilterSection& section, JsonObject obj);
+void crossover_to_json(const CrossoverPoint& point, JsonObject obj);
+void output_to_json(const Output& output, JsonObject obj);
+void input_eq_to_json(const InputEq& eq, JsonObject obj);
+
 void updateTeensyWithActivePresetParameters();
 
-// Queue a single EQ point for the Teensy (band index + freq/q/gain)
-void sendEqPointToTeensy(int index, const PEQPoint& point);
+// Queue a single shared-input-EQ point for the Teensy (band index + freq/q/gain)
+void sendInputEqPointToTeensy(int index, const PEQPoint& point);
+
+// Queue a single output-PEQ point for the Teensy
+void sendOutputEqPointToTeensy(int channel, int band, const PEQPoint& point);
+
+// Queue the resolved HP+LP sections of one output for the Teensy
+void sendOutputFiltersToTeensy(int channel, const Preset& preset);
 
 void loadFirFilters();
-
-bool config_get_preset_gains(const String& presetName, JsonDocument& doc);
-bool config_set_preset_gains(const String& presetName, const JsonObject& gains);
-
 
 #endif // CONFIG_H

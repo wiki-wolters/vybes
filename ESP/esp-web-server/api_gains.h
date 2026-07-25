@@ -5,8 +5,8 @@
 #include <ArduinoJson.h>
 #include <PsychicHttp.h>
 
-esp_err_t handleGetPresetGains(PsychicRequest* request);
-esp_err_t handleSetPresetGains(PsychicRequest* request, JsonVariant& json);
+// /gains/speaker survives for the remote/button path until that is
+// reworked onto output gains; the UI no longer calls it.
 esp_err_t handlePutSpeakerGain(PsychicRequest* request);
 esp_err_t handlePutInputGains(PsychicRequest* request, JsonVariant& json);
 

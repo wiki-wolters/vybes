@@ -32,12 +32,14 @@ int find_empty_preset_slot() {
 }
 
 esp_err_t sendJsonAndBroadcast(PsychicRequest* request, const JsonDocument& doc) {
-    char buffer[256];
-    size_t len = serializeJson(doc, buffer, sizeof(buffer));
-    if (len > 0 && len < sizeof(buffer)) {
-        broadcastWebSocket(buffer);
-        return request->reply(200, "application/json", buffer);
+    // Heap-backed String: V1 payloads (outputChanged with a source/filter
+    // object, firPool, template) can exceed a small stack buffer
+    String buffer;
+    serializeJson(doc, buffer);
+    if (buffer.length() > 0) {
+        broadcastWebSocket(buffer.c_str());
+        return request->reply(200, "application/json", buffer.c_str());
     }
-    DebugSerial.println("Error serializing JSON response: buffer too small.");
-    return request->reply(500, "application/json", "{\"error\":\"Response buffer too small\"}");
+    DebugSerial.println("Error serializing JSON response");
+    return request->reply(500, "application/json", "{\"error\":\"Failed to serialize response\"}");
 }
