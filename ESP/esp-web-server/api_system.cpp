@@ -33,13 +33,45 @@ esp_err_t handleGetStatus(PsychicRequest *request) {
     noise["volume"] = current_config.noiseVolume;
     
     doc["currentPreset"] = current_config.presets[current_config.active_preset_index].name;
-    
+    doc["deviceName"] = current_config.deviceName;
+
     // Add master volume
     doc["volume"] = current_config.volume; // Add this line
 
     String response;
     serializeJson(doc, response);
     return request->reply(200, "application/json", response.c_str());
+}
+
+// PUT /device/name?name= - rename the device so several Vybes units can
+// share one network. Applies to mDNS immediately; the standalone-AP SSID
+// and setup-portal name pick it up on the next boot. The TLS certificate
+// must be re-issued for the new hostname (ESP/make-certs.sh <name>.local)
+// or HTTPS clients will see a name mismatch.
+esp_err_t handlePutDeviceName(PsychicRequest *request) {
+    if (!request->hasParam("name")) {
+        return request->reply(400, "text/plain", "Missing name parameter");
+    }
+    String name = request->getParam("name")->value();
+
+    if (!is_valid_device_name(name.c_str())) {
+        return request->reply(400, "text/plain",
+            "Device name must be 1-24 characters of lowercase letters, digits and dashes, not starting or ending with a dash");
+    }
+
+    {
+        ConfigLock lock;
+        strlcpy(current_config.deviceName, name.c_str(), sizeof(current_config.deviceName));
+        scheduleConfigWrite();
+    }
+
+    // Re-announce "<name>.local" right away
+    startMdns();
+
+    JsonDocument doc;
+    doc["messageType"] = "deviceNameChanged";
+    doc["deviceName"] = current_config.deviceName;
+    return sendJsonAndBroadcast(request, doc);
 }
 
 esp_err_t handlePutMute(PsychicRequest *request) {

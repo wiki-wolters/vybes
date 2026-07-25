@@ -164,6 +164,7 @@ static esp_err_t handleRestoreComplete(PsychicRequest *request) {
 static void registerRoutes(PsychicHttpServer &s, PsychicWebSocketHandler *ws) {
     // API Routes - System Status
     s.on("/status", HTTP_GET, handleGetStatus);
+    s.on("/device/name", HTTP_PUT, handlePutDeviceName);
     s.on("/mute/percent", HTTP_PUT, handlePutMutePercent);
     s.on("/mute", HTTP_PUT, handlePutMute);
     s.on("/volume", HTTP_PUT, handlePutVolume);

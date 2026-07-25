@@ -130,7 +130,8 @@ db.serialize(() => {
         ['usb_gain', '1.0'],
         ['tone_gain', '0.0'],
         ['analog_gain', '1.0'],
-        ['volume', '50']
+        ['volume', '50'],
+        ['device_name', 'vybes']
       ];
 
       const stmt = db.prepare("INSERT OR IGNORE INTO system_settings (key, value) VALUES (?, ?)");
@@ -381,7 +382,8 @@ app.get('/status', async (req, res) => {
       usbGain,
       toneGain,
       analogGain,
-      volume
+      volume,
+      deviceName
     ] = await Promise.all([
       getSetting('sub_gain'),
       getSetting('left_gain'),
@@ -396,7 +398,8 @@ app.get('/status', async (req, res) => {
       getSetting('usb_gain'),
       getSetting('tone_gain'),
       getSetting('analog_gain'),
-      getSetting('volume')
+      getSetting('volume'),
+      getSetting('device_name')
     ]);
 
     // Get current preset
@@ -433,6 +436,7 @@ app.get('/status', async (req, res) => {
         volume: noiseVolume ? parseInt(noiseVolume) : 0
       },
       currentPreset,
+      deviceName: deviceName || 'vybes',
       volume: volume ? parseInt(volume) : 50
     });
   } catch (error) {
@@ -451,6 +455,28 @@ app.put('/volume', async (req, res) => {
     await setSetting('volume', volume.toString());
     broadcast({ messageType: 'volumeChanged', volume });
     res.json({ success: true, volume });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Device name - api_system.cpp handlePutDeviceName. One DNS label: the ESP
+// uses it for "<name>.local" mDNS and the standalone AP SSID so several
+// Vybes devices can share a network.
+app.put('/device/name', async (req, res) => {
+  const name = req.query.name;
+  const valid = typeof name === 'string' && /^[a-z0-9]([a-z0-9-]{0,22}[a-z0-9])?$/.test(name);
+  if (!valid) {
+    return res.status(400).json({
+      error: 'Device name must be 1-24 characters of lowercase letters, digits and dashes, not starting or ending with a dash'
+    });
+  }
+
+  try {
+    await setSetting('device_name', name);
+    const payload = { messageType: 'deviceNameChanged', deviceName: name };
+    broadcast(payload);
+    res.json(payload);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

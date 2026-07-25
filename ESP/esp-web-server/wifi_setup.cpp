@@ -2,12 +2,13 @@
 // project headers) anything that pulls in ESPAsyncWebServer.h - see wifi_setup.h.
 #include "globals.h"
 #include "wifi_setup.h"
+#include "config.h" // deviceName only; pulls in no server headers
 #define WM_MDNS 1
 #include <WiFiManager.h>
 
 // Standalone AP (no router, e.g. in the car): the phone joins this network
-// and reaches the web UI at http://192.168.4.1. WPA2 needs >= 8 characters.
-static const char *STANDALONE_SSID = "Vybes";
+// and reaches the web UI at http://192.168.4.1. The SSID is the device name
+// so several Vybes units stay distinguishable. WPA2 needs >= 8 characters.
 static const char *STANDALONE_PASSWORD = "vybes-dsp";
 
 static bool standaloneRequested = false;
@@ -33,17 +34,23 @@ bool setupWiFi() {
         "<button>Standalone mode (no router)</button></form><br/>");
     wifiManager.setWebServerCallback([&wifiManager]() {
         wifiManager.server->on("/standalone", [&wifiManager]() {
-            wifiManager.server->send(200, "text/html",
+            String page =
                 "<html><body><h1>Standalone mode</h1>"
-                "<p>Join the <b>Vybes</b> WiFi network (password: <b>vybes-dsp</b>), "
+                "<p>Join the <b>";
+            page += current_config.deviceName;
+            page += "</b> WiFi network (password: <b>vybes-dsp</b>), "
                 "keep the connection when your phone warns there is no internet, "
                 "then open <a href='http://192.168.4.1'>http://192.168.4.1</a>.</p>"
-                "</body></html>");
+                "</body></html>";
+            wifiManager.server->send(200, "text/html", page);
             standaloneRequested = true;
         });
     });
 
-    if (wifiManager.autoConnect("Vybes-Config")) {
+    // Setup-portal SSID: "<deviceName>-config" keeps two unconfigured
+    // devices tellable apart during first-time setup
+    String portalSsid = String(current_config.deviceName) + "-config";
+    if (wifiManager.autoConnect(portalSsid.c_str())) {
         DebugSerial.println("WiFi connected!");
         return false;
     }
@@ -61,7 +68,7 @@ bool setupWiFi() {
         // Plain AP, deliberately without a captive-portal DNS server: phones
         // must see their internet probes fail so they keep routing internet
         // traffic (Spotify etc.) over cellular while joined to this network.
-        WiFi.softAP(STANDALONE_SSID, STANDALONE_PASSWORD);
+        WiFi.softAP(current_config.deviceName, STANDALONE_PASSWORD);
         DebugSerial.print("Standalone AP up: ");
         DebugSerial.println(WiFi.softAPIP());
         return true;

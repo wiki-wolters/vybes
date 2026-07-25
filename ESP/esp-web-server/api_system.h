@@ -4,6 +4,7 @@
 #include <PsychicHttp.h>
 
 esp_err_t handleGetStatus(PsychicRequest *request);
+esp_err_t handlePutDeviceName(PsychicRequest *request);
 esp_err_t handlePutMute(PsychicRequest *request);
 esp_err_t handlePutMutePercent(PsychicRequest *request);
 

@@ -30,6 +30,23 @@ void config_unlock() {
     }
 }
 
+bool is_valid_device_name(const char* name) {
+    size_t len = name != nullptr ? strlen(name) : 0;
+    if (len == 0 || len > DEVICE_NAME_MAX_LEN) {
+        return false;
+    }
+    if (name[0] == '-' || name[len - 1] == '-') {
+        return false;
+    }
+    for (size_t i = 0; i < len; i++) {
+        char c = name[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // --- V1 preset model helpers ---
 
 int find_crossover_by_id(const Preset& preset, const char* id) {
@@ -258,12 +275,13 @@ static void preset_to_json(const Preset& preset, JsonObject obj) {
 
 // --- Load / save ---
 
-// Schema migration hook. V1 is the first schema for this hardware so there
-// is nothing to migrate yet; future versions add their upgrade steps here
-// (mutating doc in place) before the normal parse runs.
+// Schema migration hook: upgrade steps mutate doc in place before the
+// normal parse runs. Returns false for versions that can't be migrated.
 static bool migrate_config(JsonDocument& doc, uint8_t fromVersion) {
     (void)doc;
-    return fromVersion == CONFIG_CURRENT_VERSION;
+    // v1 -> v2: deviceName was added; absent keys parse to the default,
+    // so no doc rewrite is needed.
+    return fromVersion >= 1 && fromVersion <= CONFIG_CURRENT_VERSION;
 }
 
 bool load_config() {
@@ -316,6 +334,11 @@ bool load_config_from(const char* path) {
 
     // Load global settings
     current_config.version = CONFIG_CURRENT_VERSION;
+    // A corrupt/hand-edited name must stay a valid DNS label
+    const char* deviceName = doc["deviceName"] | DEVICE_NAME_DEFAULT;
+    strlcpy(current_config.deviceName,
+            is_valid_device_name(deviceName) ? deviceName : DEVICE_NAME_DEFAULT,
+            sizeof(current_config.deviceName));
     // Clamp: a corrupt/hand-edited file must not index outside presets[]
     int active_preset_index = doc["active_preset_index"] | 0;
     if (active_preset_index < 0 || active_preset_index >= MAX_PRESETS) {
@@ -373,6 +396,7 @@ void save_config() {
     config_lock();
 
     doc["version"] = current_config.version;
+    doc["deviceName"] = current_config.deviceName;
     doc["active_preset_index"] = current_config.active_preset_index;
     doc["toneFrequency"] = current_config.toneFrequency;
     doc["toneVolume"] = current_config.toneVolume;
@@ -443,6 +467,7 @@ void reset_config_to_defaults() {
     DebugSerial.println("Resetting configuration to defaults...");
 
     current_config.version = CONFIG_CURRENT_VERSION;
+    strlcpy(current_config.deviceName, DEVICE_NAME_DEFAULT, sizeof(current_config.deviceName));
     current_config.active_preset_index = 0;
     current_config.toneFrequency = 0;
     current_config.toneVolume = 0;

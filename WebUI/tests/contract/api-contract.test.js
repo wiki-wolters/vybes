@@ -120,9 +120,36 @@ describe('GET /status', () => {
     expect(typeof s.noise.volume).toBe('number')
 
     expect(typeof s.currentPreset).toBe('string')
+    expect(typeof s.deviceName).toBe('string')
     expect(typeof s.volume).toBe('number')
     expect(s.volume).toBeGreaterThanOrEqual(0)
     expect(s.volume).toBeLessThanOrEqual(100)
+  })
+})
+
+// ===== /device/name =====
+
+describe('PUT /device/name', () => {
+  // Mock-only: renaming a real device restarts its mDNS announcement, so
+  // "<name>.local" would stop resolving for the rest of the suite.
+  itMockOnly('renames the device, replying with the deviceNameChanged shape', async () => {
+    const original = (await GET('/status')).json.deviceName
+    const res = await PUT('/device/name?name=contract-test-dev')
+    expect(res.status).toBe(200)
+    expect(res.json).toEqual({ messageType: 'deviceNameChanged', deviceName: 'contract-test-dev' })
+    expect((await GET('/status')).json.deviceName).toBe('contract-test-dev')
+
+    // Restore
+    expect((await PUT(`/device/name?name=${enc(original)}`)).status).toBe(200)
+  })
+
+  it('rejects names that are not a valid DNS label with 400', async () => {
+    expect((await PUT('/device/name?name=')).status).toBe(400)
+    expect((await PUT('/device/name?name=Vybes')).status).toBe(400) // uppercase
+    expect((await PUT('/device/name?name=-vybes')).status).toBe(400) // leading dash
+    expect((await PUT('/device/name?name=vybes-')).status).toBe(400) // trailing dash
+    expect((await PUT(`/device/name?name=${enc('my dsp')}`)).status).toBe(400) // space
+    expect((await PUT(`/device/name?name=${enc('x'.repeat(25))}`)).status).toBe(400) // too long
   })
 })
 

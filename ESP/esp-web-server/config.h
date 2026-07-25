@@ -10,7 +10,11 @@
 // 3-channel config. The version field and migrate_config hook exist from
 // day one so future schema changes migrate in place instead of silently
 // reinterpreting fields.
-#define CONFIG_CURRENT_VERSION 1
+//
+// Version history:
+// 1 - Initial 8-output V1 schema
+// 2 - Added deviceName (multi-device support; older files default to "vybes")
+#define CONFIG_CURRENT_VERSION 2
 
 #define MAX_PRESETS 12
 // Long enough for the contract suite's generated "contract-test-…" names
@@ -31,6 +35,11 @@
 #define XOVER_ID_MAX_LEN 15
 #define TEMPLATE_ID_MAX_LEN 15
 #define FIR_FILENAME_LEN 63
+
+// Device name: one DNS label ("<name>.local"), also the standalone AP SSID.
+// Kept well under both the 63-char DNS label and 32-char SSID limits.
+#define DEVICE_NAME_MAX_LEN 24
+#define DEVICE_NAME_DEFAULT "vybes"
 
 extern const char* CONFIG_FILE;
 
@@ -132,6 +141,9 @@ struct InputGains {
 // Main configuration structure that holds everything
 struct Config {
     uint8_t version = CONFIG_CURRENT_VERSION; // Current version of the config structure
+    // Network identity: "<deviceName>.local" via mDNS and the standalone AP
+    // SSID. Configurable so several Vybes devices can share one network.
+    char deviceName[DEVICE_NAME_MAX_LEN + 1] = DEVICE_NAME_DEFAULT;
     int active_preset_index = 0;
     Preset presets[MAX_PRESETS];
     // Add other global settings here if needed
@@ -197,6 +209,10 @@ bool load_config_from(const char* path);
  * @brief Resets the configuration to its default state and saves to LittleFS.
  */
 void reset_config_to_defaults();
+
+// True for a DNS-label-safe device name: 1-24 chars of lowercase a-z, 0-9
+// and dashes, not starting or ending with a dash.
+bool is_valid_device_name(const char* name);
 
 // --- V1 preset model helpers (shared by the API handlers and Teensy sync) ---
 

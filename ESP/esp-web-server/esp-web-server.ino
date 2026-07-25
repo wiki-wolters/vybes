@@ -10,7 +10,6 @@
 #include "button.h"
 #include "remote_control.h"
 #include "wifi_setup.h"
-#include <ESPmDNS.h>
 
 // Define global objects
 RemoteControl remoteControl;
@@ -58,13 +57,7 @@ void setup() {
 
     bool standalone = setupWiFi();
 
-    if (MDNS.begin("vybes")) {
-        MDNS.addService("http", "tcp", 80);
-#ifdef CONFIG_IDF_TARGET_ESP32S3
-        MDNS.addService("https", "tcp", 443);
-#endif
-        DebugSerial.println("mDNS responder started: vybes.local");
-    }
+    startMdns(); // "<deviceName>.local", see utilities.cpp
 
     setupWebSocket();
     setupWebServer();
