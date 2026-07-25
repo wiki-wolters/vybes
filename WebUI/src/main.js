@@ -1,10 +1,13 @@
 import { createApp } from 'vue'
+import { createPinia } from 'pinia'
 import router from './router'
 import './style.css'
 import App from './App.vue'
 import apiClient from './api-client.js'
 
 const app = createApp(App)
+
+app.use(createPinia())
 
 // Provide the API client to all components
 app.provide('vybesAPI', apiClient)

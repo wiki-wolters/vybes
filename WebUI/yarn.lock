@@ -271,6 +271,28 @@
   resolved "https://registry.npmjs.org/@vue/devtools-api/-/devtools-api-6.6.4.tgz"
   integrity sha512-sGhTPMuXqZ1rVOk32RylztWkfXTRhuS7vgAKv0zjqk8gbsHkJ7xfFf+jbySxt7tWObEJwyKaHMikV/WGDiQm8g==
 
+"@vue/devtools-api@^8.1.5":
+  version "8.2.1"
+  resolved "https://registry.npmjs.org/@vue/devtools-api/-/devtools-api-8.2.1.tgz"
+  integrity sha512-6u4vXBlIBAC1wMplIZgpyPn7uh/s4Bf6F5bMzvLv+EdJ0aHs/+4B7Ygv864EStQSjRbsRzTko/kUG1A1IejQ3A==
+  dependencies:
+    "@vue/devtools-kit" "^8.2.1"
+
+"@vue/devtools-kit@^8.2.1":
+  version "8.2.1"
+  resolved "https://registry.npmjs.org/@vue/devtools-kit/-/devtools-kit-8.2.1.tgz"
+  integrity sha512-FIGIuq3AWReEpbAHY/cRGeHDfI0qOb8OCQ3YjbEAX04uaxIDbGc9rhkbVcG7rnfHPXE3RsU5KrWOu9V/okd8AQ==
+  dependencies:
+    "@vue/devtools-shared" "^8.2.1"
+    birpc "^2.6.1"
+    hookable "^5.5.3"
+    perfect-debounce "^2.0.0"
+
+"@vue/devtools-shared@^8.2.1":
+  version "8.2.1"
+  resolved "https://registry.npmjs.org/@vue/devtools-shared/-/devtools-shared-8.2.1.tgz"
+  integrity sha512-Fkac7lUdGReh6pVOi3AYPRGe82LQqRmAfThW7RRligOAP0ZA/Z1z9XLHDM9dv34pV2HRc79DK8uKPeG2fLnA/g==
+
 "@vue/reactivity@3.5.14":
   version "3.5.14"
   resolved "https://registry.npmjs.org/@vue/reactivity/-/reactivity-3.5.14.tgz"
@@ -337,6 +359,11 @@ autoprefixer@^10.4.21:
     normalize-range "^0.1.2"
     picocolors "^1.1.1"
     postcss-value-parser "^4.2.0"
+
+birpc@^2.6.1:
+  version "2.9.0"
+  resolved "https://registry.npmjs.org/birpc/-/birpc-2.9.0.tgz"
+  integrity sha512-KrayHS5pBi69Xi9JmvoqrIgYGDkD6mcSe/i6YKi3w5kekCLzrX4+nawcXqrj2tIp50Kw/mT/s3p+GVK0A0sKxw==
 
 browserslist@^4.24.4, "browserslist@>= 4.21.0":
   version "4.24.5"
@@ -541,6 +568,11 @@ has-flag@^4.0.0:
   resolved "https://registry.npmjs.org/has-flag/-/has-flag-4.0.0.tgz"
   integrity sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ==
 
+hookable@^5.5.3:
+  version "5.5.3"
+  resolved "https://registry.npmjs.org/hookable/-/hookable-5.5.3.tgz"
+  integrity sha512-Yc+BQe8SvoXH1643Qez1zqLRmbA5rCL+sSmk6TVos0LWVfNIB7PGncdlId77WzLGSIB5KaWgTaNTs2lNVEI6VQ==
+
 jiti@^2.4.2, jiti@>=1.21.0:
   version "2.4.2"
   resolved "https://registry.npmjs.org/jiti/-/jiti-2.4.2.tgz"
@@ -632,6 +664,11 @@ normalize-range@^0.1.2:
   resolved "https://registry.npmjs.org/normalize-range/-/normalize-range-0.1.2.tgz"
   integrity sha512-bdok/XvKII3nUpklnV6P2hxtMNrCboOjAcyBuQnWEhO665FwrSNRxU+AqpsyvO6LgGYPspN+lu5CLtw4jPRKNA==
 
+nostics@^1.1.4:
+  version "1.2.0"
+  resolved "https://registry.npmjs.org/nostics/-/nostics-1.2.0.tgz"
+  integrity sha512-FGqEfhQjrvo1lL8KFifdTQiNwwQHJxC1jtYE1Rc54qF/jxONUNL+kC9gS1krX8Q65PgrQ5fCqH/I4NhWBvdSqg==
+
 pathe@^2.0.3:
   version "2.0.3"
   resolved "https://registry.npmjs.org/pathe/-/pathe-2.0.3.tgz"
@@ -642,6 +679,11 @@ pathval@^2.0.0:
   resolved "https://registry.npmjs.org/pathval/-/pathval-2.0.1.tgz"
   integrity sha512-//nshmD55c46FuFw26xV/xFAaB5HF9Xdap7HJBBnrKdAd6/GxDBaNA1870O79+9ueg61cZLSVc+OaFlfmObYVQ==
 
+perfect-debounce@^2.0.0:
+  version "2.1.0"
+  resolved "https://registry.npmjs.org/perfect-debounce/-/perfect-debounce-2.1.0.tgz"
+  integrity sha512-LjgdTytVFXeUgtHZr9WYViYSM/g8MkcTPYDlPa3cDqMirHjKiSZPYd6DoL7pK8AJQr+uWkQvCjHNdiMqsrJs+g==
+
 picocolors@^1.1.1:
   version "1.1.1"
   resolved "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz"
@@ -651,6 +693,13 @@ picocolors@^1.1.1:
   version "4.0.5"
   resolved "https://registry.npmjs.org/picomatch/-/picomatch-4.0.5.tgz"
   integrity sha512-RvwwcruNjI1ncT5xRakeyS9Lf8lcItv34KD+aif+VH9kduAyfYBipGh12274xtenIPZ119/R9BdTBa8gAwSh0A==
+
+pinia@^4.0.2:
+  version "4.0.2"
+  resolved "https://registry.npmjs.org/pinia/-/pinia-4.0.2.tgz"
+  integrity sha512-yKVVA7bSj5oRZFp/Ab9wLlmyb5gPUYEiIm4ryiWTe/xe7PtkRdMVOp1X1ggvq0c6Uj7Q0Du1HnV2mtAwM0Ks1g==
+  dependencies:
+    nostics "^1.1.4"
 
 postcss-value-parser@^4.2.0:
   version "4.2.0"
@@ -895,7 +944,7 @@ vue-router@^4.5.1:
   dependencies:
     "@vue/devtools-api" "^6.6.4"
 
-vue@^3.2.0, vue@^3.2.25, vue@^3.5.13, vue@3.5.14:
+vue@^3.2.0, vue@^3.2.25, vue@^3.5.11, vue@^3.5.13, vue@3.5.14:
   version "3.5.14"
   resolved "https://registry.npmjs.org/vue/-/vue-3.5.14.tgz"
   integrity sha512-LbOm50/vZFG6Mhy6KscQYXZMQ0LMCC/y40HDJPPvGFQ+i/lUH+PJHR6C3assgOQiXdl6tAfsXHbXYVBZZu65ew==

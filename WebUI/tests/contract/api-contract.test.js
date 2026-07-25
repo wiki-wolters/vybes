@@ -1,11 +1,11 @@
 /*
  * Vybes HTTP + websocket API contract suite.
  *
- * The contract's source of truth is the ESP firmware
- * (ESP/esp-web-server/api_*.cpp + web_server.cpp). This suite asserts the
- * response/broadcast SHAPES and units of every endpoint the WebUI client
- * (src/api-client.js) uses, so it passes against both the mock server and a
- * real device.
+ * For system-level endpoints the contract's source of truth is the existing
+ * ESP firmware (ESP/esp-web-server/api_*.cpp + web_server.cpp). For the V1
+ * preset/output/crossover endpoints (docs/CHANNEL_ARCHITECTURE.md) the mock
+ * server LEADS the contract: this suite is the spec the new ESP32-S3
+ * firmware must implement.
  *
  * Modes:
  *  - `npm run test:contract`            hermetic: spawns mock-server/server.js
@@ -299,22 +299,24 @@ describe('preset CRUD', () => {
     const preset = await getPreset(P)
     expect(preset.name).toBe(P)
     expect(preset.isCurrent).toBe(false)
-    expect(preset.speakerDelays).toMatchObject({ left: 0, right: 0, sub: 0 })
-    expect(preset.isSpeakerDelayEnabled).toBe(false)
-    expect(preset.crossoverFreq).toBe(80)
-    expect(preset.isCrossoverEnabled).toBe(false)
-    expect(preset.isFIREnabled).toBe(false)
-    expect(preset.firLeft).toBe('')
-    expect(preset.firRight).toBe('')
-    expect(preset.firSub).toBe('')
-    expect(preset.isPreferenceEQEnabled).toBe(false)
-    // Default spl=0 preference set: three flat points at 100/1000/10000 Hz
-    const spl0 = preset.preferenceEQ.find((set) => set.spl === 0)
+    expect(preset.template).toBe('2.1')
+    expect(preset.delaysEnabled).toBe(false)
+    expect(preset.firEnabled).toBe(false)
+    expect(preset.inputEq.enabled).toBe(false)
+    expect(preset.crossovers.find((x) => x.id === 'sub_xo').freq).toBe(80)
+    for (const output of preset.outputs) {
+      expect(output.delayUs).toBe(0)
+      expect(output.gainDb).toBe(0)
+      expect(output.fir).toBe('')
+      expect(output.mute).toBe(false)
+    }
+    // Default spl=0 input EQ set: three flat points at 100/1000/10000 Hz
+    const spl0 = preset.inputEq.sets.find((set) => set.spl === 0)
     expect(spl0).toBeDefined()
-    expect(spl0.peqs.map((p) => p.freq)).toEqual([100, 1000, 10000])
-    for (const peq of spl0.peqs) {
-      expect(peq.gain).toBe(0)
-      expect(peq.q).toBe(1)
+    expect(spl0.points.map((p) => p.freq)).toEqual([100, 1000, 10000])
+    for (const point of spl0.points) {
+      expect(point.gain).toBe(0)
+      expect(point.q).toBe(1)
     }
   })
 
@@ -328,7 +330,7 @@ describe('preset CRUD', () => {
 
   it('copy duplicates settings under source/destination params', async () => {
     const copyName = `${PREFIX}-copy`
-    await PUT(`/preset/crossover?preset_name=${enc(P)}&frequency=120`)
+    await PUT(`/preset/crossover?preset_name=${enc(P)}&id=sub_xo&frequency=120`)
 
     const res = await POST(`/preset?action=copy&source=${enc(P)}&destination=${enc(copyName)}`)
     expect(res.status).toBe(201)
@@ -336,10 +338,10 @@ describe('preset CRUD', () => {
     const copy = await getPreset(copyName)
     expect(copy.name).toBe(copyName)
     expect(copy.isCurrent).toBe(false)
-    expect(copy.crossoverFreq).toBe(120)
+    expect(copy.crossovers.find((x) => x.id === 'sub_xo').freq).toBe(120)
     // EQ sets travel with the copy
-    const spl0 = copy.preferenceEQ.find((set) => set.spl === 0)
-    expect(spl0.peqs.length).toBeGreaterThan(0)
+    const spl0 = copy.inputEq.sets.find((set) => set.spl === 0)
+    expect(spl0.points.length).toBeGreaterThan(0)
   })
 
   it('copy to an existing destination is a 409, from a missing source a 404', async () => {
@@ -356,8 +358,8 @@ describe('preset CRUD', () => {
 
     expect((await GET(`/preset?name=${enc(oldName)}`)).status).toBe(404)
     const renamed = await getPreset(newName)
-    expect(renamed.crossoverFreq).toBe(120)
-    expect(renamed.preferenceEQ.find((set) => set.spl === 0).peqs.length).toBeGreaterThan(0)
+    expect(renamed.crossovers.find((x) => x.id === 'sub_xo').freq).toBe(120)
+    expect(renamed.inputEq.sets.find((set) => set.spl === 0).points.length).toBeGreaterThan(0)
   })
 
   it('rename conflicts are 409 and missing presets 404', async () => {
@@ -416,48 +418,6 @@ describe('PUT /preset/active', () => {
   })
 })
 
-// ===== Preset gains =====
-
-describe('/preset/gains', () => {
-  it('GET returns per-speaker gains on the 0-100 scale', async () => {
-    const res = await GET(`/preset/gains?preset_name=${enc(P)}`)
-    expect(res.status).toBe(200)
-    for (const ch of ['left', 'right', 'sub']) {
-      expect(typeof res.json[ch]).toBe('number')
-      expect(res.json[ch]).toBeGreaterThanOrEqual(0)
-      expect(res.json[ch]).toBeLessThanOrEqual(100)
-    }
-  })
-
-  it('PUT sets gains from a JSON body', async () => {
-    const res = await PUT(`/preset/gains?preset_name=${enc(P)}`, { left: 80, right: 70, sub: 60 })
-    expect(res.status).toBe(200)
-    expect(res.json).toMatchObject({ success: true })
-
-    const gains = (await GET(`/preset/gains?preset_name=${enc(P)}`)).json
-    expect(gains.left).toBeCloseTo(80, 3)
-    expect(gains.right).toBeCloseTo(70, 3)
-    expect(gains.sub).toBeCloseTo(60, 3)
-  })
-
-  it('a partial body does not zero the omitted channels', async () => {
-    await PUT(`/preset/gains?preset_name=${enc(P)}`, { left: 80, right: 70, sub: 60 })
-    const res = await PUT(`/preset/gains?preset_name=${enc(P)}`, { sub: 40 })
-    expect(res.status).toBe(200)
-
-    const gains = (await GET(`/preset/gains?preset_name=${enc(P)}`)).json
-    expect(gains.left).toBeCloseTo(80, 3)
-    expect(gains.right).toBeCloseTo(70, 3)
-    expect(gains.sub).toBeCloseTo(40, 3)
-  })
-
-  it('missing preset_name is 400 and an unknown preset 404', async () => {
-    expect((await GET('/preset/gains')).status).toBe(400)
-    expect((await GET(`/preset/gains?preset_name=${enc(PREFIX + '-missing')}`)).status).toBe(404)
-    expect((await PUT(`/preset/gains?preset_name=${enc(PREFIX + '-missing')}`, { left: 50 })).status).toBe(404)
-  })
-})
-
 // ===== EQ =====
 
 describe('/preset/eq', () => {
@@ -474,32 +434,32 @@ describe('/preset/eq', () => {
     expect(res.status).toBe(204)
     expect(res.text).toBe('')
 
-    const spl0 = (await getPreset(P)).preferenceEQ.find((set) => set.spl === 0)
-    expect(spl0.peqs).toHaveLength(2)
-    expect(spl0.peqs[0].freq).toBeCloseTo(250, 3)
-    expect(spl0.peqs[0].gain).toBeCloseTo(-6, 3)
-    expect(spl0.peqs[0].q).toBeCloseTo(0.5, 3)
-    expect(spl0.peqs[1].freq).toBeCloseTo(1000, 3)
-    expect(spl0.peqs[1].gain).toBeCloseTo(3.5, 3)
-    expect(spl0.peqs[1].q).toBeCloseTo(2, 3)
+    const spl0 = (await getPreset(P)).inputEq.sets.find((set) => set.spl === 0)
+    expect(spl0.points).toHaveLength(2)
+    expect(spl0.points[0].freq).toBeCloseTo(250, 3)
+    expect(spl0.points[0].gain).toBeCloseTo(-6, 3)
+    expect(spl0.points[0].q).toBeCloseTo(0.5, 3)
+    expect(spl0.points[1].freq).toBeCloseTo(1000, 3)
+    expect(spl0.points[1].gain).toBeCloseTo(3.5, 3)
+    expect(spl0.points[1].q).toBeCloseTo(2, 3)
   })
 
   it('honors preset_name: the save does not leak into other presets', async () => {
     // LEAK_CHECK was created before the save above; it must still hold the
     // untouched default 3 flat points
-    const spl0 = (await getPreset(LEAK_CHECK)).preferenceEQ.find((set) => set.spl === 0)
-    expect(spl0.peqs.map((p) => p.freq)).toEqual([100, 1000, 10000])
-    for (const peq of spl0.peqs) expect(peq.gain).toBe(0)
+    const spl0 = (await getPreset(LEAK_CHECK)).inputEq.sets.find((set) => set.spl === 0)
+    expect(spl0.points.map((p) => p.freq)).toEqual([100, 1000, 10000])
+    for (const point of spl0.points) expect(point.gain).toBe(0)
   })
 
   it('clamps out-of-range values instead of rejecting them', async () => {
     const res = await PUT(`/preset/eq?preset_name=${enc(P)}`, [{ freq: 5, gain: 40, q: 50 }])
     expect(res.status).toBe(204)
 
-    const spl0 = (await getPreset(P)).preferenceEQ.find((set) => set.spl === 0)
-    expect(spl0.peqs[0].freq).toBeCloseTo(20, 3)
-    expect(spl0.peqs[0].gain).toBeCloseTo(15, 3)
-    expect(spl0.peqs[0].q).toBeCloseTo(10, 3)
+    const spl0 = (await getPreset(P)).inputEq.sets.find((set) => set.spl === 0)
+    expect(spl0.points[0].freq).toBeCloseTo(20, 3)
+    expect(spl0.points[0].gain).toBeCloseTo(15, 3)
+    expect(spl0.points[0].q).toBeCloseTo(10, 3)
   })
 
   it('rejects more than 15 points and non-array bodies with 400', async () => {
@@ -526,22 +486,22 @@ describe('/preset/eq/point', () => {
     const res = await PUT(`/preset/eq/point?preset_name=${enc(P)}`, { id: 1, freq: 2000, gain: -2.5, q: 4 })
     expect(res.status).toBe(204)
 
-    const spl0 = (await getPreset(P)).preferenceEQ.find((set) => set.spl === 0)
-    expect(spl0.peqs).toHaveLength(2)
-    expect(spl0.peqs[1].freq).toBeCloseTo(2000, 3)
-    expect(spl0.peqs[1].gain).toBeCloseTo(-2.5, 3)
-    expect(spl0.peqs[1].q).toBeCloseTo(4, 3)
+    const spl0 = (await getPreset(P)).inputEq.sets.find((set) => set.spl === 0)
+    expect(spl0.points).toHaveLength(2)
+    expect(spl0.points[1].freq).toBeCloseTo(2000, 3)
+    expect(spl0.points[1].gain).toBeCloseTo(-2.5, 3)
+    expect(spl0.points[1].q).toBeCloseTo(4, 3)
     // Point 0 untouched
-    expect(spl0.peqs[0].freq).toBeCloseTo(250, 3)
+    expect(spl0.points[0].freq).toBeCloseTo(250, 3)
   })
 
   it('appends directly after the last point (204)', async () => {
     const res = await PUT(`/preset/eq/point?preset_name=${enc(P)}`, { id: 2, freq: 8000, gain: 1.5, q: 1 })
     expect(res.status).toBe(204)
 
-    const spl0 = (await getPreset(P)).preferenceEQ.find((set) => set.spl === 0)
-    expect(spl0.peqs).toHaveLength(3)
-    expect(spl0.peqs[2].freq).toBeCloseTo(8000, 3)
+    const spl0 = (await getPreset(P)).inputEq.sets.find((set) => set.spl === 0)
+    expect(spl0.points).toHaveLength(3)
+    expect(spl0.points[2].freq).toBeCloseTo(8000, 3)
   })
 
   it('rejects an id that would leave a gap with 400', async () => {
@@ -565,11 +525,11 @@ describe('PUT /preset/eq/enabled', () => {
     const on = await PUT(`/preset/eq/enabled?preset_name=${enc(P)}&type=pref&enabled=on`)
     expect(on.status).toBe(200)
     expect(on.json).toEqual({ messageType: 'eqEnabledChanged', presetName: P, status: 'ok', enabled: true })
-    expect((await getPreset(P)).isPreferenceEQEnabled).toBe(true)
+    expect((await getPreset(P)).inputEq.enabled).toBe(true)
 
     const off = await PUT(`/preset/eq/enabled?preset_name=${enc(P)}&type=pref&enabled=off`)
     expect(off.json).toEqual({ messageType: 'eqEnabledChanged', presetName: P, status: 'ok', enabled: false })
-    expect((await getPreset(P)).isPreferenceEQEnabled).toBe(false)
+    expect((await getPreset(P)).inputEq.enabled).toBe(false)
   })
 
   it('rejects invalid enabled values with 400', async () => {
@@ -581,77 +541,58 @@ describe('PUT /preset/eq/enabled', () => {
 
 describe('/preset/crossover', () => {
   it('sets the frequency, replying with the crossoverChanged shape', async () => {
-    const res = await PUT(`/preset/crossover?preset_name=${enc(P)}&frequency=120`)
+    const res = await PUT(`/preset/crossover?preset_name=${enc(P)}&id=sub_xo&frequency=120`)
     expect(res.status).toBe(200)
-    expect(res.json).toEqual({ messageType: 'crossoverChanged', presetName: P, status: 'ok', crossoverFreq: 120 })
-    expect((await getPreset(P)).crossoverFreq).toBe(120)
+    expect(res.json).toEqual({ messageType: 'crossoverChanged', presetName: P, status: 'ok', id: 'sub_xo', crossoverFreq: 120 })
+    expect((await getPreset(P)).crossovers.find((x) => x.id === 'sub_xo').freq).toBe(120)
   })
 
-  it('accepts the 20 and 20000 Hz boundaries', async () => {
-    expect((await PUT(`/preset/crossover?preset_name=${enc(P)}&frequency=20`)).status).toBe(200)
-    expect((await PUT(`/preset/crossover?preset_name=${enc(P)}&frequency=20000`)).status).toBe(200)
+  it('accepts the sub_xo 40 and 500 Hz range boundaries', async () => {
+    expect((await PUT(`/preset/crossover?preset_name=${enc(P)}&id=sub_xo&frequency=40`)).status).toBe(200)
+    expect((await PUT(`/preset/crossover?preset_name=${enc(P)}&id=sub_xo&frequency=500`)).status).toBe(200)
   })
 
-  it('rejects frequencies outside 20-20000 with 400', async () => {
-    expect((await PUT(`/preset/crossover?preset_name=${enc(P)}&frequency=19`)).status).toBe(400)
-    expect((await PUT(`/preset/crossover?preset_name=${enc(P)}&frequency=20001`)).status).toBe(400)
+  it('rejects frequencies outside the point range with 400', async () => {
+    expect((await PUT(`/preset/crossover?preset_name=${enc(P)}&id=sub_xo&frequency=39`)).status).toBe(400)
+    expect((await PUT(`/preset/crossover?preset_name=${enc(P)}&id=sub_xo&frequency=501`)).status).toBe(400)
   })
 
-  it('404s for an unknown preset', async () => {
-    expect((await PUT(`/preset/crossover?preset_name=${enc(PREFIX + '-missing')}&frequency=100`)).status).toBe(404)
+  it('requires the id parameter (400 when missing)', async () => {
+    expect((await PUT(`/preset/crossover?preset_name=${enc(P)}&frequency=100`)).status).toBe(400)
+    expect((await PUT(`/preset/crossover/enabled?preset_name=${enc(P)}&enabled=on`)).status).toBe(400)
+  })
+
+  it('404s for an unknown preset and an unknown crossover id', async () => {
+    expect((await PUT(`/preset/crossover?preset_name=${enc(PREFIX + '-missing')}&id=sub_xo&frequency=100`)).status).toBe(404)
+    expect((await PUT(`/preset/crossover?preset_name=${enc(P)}&id=nope_xo&frequency=100`)).status).toBe(404)
   })
 
   it('toggles enablement with the crossoverEnabledChanged shape', async () => {
-    const on = await PUT(`/preset/crossover/enabled?preset_name=${enc(P)}&enabled=on`)
+    const on = await PUT(`/preset/crossover/enabled?preset_name=${enc(P)}&id=sub_xo&enabled=on`)
     expect(on.status).toBe(200)
-    expect(on.json).toEqual({ messageType: 'crossoverEnabledChanged', presetName: P, status: 'ok', crossoverEnabled: true })
-    expect((await getPreset(P)).isCrossoverEnabled).toBe(true)
+    expect(on.json).toEqual({ messageType: 'crossoverEnabledChanged', presetName: P, status: 'ok', id: 'sub_xo', crossoverEnabled: true })
+    expect((await getPreset(P)).outputs[0].hp.mode).toBe('xover')
 
-    const off = await PUT(`/preset/crossover/enabled?preset_name=${enc(P)}&enabled=off`)
-    expect(off.json).toEqual({ messageType: 'crossoverEnabledChanged', presetName: P, status: 'ok', crossoverEnabled: false })
-    expect((await getPreset(P)).isCrossoverEnabled).toBe(false)
+    const off = await PUT(`/preset/crossover/enabled?preset_name=${enc(P)}&id=sub_xo&enabled=off`)
+    expect(off.json).toEqual({ messageType: 'crossoverEnabledChanged', presetName: P, status: 'ok', id: 'sub_xo', crossoverEnabled: false })
+    const preset = await getPreset(P)
+    expect(preset.outputs[0].hp.mode).toBe('off')
+    expect(preset.outputs[2].lp.mode).toBe('off')
   })
 })
 
 // ===== Speaker delays =====
 
-describe('/preset/delay', () => {
-  it('sets a per-speaker delay in microseconds, replying with the delayChanged shape', async () => {
-    const res = await PUT(`/preset/delay?preset_name=${enc(P)}&speaker=left&value=1234.5`)
-    expect(res.status).toBe(200)
-    expect(res.json).toEqual({ messageType: 'delayChanged', presetName: P, status: 'ok', speaker: 'left', delayUs: 1234.5 })
-    expect((await getPreset(P)).speakerDelays.left).toBeCloseTo(1234.5, 3)
-  })
-
-  it('keeps each speaker independent', async () => {
-    await PUT(`/preset/delay?preset_name=${enc(P)}&speaker=right&value=500`)
-    await PUT(`/preset/delay?preset_name=${enc(P)}&speaker=sub&value=20000`)
-
-    const delays = (await getPreset(P)).speakerDelays
-    expect(delays.left).toBeCloseTo(1234.5, 3)
-    expect(delays.right).toBeCloseTo(500, 3)
-    expect(delays.sub).toBeCloseTo(20000, 3)
-  })
-
-  it('rejects delays outside 0-20000us and unknown speakers with 400', async () => {
-    expect((await PUT(`/preset/delay?preset_name=${enc(P)}&speaker=left&value=20001`)).status).toBe(400)
-    expect((await PUT(`/preset/delay?preset_name=${enc(P)}&speaker=left&value=-1`)).status).toBe(400)
-    expect((await PUT(`/preset/delay?preset_name=${enc(P)}&speaker=center&value=100`)).status).toBe(400)
-  })
-
-  it('404s for an unknown preset', async () => {
-    expect((await PUT(`/preset/delay?preset_name=${enc(PREFIX + '-missing')}&speaker=left&value=100`)).status).toBe(404)
-  })
-
+describe('/preset/delay/enabled', () => {
   it('toggles enablement with the delayEnabledChanged shape', async () => {
     const on = await PUT(`/preset/delay/enabled?preset_name=${enc(P)}&enabled=on`)
     expect(on.status).toBe(200)
     expect(on.json).toEqual({ messageType: 'delayEnabledChanged', presetName: P, status: 'ok', enabled: true })
-    expect((await getPreset(P)).isSpeakerDelayEnabled).toBe(true)
+    expect((await getPreset(P)).delaysEnabled).toBe(true)
 
     const off = await PUT(`/preset/delay/enabled?preset_name=${enc(P)}&enabled=off`)
     expect(off.json).toEqual({ messageType: 'delayEnabledChanged', presetName: P, status: 'ok', enabled: false })
-    expect((await getPreset(P)).isSpeakerDelayEnabled).toBe(false)
+    expect((await getPreset(P)).delaysEnabled).toBe(false)
   })
 
   it('rejects invalid enabled values with 400', async () => {
@@ -669,44 +610,373 @@ describe('FIR filters', () => {
     for (const f of res.json) expect(typeof f).toBe('string')
   })
 
-  it('PUT /preset/fir assigns a file per speaker, replying with the firChanged shape', async () => {
-    const res = await PUT(`/preset/fir?preset_name=${enc(P)}&speaker=left&file=${enc('contract-test-fir.txt')}`)
+  it('PUT /preset/output/fir assigns and clears a file per output', async () => {
+    const res = await PUT(`/preset/output/fir?preset_name=${enc(P)}&output=0&file=${enc('contract-test-fir.txt')}`)
     expect(res.status).toBe(200)
-    expect(res.json).toEqual({
-      messageType: 'firChanged',
-      presetName: P,
-      status: 'ok',
-      speaker: 'left',
-      filename: 'contract-test-fir.txt',
-    })
-    expect((await getPreset(P)).firLeft).toBe('contract-test-fir.txt')
-  })
+    expect(res.json).toMatchObject({ messageType: 'outputChanged', output: 0, changes: { fir: 'contract-test-fir.txt' } })
+    expect(res.json.firPool.used).toBeGreaterThan(0)
+    expect((await getPreset(P)).outputs[0].fir).toBe('contract-test-fir.txt')
 
-  it('an empty file clears the filter', async () => {
-    const res = await PUT(`/preset/fir?preset_name=${enc(P)}&speaker=left&file=`)
-    expect(res.status).toBe(200)
-    expect(res.json).toMatchObject({ messageType: 'firChanged', speaker: 'left', filename: '' })
-    expect((await getPreset(P)).firLeft).toBe('')
-  })
-
-  it('rejects unknown speakers with 400 and unknown presets with 404', async () => {
-    expect((await PUT(`/preset/fir?preset_name=${enc(P)}&speaker=center&file=x.txt`)).status).toBe(400)
-    expect((await PUT(`/preset/fir?preset_name=${enc(PREFIX + '-missing')}&speaker=left&file=x.txt`)).status).toBe(404)
+    const clear = await PUT(`/preset/output/fir?preset_name=${enc(P)}&output=0&file=`)
+    expect(clear.status).toBe(200)
+    expect((await getPreset(P)).outputs[0].fir).toBe('')
   })
 
   it('toggles enablement with the firEnabledChanged shape', async () => {
     const on = await PUT(`/preset/fir/enabled?preset_name=${enc(P)}&state=on`)
     expect(on.status).toBe(200)
     expect(on.json).toEqual({ messageType: 'firEnabledChanged', presetName: P, status: 'ok', FIRFiltersEnabled: true })
-    expect((await getPreset(P)).isFIREnabled).toBe(true)
+    expect((await getPreset(P)).firEnabled).toBe(true)
 
     const off = await PUT(`/preset/fir/enabled?preset_name=${enc(P)}&state=off`)
     expect(off.json).toEqual({ messageType: 'firEnabledChanged', presetName: P, status: 'ok', FIRFiltersEnabled: false })
-    expect((await getPreset(P)).isFIREnabled).toBe(false)
+    expect((await getPreset(P)).firEnabled).toBe(false)
   })
 
   it('rejects invalid states with 400', async () => {
     expect((await PUT(`/preset/fir/enabled?preset_name=${enc(P)}&state=maybe`)).status).toBe(400)
+  })
+})
+
+// ===== V1: templates =====
+
+describe('GET /templates', () => {
+  it('lists the six templates with id/label/description/outputsUsed', async () => {
+    const res = await GET('/templates')
+    expect(res.status).toBe(200)
+    expect(res.json.map((t) => t.id)).toEqual(['2.0', '2.1', '2.2', '2way-sub', '3way', '3way-2sub'])
+    for (const t of res.json) {
+      expect(typeof t.label).toBe('string')
+      expect(typeof t.description).toBe('string')
+      expect(t.outputsUsed).toBeGreaterThanOrEqual(2)
+      expect(t.outputsUsed).toBeLessThanOrEqual(8)
+    }
+    expect(res.json.find((t) => t.id === '3way-2sub').outputsUsed).toBe(8)
+  })
+})
+
+// ===== V1: preset shape =====
+
+describe('V1 preset shape', () => {
+  const FULL = `${PREFIX}-v1-full`
+  // Fresh preset for shape assertions: P has been mutated by earlier suites
+  const FRESH = `${PREFIX}-v1-21`
+
+  beforeAll(async () => {
+    const res = await POST(`/preset?action=create&name=${enc(FULL)}&template=3way-2sub`)
+    expect(res.status).toBe(201)
+    expect((await POST(`/preset?action=create&name=${enc(FRESH)}`)).status).toBe(201)
+  })
+
+  it('POST create rejects an unknown template with 400', async () => {
+    expect((await POST(`/preset?action=create&name=${enc(PREFIX + '-bad')}&template=quadraphonic`)).status).toBe(400)
+  })
+
+  it('a default-template preset is 2.1: L/R over sub_xo HP, mono sub with LP', async () => {
+    const preset = await getPreset(FRESH)
+    expect(preset.template).toBe('2.1')
+    expect(preset.outputs).toHaveLength(8)
+    expect(preset.crossovers).toHaveLength(1)
+    expect(preset.crossovers[0]).toMatchObject({ id: 'sub_xo', type: 'LR4', locked: false, min: 40, max: 500 })
+
+    const [left, right, sub] = preset.outputs
+    expect(left).toMatchObject({ label: 'Left', enabled: true, source: { left: 1, right: 0 }, hp: { mode: 'xover', xover: 'sub_xo' } })
+    expect(right).toMatchObject({ label: 'Right', enabled: true, source: { left: 0, right: 1 }, hp: { mode: 'xover', xover: 'sub_xo' } })
+    expect(sub).toMatchObject({ label: 'Sub', enabled: true, source: { left: 0.5, right: 0.5 }, lp: { mode: 'xover', xover: 'sub_xo' } })
+    // Unused slots are disabled
+    for (const output of preset.outputs.slice(3)) {
+      expect(output.enabled).toBe(false)
+    }
+    // Every output carries the full field set
+    for (const output of preset.outputs) {
+      expect(Array.isArray(output.peq)).toBe(true)
+      expect(typeof output.fir).toBe('string')
+      expect(typeof output.delayUs).toBe('number')
+      expect(typeof output.gainDb).toBe('number')
+      expect(typeof output.invert).toBe('boolean')
+      expect(typeof output.mute).toBe('boolean')
+      expect(typeof output.hpFloor).toBe('number')
+    }
+    expect(preset.inputEq.enabled).toBe(false)
+    expect(preset.inputEq.sets.find((s) => s.spl === 0).points).toHaveLength(3)
+    expect(preset.firPool).toMatchObject({ total: 12288, used: 0 })
+  })
+
+  it('a 3way-2sub preset uses all 8 outputs with locked mid/tweeter points and floors', async () => {
+    const preset = await getPreset(FULL)
+    expect(preset.template).toBe('3way-2sub')
+    expect(preset.outputs.every((o) => o.enabled)).toBe(true)
+
+    const ids = preset.crossovers.map((x) => x.id)
+    expect(ids).toEqual(['sub_xo', 'mid_xo', 'twt_xo'])
+    expect(preset.crossovers.find((x) => x.id === 'sub_xo').locked).toBe(false)
+    expect(preset.crossovers.find((x) => x.id === 'mid_xo').locked).toBe(true)
+    expect(preset.crossovers.find((x) => x.id === 'twt_xo').locked).toBe(true)
+
+    // Highs are floor-protected; lows band-pass between sub_xo and mid_xo
+    expect(preset.outputs[4]).toMatchObject({ label: 'L High', hp: { mode: 'xover', xover: 'twt_xo' }, hpFloor: 800 })
+    expect(preset.outputs[0]).toMatchObject({ label: 'L Low', hp: { mode: 'xover', xover: 'sub_xo' }, lp: { mode: 'xover', xover: 'mid_xo' } })
+    expect(preset.outputs[6]).toMatchObject({ label: 'Sub 1', source: { left: 0.5, right: 0.5 } })
+  })
+})
+
+// ===== V1: locked crossover points and hpFloor =====
+
+describe('locked crossover safety semantics', () => {
+  const SAFE = `${PREFIX}-v1-safety`
+
+  beforeAll(async () => {
+    expect((await POST(`/preset?action=create&name=${enc(SAFE)}&template=2way-sub`)).status).toBe(201)
+  })
+
+  it('rejects a locked point write without confirm=true (409, locked flag set)', async () => {
+    const res = await PUT(`/preset/crossover?preset_name=${enc(SAFE)}&id=twt_xo&frequency=3000`)
+    expect(res.status).toBe(409)
+    expect(res.json).toMatchObject({ locked: true })
+    // Unchanged
+    const preset = await getPreset(SAFE)
+    expect(preset.crossovers.find((x) => x.id === 'twt_xo').freq).toBe(2500)
+  })
+
+  it('applies a locked point write with confirm=true', async () => {
+    const res = await PUT(`/preset/crossover?preset_name=${enc(SAFE)}&id=twt_xo&frequency=3000&confirm=true`)
+    expect(res.status).toBe(200)
+    expect(res.json).toEqual({ messageType: 'crossoverChanged', presetName: SAFE, status: 'ok', id: 'twt_xo', crossoverFreq: 3000 })
+    const preset = await getPreset(SAFE)
+    expect(preset.crossovers.find((x) => x.id === 'twt_xo').freq).toBe(3000)
+  })
+
+  it('validates locked writes against the point range even with confirm', async () => {
+    expect((await PUT(`/preset/crossover?preset_name=${enc(SAFE)}&id=twt_xo&frequency=100&confirm=true`)).status).toBe(400)
+  })
+
+  it('refuses to bypass a floor-protected high-pass even with confirm (409)', async () => {
+    // Tweeters in 2way-sub carry hpFloor 800; disabling twt_xo would leave
+    // them unprotected, so the floor blocks it regardless of confirmation
+    const res = await PUT(`/preset/crossover/enabled?preset_name=${enc(SAFE)}&id=twt_xo&enabled=off&confirm=true`)
+    expect(res.status).toBe(409)
+    const preset = await getPreset(SAFE)
+    expect(preset.outputs[2].hp.mode).toBe('xover')
+  })
+
+  it('allows bypassing and restoring the unlocked sub crossover', async () => {
+    const off = await PUT(`/preset/crossover/enabled?preset_name=${enc(SAFE)}&id=sub_xo&enabled=off`)
+    expect(off.status).toBe(200)
+    let preset = await getPreset(SAFE)
+    expect(preset.outputs[0].hp).toMatchObject({ mode: 'off', xover: 'sub_xo' })
+    expect(preset.outputs[4].lp).toMatchObject({ mode: 'off', xover: 'sub_xo' })
+
+    // Re-enabling restores the kept reference
+    expect((await PUT(`/preset/crossover/enabled?preset_name=${enc(SAFE)}&id=sub_xo&enabled=on`)).status).toBe(200)
+    preset = await getPreset(SAFE)
+    expect(preset.outputs[0].hp).toMatchObject({ mode: 'xover', xover: 'sub_xo' })
+    expect(preset.outputs[4].lp).toMatchObject({ mode: 'xover', xover: 'sub_xo' })
+  })
+
+  it('rejects a per-output HP edit that would sink below the floor (409)', async () => {
+    // Output 2 is L Tweeter (hpFloor 800): manual 500 Hz is below the floor
+    const below = await PUT(`/preset/output/filter?preset_name=${enc(SAFE)}&output=2&which=hp`, { mode: 'manual', freq: 500, type: 'LR4' })
+    expect(below.status).toBe(409)
+    // ...but a manual HP above the floor is the power-user path and is fine
+    const above = await PUT(`/preset/output/filter?preset_name=${enc(SAFE)}&output=2&which=hp`, { mode: 'manual', freq: 900, type: 'LR4' })
+    expect(above.status).toBe(200)
+    // Turning the HP off entirely is also blocked by the floor
+    const off = await PUT(`/preset/output/filter?preset_name=${enc(SAFE)}&output=2&which=hp`, { mode: 'off' })
+    expect(off.status).toBe(409)
+  })
+})
+
+// ===== V1: output channels =====
+
+describe('output channel endpoints', () => {
+  it('rejects a missing or out-of-range output index with 400', async () => {
+    expect((await PUT(`/preset/output/gain?preset_name=${enc(P)}&value=0`)).status).toBe(400)
+    expect((await PUT(`/preset/output/gain?preset_name=${enc(P)}&output=8&value=0`)).status).toBe(400)
+    expect((await PUT(`/preset/output/gain?preset_name=${enc(P)}&output=1.5&value=0`)).status).toBe(400)
+  })
+
+  it('404s for an unknown preset', async () => {
+    expect((await PUT(`/preset/output/gain?preset_name=${enc(PREFIX + '-missing')}&output=0&value=0`)).status).toBe(404)
+  })
+
+  it('sets gain in dB and clamps into -40..+10', async () => {
+    const res = await PUT(`/preset/output/gain?preset_name=${enc(P)}&output=0&value=-2.5`)
+    expect(res.status).toBe(200)
+    expect(res.json).toMatchObject({ messageType: 'outputChanged', output: 0, changes: { gainDb: -2.5 } })
+    expect((await getPreset(P)).outputs[0].gainDb).toBeCloseTo(-2.5, 3)
+
+    await PUT(`/preset/output/gain?preset_name=${enc(P)}&output=0&value=99`)
+    expect((await getPreset(P)).outputs[0].gainDb).toBeCloseTo(10, 3)
+    await PUT(`/preset/output/gain?preset_name=${enc(P)}&output=0&value=0`)
+  })
+
+  it('sets mute, invert and enabled as on/off states', async () => {
+    await PUT(`/preset/output/mute?preset_name=${enc(P)}&output=2&state=on`)
+    await PUT(`/preset/output/invert?preset_name=${enc(P)}&output=2&state=on`)
+    await PUT(`/preset/output/enabled?preset_name=${enc(P)}&output=7&state=on`)
+    let preset = await getPreset(P)
+    expect(preset.outputs[2].mute).toBe(true)
+    expect(preset.outputs[2].invert).toBe(true)
+    expect(preset.outputs[7].enabled).toBe(true)
+
+    await PUT(`/preset/output/mute?preset_name=${enc(P)}&output=2&state=off`)
+    await PUT(`/preset/output/invert?preset_name=${enc(P)}&output=2&state=off`)
+    await PUT(`/preset/output/enabled?preset_name=${enc(P)}&output=7&state=off`)
+    preset = await getPreset(P)
+    expect(preset.outputs[2].mute).toBe(false)
+    expect(preset.outputs[2].invert).toBe(false)
+    expect(preset.outputs[7].enabled).toBe(false)
+
+    expect((await PUT(`/preset/output/mute?preset_name=${enc(P)}&output=2&state=maybe`)).status).toBe(400)
+  })
+
+  it('sets the label and rejects empty/oversized ones', async () => {
+    const res = await PUT(`/preset/output/label?preset_name=${enc(P)}&output=0&label=${enc('L Woofer')}`)
+    expect(res.status).toBe(200)
+    expect((await getPreset(P)).outputs[0].label).toBe('L Woofer')
+    expect((await PUT(`/preset/output/label?preset_name=${enc(P)}&output=0&label=`)).status).toBe(400)
+    expect((await PUT(`/preset/output/label?preset_name=${enc(P)}&output=0&label=${enc('x'.repeat(25))}`)).status).toBe(400)
+    await PUT(`/preset/output/label?preset_name=${enc(P)}&output=0&label=Left`)
+  })
+
+  it('sets the source mix from a JSON body, clamping into 0..1', async () => {
+    const res = await PUT(`/preset/output/source?preset_name=${enc(P)}&output=2`, { left: 0.7, right: 1.5 })
+    expect(res.status).toBe(200)
+    expect((await getPreset(P)).outputs[2].source).toEqual({ left: 0.7, right: 1 })
+    expect((await PUT(`/preset/output/source?preset_name=${enc(P)}&output=2`, { left: 'x' })).status).toBe(400)
+    await PUT(`/preset/output/source?preset_name=${enc(P)}&output=2`, { left: 0.5, right: 0.5 })
+  })
+
+  it('sets the delay in microseconds within 0..20000', async () => {
+    const res = await PUT(`/preset/output/delay?preset_name=${enc(P)}&output=1&value=1234.5`)
+    expect(res.status).toBe(200)
+    expect((await getPreset(P)).outputs[1].delayUs).toBeCloseTo(1234.5, 3)
+    expect((await PUT(`/preset/output/delay?preset_name=${enc(P)}&output=1&value=20001`)).status).toBe(400)
+    expect((await PUT(`/preset/output/delay?preset_name=${enc(P)}&output=1&value=-1`)).status).toBe(400)
+    await PUT(`/preset/output/delay?preset_name=${enc(P)}&output=1&value=0`)
+  })
+
+  it('sets HP/LP sections: manual mode, xover references, validation', async () => {
+    // Manual LP on the sub output
+    const manual = await PUT(`/preset/output/filter?preset_name=${enc(P)}&output=2&which=lp`, { mode: 'manual', freq: 90, type: 'BW2' })
+    expect(manual.status).toBe(200)
+    expect((await getPreset(P)).outputs[2].lp).toEqual({ mode: 'manual', freq: 90, type: 'BW2' })
+
+    // Back to referencing the shared point
+    const ref = await PUT(`/preset/output/filter?preset_name=${enc(P)}&output=2&which=lp`, { mode: 'xover', xover: 'sub_xo' })
+    expect(ref.status).toBe(200)
+    expect((await getPreset(P)).outputs[2].lp).toEqual({ mode: 'xover', xover: 'sub_xo' })
+
+    expect((await PUT(`/preset/output/filter?preset_name=${enc(P)}&output=2&which=lp`, { mode: 'xover', xover: 'nope_xo' })).status).toBe(400)
+    expect((await PUT(`/preset/output/filter?preset_name=${enc(P)}&output=2&which=lp`, { mode: 'manual', freq: 10 })).status).toBe(400)
+    expect((await PUT(`/preset/output/filter?preset_name=${enc(P)}&output=2&which=lp`, { mode: 'manual', freq: 100, type: 'CHEBY9' })).status).toBe(400)
+    expect((await PUT(`/preset/output/filter?preset_name=${enc(P)}&output=2&which=zp`, { mode: 'off' })).status).toBe(400)
+  })
+
+  it('saves an output PEQ array (204) capped at 10 points', async () => {
+    const points = [
+      { freq: 45, gain: -3, q: 4 },
+      { freq: 120, gain: 2, q: 1 },
+    ]
+    const res = await PUT(`/preset/output/eq?preset_name=${enc(P)}&output=2`, points)
+    expect(res.status).toBe(204)
+
+    const peq = (await getPreset(P)).outputs[2].peq
+    expect(peq).toHaveLength(2)
+    expect(peq[0].freq).toBeCloseTo(45, 3)
+
+    const tooMany = Array.from({ length: 11 }, () => ({ freq: 1000, gain: 0, q: 1 }))
+    expect((await PUT(`/preset/output/eq?preset_name=${enc(P)}&output=2`, tooMany)).status).toBe(400)
+  })
+
+  it('updates/appends single output PEQ points with gap protection', async () => {
+    await PUT(`/preset/output/eq?preset_name=${enc(P)}&output=2`, [{ freq: 45, gain: -3, q: 4 }])
+    // Update in place
+    expect((await PUT(`/preset/output/eq/point?preset_name=${enc(P)}&output=2`, { id: 0, freq: 50, gain: -4, q: 4 })).status).toBe(204)
+    // Append directly after the last point
+    expect((await PUT(`/preset/output/eq/point?preset_name=${enc(P)}&output=2`, { id: 1, freq: 80, gain: 1, q: 2 })).status).toBe(204)
+    const peq = (await getPreset(P)).outputs[2].peq
+    expect(peq).toHaveLength(2)
+    expect(peq[0].freq).toBeCloseTo(50, 3)
+    expect(peq[1].freq).toBeCloseTo(80, 3)
+    // Gap and bounds rejections
+    expect((await PUT(`/preset/output/eq/point?preset_name=${enc(P)}&output=2`, { id: 3, freq: 100, gain: 0, q: 1 })).status).toBe(400)
+    expect((await PUT(`/preset/output/eq/point?preset_name=${enc(P)}&output=2`, { id: 10, freq: 100, gain: 0, q: 1 })).status).toBe(400)
+  })
+})
+
+// ===== V1: template flips to custom on structural edits =====
+
+describe('template custom-flip', () => {
+  const FLIP = `${PREFIX}-v1-flip`
+
+  beforeAll(async () => {
+    expect((await POST(`/preset?action=create&name=${enc(FLIP)}`)).status).toBe(201)
+  })
+
+  it('tuning edits (gain, delay, PEQ, FIR, mute) keep the template', async () => {
+    await PUT(`/preset/output/gain?preset_name=${enc(FLIP)}&output=0&value=-3`)
+    await PUT(`/preset/output/delay?preset_name=${enc(FLIP)}&output=1&value=500`)
+    await PUT(`/preset/output/mute?preset_name=${enc(FLIP)}&output=2&state=on`)
+    await PUT(`/preset/output/eq?preset_name=${enc(FLIP)}&output=0`, [{ freq: 100, gain: 1, q: 1 }])
+    await PUT(`/preset/output/fir?preset_name=${enc(FLIP)}&output=0&file=fir_flat.txt`)
+    expect((await getPreset(FLIP)).template).toBe('2.1')
+  })
+
+  it('a structural edit flips the template to custom and reports it', async () => {
+    const res = await PUT(`/preset/output/source?preset_name=${enc(FLIP)}&output=0`, { left: 0.8, right: 0.2 })
+    expect(res.status).toBe(200)
+    expect(res.json.template).toBe('custom')
+    expect((await getPreset(FLIP)).template).toBe('custom')
+
+    // Subsequent structural edits stay custom without re-reporting
+    const again = await PUT(`/preset/output/enabled?preset_name=${enc(FLIP)}&output=7&state=on`)
+    expect(again.json.template).toBeUndefined()
+    expect((await getPreset(FLIP)).template).toBe('custom')
+  })
+})
+
+// ===== V1: FIR tap pool =====
+
+describe('FIR tap pool', () => {
+  const POOL = `${PREFIX}-v1-pool`
+
+  beforeAll(async () => {
+    expect((await POST(`/preset?action=create&name=${enc(POOL)}&template=3way-2sub`)).status).toBe(201)
+  })
+
+  it('GET /preset/fir/pool reports total, used and per-output taps', async () => {
+    const res = await GET(`/preset/fir/pool?preset_name=${enc(POOL)}`)
+    expect(res.status).toBe(200)
+    expect(res.json.total).toBe(12288)
+    expect(res.json.used).toBe(0)
+    expect(res.json.outputs).toHaveLength(8)
+    for (const o of res.json.outputs) {
+      expect(o).toMatchObject({ file: '', taps: 0 })
+    }
+  })
+
+  it('tracks tap usage as files load and rejects loads that exceed the pool', async () => {
+    // The mock's tap map: room1/room2 = 4096, speaker1/speaker2 = 2048
+    expect((await PUT(`/preset/output/fir?preset_name=${enc(POOL)}&output=0&file=fir_room1.txt`)).status).toBe(200)
+    expect((await PUT(`/preset/output/fir?preset_name=${enc(POOL)}&output=1&file=fir_room2.txt`)).status).toBe(200)
+    expect((await PUT(`/preset/output/fir?preset_name=${enc(POOL)}&output=2&file=fir_speaker1.txt`)).status).toBe(200)
+    const almostFull = await PUT(`/preset/output/fir?preset_name=${enc(POOL)}&output=3&file=fir_speaker2.txt`)
+    expect(almostFull.status).toBe(200)
+    expect(almostFull.json.firPool).toEqual({ total: 12288, used: 12288 })
+
+    // Pool is exactly full: one more load must be rejected with the usage
+    const overflow = await PUT(`/preset/output/fir?preset_name=${enc(POOL)}&output=4&file=fir_flat.txt`)
+    expect(overflow.status).toBe(409)
+    expect(overflow.json).toMatchObject({ total: 12288 })
+    expect(overflow.json.used).toBeGreaterThan(12288)
+    expect((await getPreset(POOL)).outputs[4].fir).toBe('')
+
+    // Clearing a file frees its taps and the load succeeds
+    expect((await PUT(`/preset/output/fir?preset_name=${enc(POOL)}&output=0&file=`)).status).toBe(200)
+    expect((await PUT(`/preset/output/fir?preset_name=${enc(POOL)}&output=4&file=fir_flat.txt`)).status).toBe(200)
+    const pool = (await GET(`/preset/fir/pool?preset_name=${enc(POOL)}`)).json
+    expect(pool.used).toBe(12288 - 4096 + 1024)
   })
 })
 
@@ -771,20 +1041,38 @@ describe('websocket broadcasts', () => {
 
   it('crossoverChanged', async () => {
     const wait = ws.expect((m) => m.messageType === 'crossoverChanged' && m.presetName === P)
-    await PUT(`/preset/crossover?preset_name=${enc(P)}&frequency=95`)
-    expect(await wait).toEqual({ messageType: 'crossoverChanged', presetName: P, status: 'ok', crossoverFreq: 95 })
+    await PUT(`/preset/crossover?preset_name=${enc(P)}&id=sub_xo&frequency=95`)
+    expect(await wait).toEqual({ messageType: 'crossoverChanged', presetName: P, status: 'ok', id: 'sub_xo', crossoverFreq: 95 })
   })
 
   it('crossoverEnabledChanged', async () => {
     const wait = ws.expect((m) => m.messageType === 'crossoverEnabledChanged' && m.presetName === P)
-    await PUT(`/preset/crossover/enabled?preset_name=${enc(P)}&enabled=off`)
-    expect(await wait).toEqual({ messageType: 'crossoverEnabledChanged', presetName: P, status: 'ok', crossoverEnabled: false })
+    await PUT(`/preset/crossover/enabled?preset_name=${enc(P)}&id=sub_xo&enabled=off`)
+    expect(await wait).toEqual({ messageType: 'crossoverEnabledChanged', presetName: P, status: 'ok', id: 'sub_xo', crossoverEnabled: false })
   })
 
-  it('delayChanged', async () => {
-    const wait = ws.expect((m) => m.messageType === 'delayChanged' && m.presetName === P)
-    await PUT(`/preset/delay?preset_name=${enc(P)}&speaker=sub&value=750`)
-    expect(await wait).toEqual({ messageType: 'delayChanged', presetName: P, status: 'ok', speaker: 'sub', delayUs: 750 })
+  it('outputChanged carries the output index and the changed fields', async () => {
+    const wait = ws.expect((m) => m.messageType === 'outputChanged' && m.presetName === P)
+    await PUT(`/preset/output/gain?preset_name=${enc(P)}&output=1&value=-3`)
+    expect(await wait).toEqual({
+      messageType: 'outputChanged',
+      presetName: P,
+      status: 'ok',
+      output: 1,
+      changes: { gainDb: -3 },
+    })
+  })
+
+  it('outputEqChanged reports the output and point count', async () => {
+    const wait = ws.expect((m) => m.messageType === 'outputEqChanged' && m.presetName === P)
+    await PUT(`/preset/output/eq?preset_name=${enc(P)}&output=2`, [{ freq: 60, gain: -4, q: 3 }])
+    expect(await wait).toEqual({
+      messageType: 'outputEqChanged',
+      presetName: P,
+      status: 'ok',
+      output: 2,
+      numPoints: 1,
+    })
   })
 
   it('delayEnabledChanged', async () => {
@@ -813,22 +1101,6 @@ describe('websocket broadcasts', () => {
     const wait = ws.expect((m) => m.messageType === 'eqEnabledChanged' && m.presetName === P)
     await PUT(`/preset/eq/enabled?preset_name=${enc(P)}&type=pref&enabled=off`)
     expect(await wait).toEqual({ messageType: 'eqEnabledChanged', presetName: P, status: 'ok', enabled: false })
-  })
-
-  it('firChanged', async () => {
-    const wait = ws.expect((m) => m.messageType === 'firChanged' && m.presetName === P)
-    await PUT(`/preset/fir?preset_name=${enc(P)}&speaker=right&file=${enc('ws-test.txt')}`)
-    expect(await wait).toEqual({
-      messageType: 'firChanged',
-      presetName: P,
-      status: 'ok',
-      speaker: 'right',
-      filename: 'ws-test.txt',
-    })
-    // Clear it again (consume the second broadcast)
-    const waitClear = ws.expect((m) => m.messageType === 'firChanged' && m.filename === '')
-    await PUT(`/preset/fir?preset_name=${enc(P)}&speaker=right&file=`)
-    await waitClear
   })
 
   it('firEnabledChanged', async () => {

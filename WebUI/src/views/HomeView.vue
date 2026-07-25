@@ -122,19 +122,15 @@
         </div>
       </CardSection>
 
-      <!-- Speakers -->
-      <CardSection title="Speakers">
-        <div class="flex justify-between gap-3">
-          <div class="switch-container">
-            <ToggleSwitch v-model="speakersEnabled.sub" @change="toggleSpeaker('sub')" label="Subwoofer"/>
-          </div>
-
-          <div class="switch-container">
-            <ToggleSwitch v-model="speakersEnabled.left" @change="toggleSpeaker('left')" label="Left" />
-          </div>
-
-          <div class="switch-container">
-            <ToggleSwitch v-model="speakersEnabled.right" @change="toggleSpeaker('right')" label="Right" />
+      <!-- Speakers: mute groups derived from the active preset's outputs -->
+      <CardSection v-if="muteGroups.length" title="Speakers">
+        <div class="flex justify-between gap-3 flex-wrap">
+          <div v-for="group in muteGroups" :key="group.id" class="switch-container">
+            <ToggleSwitch
+              :model-value="group.playing"
+              :label="group.label"
+              @update:modelValue="toggleMuteGroup(group, $event)"
+            />
           </div>
         </div>
       </CardSection>
@@ -179,14 +175,16 @@
         ref="newPresetNameInput"
         v-model="newPresetName"
         placeholder="Enter preset name"
+        class="mb-3"
         @keyup.enter="createNewPreset"
       />
+      <TemplateSelect v-model="newPresetTemplate" />
     </ModalDialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import apiClient from '../api-client.js';
 import CardSection from '../components/shared/CardSection.vue';
@@ -194,6 +192,7 @@ import InputGroup from '../components/shared/InputGroup.vue';
 import RangeSlider from '../components/shared/RangeSlider.vue';
 import ModalDialog from '../components/shared/ModalDialog.vue';
 import ToggleSwitch from '../components/shared/ToggleSwitch.vue';
+import TemplateSelect from '../components/shared/TemplateSelect.vue';
 
 const router = useRouter();
 
@@ -201,7 +200,9 @@ const router = useRouter();
 const isLoading = ref(true);
 const errorMessage = ref('');
 const presets = ref([]);
-const speakersEnabled = ref({sub: true, left: true, right: true});
+// Active preset's V1 config (drives the mute groups)
+const activePresetName = ref(null);
+const activeOutputs = ref([]);
 const muteEnabled = ref(false);
 const mutePercentage = ref(100);
 const inputGainsDB = ref({ bluetooth: -40, spdif: -40, usb: -40, tone: -40, analog: -40 });
@@ -210,6 +211,7 @@ let muteUpdateTimeout = null;
 let inputGainsUpdateTimeout = null;
 const showNewPresetDialog = ref(false);
 const newPresetName = ref('');
+const newPresetTemplate = ref('2.1');
 const newPresetNameInput = ref(null);
 const volume = ref(50);
 let volumeUpdateTimeout = null;
@@ -241,11 +243,6 @@ async function loadSystemData() {
     // Load system status
     try {
       const status = await apiClient.getStatus();
-      speakersEnabled.value = {
-        sub: status.speakerGains.sub !== 0.0,
-        left: status.speakerGains.left !== 0.0,
-        right: status.speakerGains.right !== 0.0
-      };
       muteEnabled.value = Boolean(status.mute?.muted);
       mutePercentage.value = status.mute?.percent ?? 100;
       if (status.inputGains) {
@@ -257,6 +254,7 @@ async function loadSystemData() {
         inputGainsDB.value.analog = linearToDb(status.inputGains.analog);
       }
       volume.value = status.volume ?? 50;
+      await loadActivePresetOutputs(status.currentPreset);
     } catch (statusError) {
       console.warn('Could not load system status:', statusError);
     }
@@ -334,7 +332,7 @@ async function createNewPreset() {
   if (!newPresetName.value.trim()) return;
   
   try {
-    await apiClient.createPreset(newPresetName.value.trim());
+    await apiClient.createPreset(newPresetName.value.trim(), newPresetTemplate.value);
 
     //Navigate to preset editor
     router.push(`/preset/${encodeURIComponent(newPresetName.value.trim())}`);
@@ -353,14 +351,60 @@ async function createNewPreset() {
   }
 }
 
-// System controls
-async function toggleSpeaker(speaker) {
+// ===== Mute groups =====
+// The active preset's enabled outputs, grouped by what they play (derived
+// from the source mix): left-fed, right-fed, and mono-fed ("Subs"). For a
+// 2.1 preset this reproduces the classic Left / Right / Subwoofer toggles.
+
+async function loadActivePresetOutputs(presetName) {
+  if (!presetName) {
+    activePresetName.value = null;
+    activeOutputs.value = [];
+    return;
+  }
   try {
-    // The API talks percent (0-100), same scale as /status speakerGains
-    await apiClient.setGlobalSpeakerGain(speaker, speakersEnabled.value[speaker] ? 100 : 0);
+    const preset = await apiClient.getPreset(presetName);
+    activePresetName.value = presetName;
+    activeOutputs.value = preset.outputs.map((o, index) => ({ ...o, index }));
   } catch (error) {
-    console.error('Failed to toggle speaker:', error);
-    errorMessage.value = `Failed to toggle speaker: ${error.message}`;
+    console.error('Failed to load active preset outputs:', error);
+    activeOutputs.value = [];
+  }
+}
+
+const muteGroups = computed(() => {
+  const groups = [
+    { id: 'left', label: 'Left', outputs: [] },
+    { id: 'right', label: 'Right', outputs: [] },
+    { id: 'subs', label: 'Subwoofer', outputs: [] },
+  ];
+  for (const output of activeOutputs.value) {
+    if (!output.enabled) continue;
+    const { left, right } = output.source;
+    if (left > 0 && right > 0) groups[2].outputs.push(output);
+    else if (left > 0) groups[0].outputs.push(output);
+    else if (right > 0) groups[1].outputs.push(output);
+  }
+  if (groups[2].outputs.length > 1) groups[2].label = 'Subwoofers';
+  return groups
+    .filter((g) => g.outputs.length > 0)
+    .map((g) => ({ ...g, playing: g.outputs.every((o) => !o.mute) }));
+});
+
+async function toggleMuteGroup(group, playing) {
+  const mute = !playing;
+  for (const output of group.outputs) {
+    // Optimistic; websocket outputChanged broadcasts confirm each one
+    const local = activeOutputs.value[output.index];
+    if (local) local.mute = mute;
+    try {
+      await apiClient.setOutputMute(activePresetName.value, output.index, mute);
+    } catch (error) {
+      console.error('Failed to toggle output mute:', error);
+      errorMessage.value = `Failed to toggle ${group.label}: ${error.message}`;
+      await loadActivePresetOutputs(activePresetName.value);
+      return;
+    }
   }
 }
 
@@ -439,11 +483,16 @@ function setupLiveUpdates() {
           ...p,
           isCurrent: p.name === data.activePresetName
         }));
+        loadActivePresetOutputs(data.activePresetName);
       }
       if (data.messageType === 'volumeChanged') {
         volume.value = data.volume;
       }
-      // Add more event handlers as needed
+      // Keep the mute groups in sync with output edits made elsewhere
+      if (data.messageType === 'outputChanged' && data.presetName === activePresetName.value) {
+        const output = activeOutputs.value[data.output];
+        if (output) Object.assign(output, data.changes);
+      }
     },
     (error) => {
       console.error('WebSocket error:', error);

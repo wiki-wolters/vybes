@@ -3,6 +3,17 @@ const sqlite3 = require('sqlite3').verbose();
 const WebSocket = require('ws');
 const cors = require('cors');
 const path = require('path');
+const {
+  NUM_OUTPUTS,
+  FIR_TAP_POOL,
+  MAX_OUTPUT_PEQ,
+  MAX_INPUT_PEQ,
+  MAX_DELAY_US,
+  CROSSOVER_TYPES,
+  DEFAULT_TEMPLATE,
+  buildPresetConfig,
+  listTemplates,
+} = require('./templates');
 
 const app = express();
 const expressStaticGzip = require('express-static-gzip');
@@ -34,12 +45,39 @@ if (process.env.NODE_ENV === 'production') {
 const dbPath = process.env.VYBES_DB_PATH || path.join(__dirname, 'vybes.db');
 const db = new sqlite3.Database(dbPath);
 
-// Mirrors MAX_PEQ_POINTS in ESP/esp-web-server/config.h
-const MAX_PEQ_POINTS = 15;
+// Mirrors MAX_PEQ_POINTS in ESP/esp-web-server/config.h (input EQ)
+const MAX_PEQ_POINTS = MAX_INPUT_PEQ;
 
 const clamp = (value, lo, hi) => Math.min(hi, Math.max(lo, value));
 
-// Initialize database tables
+// Output gain range in dB
+const GAIN_DB_MIN = -40;
+const GAIN_DB_MAX = 10;
+
+// Fake tap counts per FIR file. The real ESP will derive these from file
+// sizes reported by the Teensy; the mock uses a fixed map (unknown files
+// count as 2048 taps).
+const FIR_FILE_TAPS = {
+  'fir_flat.txt': 1024,
+  'fir_room1.txt': 4096,
+  'fir_room2.txt': 4096,
+  'fir_speaker1.txt': 2048,
+  'fir_speaker2.txt': 2048,
+};
+const firTaps = (file) => (file ? (FIR_FILE_TAPS[file] ?? 2048) : 0);
+
+function firPool(config) {
+  const outputs = config.outputs.map((o, i) => ({ output: i, file: o.fir, taps: firTaps(o.fir) }));
+  return {
+    total: FIR_TAP_POOL,
+    used: outputs.reduce((sum, o) => sum + o.taps, 0),
+    outputs,
+  };
+}
+
+// Initialize database tables. Presets store the full V1 config as one JSON
+// document (see docs/CHANNEL_ARCHITECTURE.md); a pre-V1 database (columnar
+// left/right/sub schema) is dropped and reseeded - mock data is disposable.
 db.serialize(() => {
   // System settings table
   db.run(`CREATE TABLE IF NOT EXISTS system_settings (
@@ -47,32 +85,31 @@ db.serialize(() => {
     value TEXT
   )`);
 
-  // Presets table
-  db.run(`CREATE TABLE IF NOT EXISTS presets (
-    name TEXT PRIMARY KEY,
-    is_current INTEGER DEFAULT 0,
-    is_speaker_delay_enabled INTEGER DEFAULT 0,
-    speaker_delays TEXT DEFAULT '{"left": 0, "right": 0, "sub": 0}',
-    is_crossover_enabled INTEGER DEFAULT 0,
-    crossover_freq TEXT DEFAULT '80',
-    is_fir_enabled INTEGER DEFAULT 0,
-    fir_left TEXT DEFAULT '',
-    fir_right TEXT DEFAULT '',
-    fir_sub TEXT DEFAULT '',
-    gains TEXT DEFAULT '{"left": 100, "right": 100, "sub": 100}',
-    is_preference_eq_enabled INTEGER DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
+  db.all("PRAGMA table_info(presets)", (err, cols) => {
+    const isLegacy = !err && Array.isArray(cols) && cols.length > 0 && !cols.some((c) => c.name === 'config');
+    db.serialize(() => {
+      if (isLegacy) {
+        console.log('Pre-V1 mock database detected: dropping presets and reseeding (mock data is disposable)');
+        db.run("DROP TABLE IF EXISTS presets");
+        db.run("DROP TABLE IF EXISTS eq_configs");
+      }
 
-  // EQ configurations table
-  db.run(`CREATE TABLE IF NOT EXISTS eq_configs (
-    preset_name TEXT,
-    type TEXT,
-    spl INTEGER,
-    peq_data TEXT,
-    PRIMARY KEY (preset_name, type, spl),
-    FOREIGN KEY (preset_name) REFERENCES presets (name) ON DELETE CASCADE
-  )`);
+      db.run(`CREATE TABLE IF NOT EXISTS presets (
+        name TEXT PRIMARY KEY,
+        is_current INTEGER DEFAULT 0,
+        config TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`);
+
+      // Create default preset if none exist
+      db.get("SELECT COUNT(*) as count FROM presets", (err, row) => {
+        if (!err && row && row.count === 0) {
+          db.run("INSERT INTO presets (name, is_current, config) VALUES ('Default', 1, ?)",
+            [JSON.stringify(buildPresetConfig(DEFAULT_TEMPLATE))]);
+        }
+      });
+    });
+  });
 
   // Insert default settings if they don't exist. Gains use the same scales
   // as the ESP API: speaker gains are 0-100 percent (api_system.cpp reports
@@ -102,47 +139,6 @@ db.serialize(() => {
       });
       stmt.finalize();
     }
-  });
-
-  // Create default preset if none exist
-  db.get("SELECT COUNT(*) as count FROM presets", (err, row) => {
-    if (row.count === 0) {
-      db.run(`INSERT INTO presets (name, is_current) VALUES ('Default', 1)`);
-    }
-  });
-
-  // Migrate databases seeded by older mock versions, which stored speaker
-  // and preset gains on the ESP-internal 0-1 linear scale (the API talks
-  // 0-100 percent - see ESP/esp-web-server/config.cpp) and seeded a
-  // mute_percent of 0.
-  ['sub_gain', 'left_gain', 'right_gain'].forEach((key) => {
-    db.get("SELECT value FROM system_settings WHERE key = ?", [key], (err, row) => {
-      if (!err && row && parseFloat(row.value) <= 2) {
-        db.run("UPDATE system_settings SET value = ? WHERE key = ?",
-          [(parseFloat(row.value) * 100).toString(), key]);
-      }
-    });
-  });
-  db.get("SELECT value FROM system_settings WHERE key = 'mute_percent'", (err, row) => {
-    if (!err && row && parseInt(row.value) === 0) {
-      db.run("UPDATE system_settings SET value = '100' WHERE key = 'mute_percent'");
-    }
-  });
-  db.all("SELECT name, gains FROM presets", (err, rows) => {
-    if (err || !rows) return;
-    rows.forEach((row) => {
-      try {
-        const gains = JSON.parse(row.gains);
-        if ([gains.left, gains.right, gains.sub].every((v) => typeof v === 'number' && v <= 2)) {
-          const scaled = JSON.stringify({
-            left: gains.left * 100,
-            right: gains.right * 100,
-            sub: gains.sub * 100
-          });
-          db.run("UPDATE presets SET gains = ? WHERE name = ?", [scaled, row.name]);
-        }
-      } catch (e) { /* leave unparseable rows alone */ }
-    });
   });
 });
 
@@ -230,10 +226,143 @@ function setSetting(key, value) {
   });
 }
 
-// ===== API ROUTES - MATCHING THE ESP32 ROUTES =====
-// Each route mirrors its handler in ESP/esp-web-server (web_server.cpp lists
-// the routes; api_*.cpp implement them): same query parameter names, same
-// value ranges, same response and websocket broadcast shapes.
+// Promise wrappers for the preset handlers (async/await keeps the many V1
+// endpoints readable)
+const dbGet = (sql, params = []) => new Promise((resolve, reject) => {
+  db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row)));
+});
+const dbAll = (sql, params = []) => new Promise((resolve, reject) => {
+  db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
+});
+const dbRun = (sql, params = []) => new Promise((resolve, reject) => {
+  db.run(sql, params, function (err) { (err ? reject(err) : resolve(this)); });
+});
+
+/** Load a preset row and parse its config. Returns null when missing. */
+async function loadPreset(name) {
+  const row = await dbGet("SELECT name, is_current, config FROM presets WHERE name = ?", [name]);
+  if (!row) return null;
+  return { name: row.name, isCurrent: Boolean(row.is_current), config: JSON.parse(row.config) };
+}
+
+/** Write a single JSON path inside a preset's config atomically. */
+function saveConfigPath(name, jsonPath, value) {
+  const isScalar = typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean';
+  if (isScalar) {
+    // Booleans become json true/false (not 0/1) so parses stay consistent
+    if (typeof value === 'boolean') {
+      return dbRun("UPDATE presets SET config = json_set(config, ?, json(?)) WHERE name = ?",
+        [jsonPath, JSON.stringify(value), name]);
+    }
+    return dbRun("UPDATE presets SET config = json_set(config, ?, ?) WHERE name = ?",
+      [jsonPath, value, name]);
+  }
+  return dbRun("UPDATE presets SET config = json_set(config, ?, json(?)) WHERE name = ?",
+    [jsonPath, JSON.stringify(value), name]);
+}
+
+/** Full config write - for structural, multi-field edits only. */
+function saveConfig(name, config) {
+  return dbRun("UPDATE presets SET config = ? WHERE name = ?", [JSON.stringify(config), name]);
+}
+
+/** Async express handler wrapper */
+const wrap = (fn) => (req, res) => {
+  Promise.resolve(fn(req, res)).catch((err) => {
+    console.error(err);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  });
+};
+
+/**
+ * Common preset + output parameter handling. Replies with the right error
+ * and returns null, or returns {preset, outputIndex}.
+ */
+async function requirePresetOutput(req, res) {
+  const presetName = req.query.preset_name;
+  if (!presetName) {
+    res.status(400).json({ error: 'Missing preset_name parameter' });
+    return null;
+  }
+  const outputParam = req.query.output;
+  const outputIndex = Number(outputParam);
+  if (outputParam === undefined || !Number.isInteger(outputIndex) || outputIndex < 0 || outputIndex >= NUM_OUTPUTS) {
+    res.status(400).json({ error: `Output must be an integer 0-${NUM_OUTPUTS - 1}` });
+    return null;
+  }
+  const preset = await loadPreset(presetName);
+  if (!preset) {
+    res.status(404).json({ error: 'Preset not found' });
+    return null;
+  }
+  return { preset, outputIndex };
+}
+
+/**
+ * The effective high-pass frequency of an output: the manual or referenced
+ * crossover frequency, or 0 when the HP is off/unresolvable.
+ */
+function effectiveHpFreq(output, crossovers) {
+  const hp = output.hp || { mode: 'off' };
+  if (hp.mode === 'manual') return Number(hp.freq) || 0;
+  if (hp.mode === 'xover') {
+    const point = crossovers.find((c) => c.id === hp.xover);
+    return point ? point.freq : 0;
+  }
+  return 0;
+}
+
+/**
+ * Safety check: would this config leave any output's effective HP below its
+ * hpFloor? Returns an error string or null. This is the driver-protection
+ * backstop - it must hold no matter which endpoint made the edit.
+ */
+function hpFloorViolation(config) {
+  for (let i = 0; i < config.outputs.length; i++) {
+    const output = config.outputs[i];
+    if (!output.enabled || !(output.hpFloor > 0)) continue;
+    const freq = effectiveHpFreq(output, config.crossovers);
+    if (freq < output.hpFloor) {
+      return `Output ${i + 1} (${output.label}) requires a high-pass at or above ${output.hpFloor} Hz`;
+    }
+  }
+  return null;
+}
+
+const parseOnOff = (value) => (value === 'on' ? true : value === 'off' ? false : null);
+
+// Broadcast helper for single-output edits: carries the changed fields so
+// the UI store can merge without refetching.
+function broadcastOutputChanged(presetName, outputIndex, changes, extra = {}) {
+  const payload = {
+    messageType: 'outputChanged',
+    presetName,
+    status: 'ok',
+    output: outputIndex,
+    changes,
+    ...extra,
+  };
+  broadcast(payload);
+  return payload;
+}
+
+/**
+ * Structural edits (routing, crossover sections, enabling outputs) take a
+ * preset beyond what its template's simple view can express: flip it to
+ * "custom" so the UI renders the full editor. Cosmetic/tuning edits (gain,
+ * delay, PEQ, FIR, labels, mute) keep the template. Returns the extra
+ * fields for the outputChanged payload.
+ */
+async function flipTemplateToCustom(preset) {
+  if (preset.config.template === 'custom') return {};
+  await saveConfigPath(preset.name, '$.template', 'custom');
+  return { template: 'custom' };
+}
+
+// ===== API ROUTES =====
+// The V1 preset/output/crossover endpoints below ARE the contract the new
+// ESP32-S3 firmware implements (docs/CHANNEL_ARCHITECTURE.md). System-level
+// routes still mirror the existing ESP handlers (api_*.cpp).
 
 // System Status - shape matches api_system.cpp handleGetStatus
 app.get('/status', async (req, res) => {
@@ -466,307 +595,603 @@ app.put('/gains/input', async (req, res) => {
   }
 });
 
-// Preset gains - api_gains.cpp + config.cpp, 0-100 percent per speaker
-app.get('/preset/gains', (req, res) => {
-  const presetName = req.query.preset_name;
-  if (!presetName) {
-    return res.status(400).json({ error: 'Missing preset_name' });
-  }
+// ===== Templates =====
 
-  db.get("SELECT gains FROM presets WHERE name = ?", [presetName], (err, row) => {
+app.get('/templates', (req, res) => {
+  res.json(listTemplates());
+});
+
+// ===== Preset listing / full preset =====
+
+app.get('/presets', (req, res) => {
+  db.all("SELECT name, is_current FROM presets ORDER BY rowid", (err, rows) => {
     if (err) {
       return res.status(500).json({ error: err.message });
     }
-    if (!row) {
-      return res.status(404).json({ error: 'Preset not found' });
-    }
-    res.json(JSON.parse(row.gains));
+    const presets = rows.map(row => ({
+      name: row.name,
+      isCurrent: Boolean(row.is_current)
+    }));
+    res.json(presets);
   });
 });
 
-app.put('/preset/gains', (req, res) => {
-  const presetName = req.query.preset_name;
-  if (!presetName) {
-    return res.status(400).json({ error: 'Missing preset_name' });
-  }
-
-  // Like the ESP (config_set_preset_gains), only channels present in the
-  // body are updated - a partial payload must not zero the omitted ones
-  db.get("SELECT gains FROM presets WHERE name = ?", [presetName], (err, row) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    if (!row) {
-      return res.status(404).json({ error: 'Preset not found' });
-    }
-
-    let gains;
-    try { gains = JSON.parse(row.gains); } catch (e) { gains = { left: 100, right: 100, sub: 100 }; }
-    for (const channel of ['left', 'right', 'sub']) {
-      if (typeof req.body[channel] === 'number' && Number.isFinite(req.body[channel])) {
-        gains[channel] = req.body[channel];
-      }
-    }
-
-    db.run("UPDATE presets SET gains = ? WHERE name = ?", [JSON.stringify(gains), presetName], function(err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      res.json({ success: true });
-    });
-  });
-});
-
-// FIR Filter Management - api_fir.cpp handleGetFirFiles returns a plain
-// JSON array of filenames ([] when the Teensy's list is unavailable)
-app.get('/fir/files', (req, res) => {
-  res.json([
-    'fir_flat.txt',
-    'fir_room1.txt',
-    'fir_room2.txt',
-    'fir_speaker1.txt',
-    'fir_speaker2.txt'
-  ]);
-});
-
-app.put('/preset/fir/enabled', (req, res) => {
-  const presetName = req.query.preset_name;
-  const state = req.query.state;
-
-  if (!presetName) {
-    return res.status(400).json({ error: 'Missing preset_name parameter' });
-  }
-  if (!['on', 'off'].includes(state)) {
-    return res.status(400).json({ error: 'Invalid state' });
-  }
-
-  const enabled = state === 'on';
-
-  db.run("UPDATE presets SET is_fir_enabled = ? WHERE name = ?", [enabled ? 1 : 0, presetName], function(err) {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-
-    if (this.changes === 0) {
-      return res.status(404).json({ error: 'Preset not found' });
-    }
-
-    const payload = {
-      messageType: 'firEnabledChanged',
-      presetName,
-      status: 'ok',
-      FIRFiltersEnabled: enabled
-    };
-    broadcast(payload);
-    res.json(payload);
-  });
-});
-
-app.put('/preset/fir', (req, res) => {
-  const presetName = req.query.preset_name;
-  const speaker = req.query.speaker;
-  const file = req.query.file; // empty string clears the filter
-
-  if (!presetName || !speaker || file === undefined) {
+// Full preset - the V1 shape
+app.get('/preset', wrap(async (req, res) => {
+  const name = req.query.name;
+  if (!name) {
     return res.status(400).json({ error: 'Missing required parameters' });
   }
 
-  if (!['left', 'right', 'sub'].includes(speaker)) {
-    return res.status(400).json({ error: 'Invalid speaker' });
+  const preset = await loadPreset(name);
+  if (!preset) {
+    return res.status(404).json({ error: 'Preset not found' });
   }
 
-  const column = `fir_${speaker}`;
-  db.run(`UPDATE presets SET ${column} = ? WHERE name = ?`,
-    [file, presetName],
-    function(err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
+  const c = preset.config;
+  const pool = firPool(c);
+  res.json({
+    name: preset.name,
+    isCurrent: preset.isCurrent,
+    template: c.template,
+    crossovers: c.crossovers,
+    inputEq: c.inputEq,
+    outputs: c.outputs,
+    delaysEnabled: c.delaysEnabled,
+    firEnabled: c.firEnabled,
+    firPool: { total: pool.total, used: pool.used },
+  });
+}));
 
-      if (this.changes === 0) {
-        return res.status(404).json({ error: 'Preset not found' });
-      }
+// ===== Preset CRUD =====
 
-      const payload = {
-        messageType: 'firChanged',
-        presetName,
-        status: 'ok',
-        speaker,
-        filename: file
-      };
-      broadcast(payload);
-      res.json(payload);
+app.post('/preset', wrap(async (req, res) => {
+  const action = req.query.action;
+
+  if (action === 'create') {
+    // Creates a preset from a template (default 2.1). Everything starts
+    // disabled. Does not change the active preset.
+    const name = req.query.name;
+    const templateId = req.query.template || DEFAULT_TEMPLATE;
+
+    if (!name) {
+      return res.status(400).json({ error: 'Missing required parameters' });
     }
-  );
-});
 
-// Active preset - api_presets.cpp handlePutActivePreset
-app.put('/preset/active', (req, res) => {
+    let config;
+    try {
+      config = buildPresetConfig(templateId);
+    } catch (e) {
+      return res.status(400).json({ error: `Unknown template: ${templateId}` });
+    }
+
+    const existing = await dbGet("SELECT name FROM presets WHERE name = ?", [name]);
+    if (existing) {
+      return res.status(409).json({ error: 'Preset name already exists' });
+    }
+
+    await dbRun("INSERT INTO presets (name, is_current, config) VALUES (?, 0, ?)",
+      [name, JSON.stringify(config)]);
+    res.status(201).json({});
+  } else if (action === 'copy') {
+    const sourceName = req.query.source;
+    const destName = req.query.destination;
+
+    if (!sourceName || !destName) {
+      return res.status(400).json({ error: 'Missing required parameters' });
+    }
+
+    const existing = await dbGet("SELECT name FROM presets WHERE name = ?", [destName]);
+    if (existing) {
+      return res.status(409).json({ error: 'Destination preset name already exists' });
+    }
+
+    const source = await dbGet("SELECT config FROM presets WHERE name = ?", [sourceName]);
+    if (!source) {
+      return res.status(404).json({ error: 'Source preset not found' });
+    }
+
+    await dbRun("INSERT INTO presets (name, is_current, config) VALUES (?, 0, ?)",
+      [destName, source.config]);
+    res.status(201).json({});
+  } else {
+    res.status(400).json({ error: 'Missing or unknown action' });
+  }
+}));
+
+app.put('/preset', wrap(async (req, res) => {
+  const action = req.query.action;
+
+  if (action === 'rename') {
+    const oldName = req.query.old_name;
+    const newName = req.query.new_name;
+
+    if (!oldName || !newName) {
+      return res.status(400).json({ error: 'Missing required parameters' });
+    }
+
+    try {
+      const result = await dbRun("UPDATE presets SET name = ? WHERE name = ?", [newName, oldName]);
+      if (result.changes === 0) {
+        return res.status(404).json({ error: 'Preset to rename not found' });
+      }
+      res.json({});
+    } catch (err) {
+      if (err.code === 'SQLITE_CONSTRAINT') {
+        return res.status(409).json({ error: 'New preset name already exists' });
+      }
+      throw err;
+    }
+  } else {
+    res.status(400).json({ error: 'Missing or unknown action' });
+  }
+}));
+
+app.delete('/preset', wrap(async (req, res) => {
   const name = req.query.name;
 
   if (!name) {
     return res.status(400).json({ error: 'Missing required parameters' });
   }
 
-  db.get("SELECT name FROM presets WHERE name = ?", [name], (err, row) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    if (!row) {
-      return res.status(404).json({ error: 'Preset not found' });
-    }
-
-    db.run("UPDATE presets SET is_current = 0", (err) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-
-      db.run("UPDATE presets SET is_current = 1 WHERE name = ?", [name], (err) => {
-        if (err) {
-          return res.status(500).json({ error: err.message });
-        }
-
-        db.all("SELECT name FROM presets ORDER BY rowid", (err, rows) => {
-          const index = rows ? rows.findIndex(r => r.name === name) : 0;
-          broadcast({
-            messageType: 'activePresetChanged',
-            activePresetName: name,
-            activePresetIndex: index
-          });
-          res.json({});
-        });
-      });
-    });
-  });
-});
-
-// Feature enablement - the ESP takes preset_name + enabled={on|off}
-app.put('/preset/delay/enabled', (req, res) => {
-  const presetName = req.query.preset_name;
-  const state = req.query.enabled;
-
-  if (!presetName) {
-    return res.status(400).json({ error: 'Missing preset_name parameter' });
-  }
-  if (!['on', 'off'].includes(state)) {
-    return res.status(400).json({ error: "Invalid state. Must be 'on' or 'off'" });
+  const existing = await dbGet("SELECT name FROM presets WHERE name = ?", [name]);
+  if (!existing) {
+    return res.status(404).json({ error: 'Preset not found' });
   }
 
-  const enabled = state === 'on';
-
-  db.run("UPDATE presets SET is_speaker_delay_enabled = ? WHERE name = ?", [enabled ? 1 : 0, presetName], function(err) {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-
-    if (this.changes === 0) {
-      return res.status(404).json({ error: 'Preset not found' });
-    }
-
-    const payload = { messageType: 'delayEnabledChanged', presetName, status: 'ok', enabled };
-    broadcast(payload);
-    res.json(payload);
-  });
-});
-
-app.put('/preset/eq/enabled', (req, res) => {
-  const presetName = req.query.preset_name;
-  const state = req.query.enabled;
-
-  if (!presetName) {
-    return res.status(400).json({ error: 'Missing preset_name parameter' });
-  }
-  if (!['on', 'off'].includes(state)) {
-    return res.status(400).json({ error: "Invalid state. Must be 'on' or 'off'" });
+  // api_presets.cpp handleDeletePreset: refuse to delete the last
+  // remaining preset (names can be changed, so protecting "Default" by
+  // name wouldn't protect anything)
+  const countRow = await dbGet("SELECT COUNT(*) as count FROM presets");
+  if (countRow.count <= 1) {
+    return res.status(400).json({ error: 'Cannot delete the last remaining preset' });
   }
 
-  const enabled = state === 'on';
+  await dbRun("DELETE FROM presets WHERE name = ?", [name]);
 
-  db.run("UPDATE presets SET is_preference_eq_enabled = ? WHERE name = ?", [enabled ? 1 : 0, presetName], function(err) {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-
-    if (this.changes === 0) {
-      return res.status(404).json({ error: 'Preset not found' });
-    }
-
-    const payload = { messageType: 'eqEnabledChanged', presetName, status: 'ok', enabled };
-    broadcast(payload);
-    res.json(payload);
-  });
-});
-
-app.put('/preset/crossover/enabled', (req, res) => {
-  const presetName = req.query.preset_name;
-  const state = req.query.enabled;
-
-  if (!presetName) {
-    return res.status(400).json({ error: 'Missing preset_name parameter' });
+  // Like the ESP, deleting the active preset falls back to the first
+  // remaining preset
+  const current = await dbGet("SELECT name FROM presets WHERE is_current = 1");
+  if (!current) {
+    await dbRun("UPDATE presets SET is_current = 1 WHERE rowid = (SELECT MIN(rowid) FROM presets)");
   }
-  if (!['on', 'off'].includes(state)) {
-    return res.status(400).json({ error: 'Invalid state' });
-  }
+  res.json({});
+}));
 
-  const enabled = state === 'on';
+// Active preset - api_presets.cpp handlePutActivePreset
+app.put('/preset/active', wrap(async (req, res) => {
+  const name = req.query.name;
 
-  db.run("UPDATE presets SET is_crossover_enabled = ? WHERE name = ?", [enabled ? 1 : 0, presetName], function(err) {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-
-    if (this.changes === 0) {
-      return res.status(404).json({ error: 'Preset not found' });
-    }
-
-    const payload = { messageType: 'crossoverEnabledChanged', presetName, status: 'ok', crossoverEnabled: enabled };
-    broadcast(payload);
-    res.json(payload);
-  });
-});
-
-// Speaker Configuration - Delay (api_presets.cpp handlePutPresetDelayNamed:
-// preset_name + speaker + value, 0-20000 microseconds)
-app.put('/preset/delay', (req, res) => {
-  const presetName = req.query.preset_name;
-  const speaker = req.query.speaker;
-  const value = req.query.value;
-
-  if (!presetName || !speaker || value === undefined) {
+  if (!name) {
     return res.status(400).json({ error: 'Missing required parameters' });
   }
 
-  if (!['left', 'right', 'sub'].includes(speaker)) {
-    return res.status(400).json({ error: "Invalid speaker. Must be 'left', 'right', or 'sub'" });
+  const row = await dbGet("SELECT name FROM presets WHERE name = ?", [name]);
+  if (!row) {
+    return res.status(404).json({ error: 'Preset not found' });
   }
 
-  const delayUs = parseFloat(value);
-  if (isNaN(delayUs) || delayUs < 0 || delayUs > 20000) {
-    return res.status(400).json({ error: 'Delay must be between 0 and 20,000 microseconds' });
+  await dbRun("UPDATE presets SET is_current = 0");
+  await dbRun("UPDATE presets SET is_current = 1 WHERE name = ?", [name]);
+
+  const rows = await dbAll("SELECT name FROM presets ORDER BY rowid");
+  const index = rows ? rows.findIndex(r => r.name === name) : 0;
+  broadcast({
+    messageType: 'activePresetChanged',
+    activePresetName: name,
+    activePresetIndex: index
+  });
+  res.json({});
+}));
+
+// ===== Crossover points =====
+
+// Set a crossover point's frequency. Points are shared: every output filter
+// referencing the id follows. Safety semantics:
+//  - locked points reject writes without confirm=true (409)
+//  - a change may never leave an output's HP below its hpFloor (409)
+app.put('/preset/crossover', wrap(async (req, res) => {
+  const presetName = req.query.preset_name;
+  const freqStr = req.query.frequency;
+  const id = req.query.id;
+  const confirmed = req.query.confirm === 'true';
+
+  if (!presetName || freqStr === undefined || !id) {
+    return res.status(400).json({ error: 'Missing required parameters' });
   }
 
-  // Update the one speaker atomically in SQL: a read-modify-write in JS
-  // loses updates when two delay PUTs arrive concurrently (the UI saves
-  // each speaker independently)
-  db.run("UPDATE presets SET speaker_delays = json_set(speaker_delays, ?, ?) WHERE name = ?",
-    [`$.${speaker}`, delayUs, presetName],
-    function(err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      if (this.changes === 0) {
-        return res.status(404).json({ error: 'Preset not found' });
-      }
+  const preset = await loadPreset(presetName);
+  if (!preset) {
+    return res.status(404).json({ error: 'Preset not found' });
+  }
 
-      const payload = { messageType: 'delayChanged', presetName, status: 'ok', speaker, delayUs };
-      broadcast(payload);
-      res.json(payload);
+  const config = preset.config;
+  const index = config.crossovers.findIndex((x) => x.id === id);
+  if (index === -1) {
+    return res.status(404).json({ error: `Crossover point not found: ${id}` });
+  }
+  const point = config.crossovers[index];
+
+  const freq = parseInt(freqStr);
+  if (isNaN(freq) || freq < point.min || freq > point.max) {
+    return res.status(400).json({ error: `Crossover frequency must be between ${point.min} and ${point.max} Hz` });
+  }
+
+  if (point.locked && !confirmed) {
+    return res.status(409).json({
+      error: `Crossover point ${id} is locked. Re-send with confirm=true to apply.`,
+      locked: true,
     });
-});
+  }
 
-// EQ Points (JSON body) - api_preset_config.cpp handlePutPresetEQPoints:
-// preset_name query param + array body, values clamped, replies 204
-app.put('/preset/eq', (req, res) => {
+  const candidate = JSON.parse(JSON.stringify(config));
+  candidate.crossovers[index].freq = freq;
+  const violation = hpFloorViolation(candidate);
+  if (violation) {
+    return res.status(409).json({ error: violation });
+  }
+
+  await saveConfigPath(presetName, `$.crossovers[${index}].freq`, freq);
+
+  const payload = { messageType: 'crossoverChanged', presetName, status: 'ok', id, crossoverFreq: freq };
+  broadcast(payload);
+  res.json(payload);
+}));
+
+// Bypass/enable a crossover point: toggles mode between 'xover' and 'off'
+// on every filter that references it (the xover ref is kept so re-enabling
+// restores it). Locked points need confirm=true; hpFloor blocks bypassing
+// a protective HP entirely.
+app.put('/preset/crossover/enabled', wrap(async (req, res) => {
+  const presetName = req.query.preset_name;
+  const state = req.query.enabled;
+  const id = req.query.id;
+  const confirmed = req.query.confirm === 'true';
+
+  if (!presetName || !id) {
+    return res.status(400).json({ error: 'Missing required parameters' });
+  }
+  const enabled = parseOnOff(state);
+  if (enabled === null) {
+    return res.status(400).json({ error: 'Invalid state' });
+  }
+
+  const preset = await loadPreset(presetName);
+  if (!preset) {
+    return res.status(404).json({ error: 'Preset not found' });
+  }
+
+  const config = preset.config;
+  const point = config.crossovers.find((x) => x.id === id);
+  if (!point) {
+    return res.status(404).json({ error: `Crossover point not found: ${id}` });
+  }
+
+  if (point.locked && !confirmed) {
+    return res.status(409).json({
+      error: `Crossover point ${id} is locked. Re-send with confirm=true to apply.`,
+      locked: true,
+    });
+  }
+
+  const candidate = JSON.parse(JSON.stringify(config));
+  for (const output of candidate.outputs) {
+    for (const which of ['hp', 'lp']) {
+      const filter = output[which];
+      if (filter.xover === id && ['xover', 'off'].includes(filter.mode)) {
+        filter.mode = enabled ? 'xover' : 'off';
+      }
+    }
+  }
+  const violation = hpFloorViolation(candidate);
+  if (violation) {
+    return res.status(409).json({ error: violation });
+  }
+
+  await saveConfig(presetName, candidate);
+
+  const payload = { messageType: 'crossoverEnabledChanged', presetName, status: 'ok', id, crossoverEnabled: enabled };
+  broadcast(payload);
+  res.json(payload);
+}));
+
+// ===== Output channels =====
+
+app.put('/preset/output/label', wrap(async (req, res) => {
+  const ctx = await requirePresetOutput(req, res);
+  if (!ctx) return;
+  const label = req.query.label;
+  if (!label || label.length > 24) {
+    return res.status(400).json({ error: 'Label must be 1-24 characters' });
+  }
+  await saveConfigPath(ctx.preset.name, `$.outputs[${ctx.outputIndex}].label`, label);
+  res.json(broadcastOutputChanged(ctx.preset.name, ctx.outputIndex, { label }));
+}));
+
+app.put('/preset/output/enabled', wrap(async (req, res) => {
+  const ctx = await requirePresetOutput(req, res);
+  if (!ctx) return;
+  const enabled = parseOnOff(req.query.state);
+  if (enabled === null) {
+    return res.status(400).json({ error: 'Invalid state' });
+  }
+  await saveConfigPath(ctx.preset.name, `$.outputs[${ctx.outputIndex}].enabled`, enabled);
+  const extra = await flipTemplateToCustom(ctx.preset);
+  res.json(broadcastOutputChanged(ctx.preset.name, ctx.outputIndex, { enabled }, extra));
+}));
+
+// Source mix: JSON body {left, right}, each clamped to 0..1
+app.put('/preset/output/source', wrap(async (req, res) => {
+  const ctx = await requirePresetOutput(req, res);
+  if (!ctx) return;
+  const body = req.body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)
+      || typeof body.left !== 'number' || typeof body.right !== 'number') {
+    return res.status(400).json({ error: 'Expected a JSON body with numeric left and right' });
+  }
+  const source = { left: clamp(body.left, 0, 1), right: clamp(body.right, 0, 1) };
+  await saveConfigPath(ctx.preset.name, `$.outputs[${ctx.outputIndex}].source`, source);
+  const extra = await flipTemplateToCustom(ctx.preset);
+  res.json(broadcastOutputChanged(ctx.preset.name, ctx.outputIndex, { source }, extra));
+}));
+
+app.put('/preset/output/gain', wrap(async (req, res) => {
+  const ctx = await requirePresetOutput(req, res);
+  if (!ctx) return;
+  const parsed = parseFloat(req.query.value);
+  if (isNaN(parsed)) {
+    return res.status(400).json({ error: 'Missing or invalid value' });
+  }
+  const gainDb = clamp(parsed, GAIN_DB_MIN, GAIN_DB_MAX);
+  await saveConfigPath(ctx.preset.name, `$.outputs[${ctx.outputIndex}].gainDb`, gainDb);
+  res.json(broadcastOutputChanged(ctx.preset.name, ctx.outputIndex, { gainDb }));
+}));
+
+app.put('/preset/output/mute', wrap(async (req, res) => {
+  const ctx = await requirePresetOutput(req, res);
+  if (!ctx) return;
+  const mute = parseOnOff(req.query.state);
+  if (mute === null) {
+    return res.status(400).json({ error: 'Invalid state' });
+  }
+  await saveConfigPath(ctx.preset.name, `$.outputs[${ctx.outputIndex}].mute`, mute);
+  res.json(broadcastOutputChanged(ctx.preset.name, ctx.outputIndex, { mute }));
+}));
+
+app.put('/preset/output/invert', wrap(async (req, res) => {
+  const ctx = await requirePresetOutput(req, res);
+  if (!ctx) return;
+  const invert = parseOnOff(req.query.state);
+  if (invert === null) {
+    return res.status(400).json({ error: 'Invalid state' });
+  }
+  await saveConfigPath(ctx.preset.name, `$.outputs[${ctx.outputIndex}].invert`, invert);
+  res.json(broadcastOutputChanged(ctx.preset.name, ctx.outputIndex, { invert }));
+}));
+
+app.put('/preset/output/delay', wrap(async (req, res) => {
+  const ctx = await requirePresetOutput(req, res);
+  if (!ctx) return;
+  const delayUs = parseFloat(req.query.value);
+  if (isNaN(delayUs) || delayUs < 0 || delayUs > MAX_DELAY_US) {
+    return res.status(400).json({ error: `Delay must be between 0 and ${MAX_DELAY_US} microseconds` });
+  }
+  await saveConfigPath(ctx.preset.name, `$.outputs[${ctx.outputIndex}].delayUs`, delayUs);
+  res.json(broadcastOutputChanged(ctx.preset.name, ctx.outputIndex, { delayUs }));
+}));
+
+// HP/LP filter section: which=hp|lp, JSON body
+//   {mode: 'off'} | {mode: 'xover', xover: id} | {mode: 'manual', freq, type}
+// hpFloor is enforced on HP edits (including switching it off).
+app.put('/preset/output/filter', wrap(async (req, res) => {
+  const ctx = await requirePresetOutput(req, res);
+  if (!ctx) return;
+  const which = req.query.which;
+  if (!['hp', 'lp'].includes(which)) {
+    return res.status(400).json({ error: "Parameter 'which' must be 'hp' or 'lp'" });
+  }
+
+  const body = req.body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return res.status(400).json({ error: 'Expected a JSON filter object' });
+  }
+
+  const config = ctx.preset.config;
+  let filter;
+  if (body.mode === 'off') {
+    // Keep a previously referenced crossover id so re-enabling restores it
+    const previous = config.outputs[ctx.outputIndex][which];
+    filter = previous.xover ? { mode: 'off', xover: previous.xover } : { mode: 'off' };
+  } else if (body.mode === 'xover') {
+    if (!config.crossovers.some((x) => x.id === body.xover)) {
+      return res.status(400).json({ error: `Unknown crossover point: ${body.xover}` });
+    }
+    filter = { mode: 'xover', xover: body.xover };
+  } else if (body.mode === 'manual') {
+    const freq = Number(body.freq);
+    const type = body.type || 'LR4';
+    if (!Number.isFinite(freq) || freq < 20 || freq > 20000) {
+      return res.status(400).json({ error: 'Manual filter frequency must be between 20 and 20000 Hz' });
+    }
+    if (!CROSSOVER_TYPES.includes(type)) {
+      return res.status(400).json({ error: `Filter type must be one of ${CROSSOVER_TYPES.join(', ')}` });
+    }
+    filter = { mode: 'manual', freq, type };
+  } else {
+    return res.status(400).json({ error: "Filter mode must be 'off', 'xover' or 'manual'" });
+  }
+
+  const candidate = JSON.parse(JSON.stringify(config));
+  candidate.outputs[ctx.outputIndex][which] = filter;
+  const violation = hpFloorViolation(candidate);
+  if (violation) {
+    return res.status(409).json({ error: violation });
+  }
+
+  await saveConfigPath(ctx.preset.name, `$.outputs[${ctx.outputIndex}].${which}`, filter);
+  const extra = await flipTemplateToCustom(ctx.preset);
+  res.json(broadcastOutputChanged(ctx.preset.name, ctx.outputIndex, { [which]: filter }, extra));
+}));
+
+// Output PEQ: array body (<= MAX_OUTPUT_PEQ points), clamped like input EQ
+app.put('/preset/output/eq', wrap(async (req, res) => {
+  const ctx = await requirePresetOutput(req, res);
+  if (!ctx) return;
+  const pointsArray = req.body;
+  if (!Array.isArray(pointsArray)) {
+    return res.status(400).json({ error: 'Expected a JSON array of PEQ points' });
+  }
+  if (pointsArray.length > MAX_OUTPUT_PEQ) {
+    return res.status(400).json({ error: 'Too many PEQ points' });
+  }
+
+  const points = pointsArray.map((point) => ({
+    freq: clamp(Number(point.freq ?? 1000), 20, 20000),
+    gain: clamp(Number(point.gain ?? 0), -15, 15),
+    q: clamp(Number(point.q ?? 1), 0.1, 10)
+  }));
+
+  await saveConfigPath(ctx.preset.name, `$.outputs[${ctx.outputIndex}].peq`, points);
+
+  broadcast({
+    messageType: 'outputEqChanged',
+    presetName: ctx.preset.name,
+    status: 'ok',
+    output: ctx.outputIndex,
+    numPoints: points.length,
+  });
+  res.status(204).end();
+}));
+
+// Single output PEQ point (hot path while dragging): update in place or
+// append directly after the last point; a gap-leaving id is rejected.
+app.put('/preset/output/eq/point', wrap(async (req, res) => {
+  const ctx = await requirePresetOutput(req, res);
+  if (!ctx) return;
+  const point = req.body;
+  if (!point || typeof point !== 'object' || Array.isArray(point)) {
+    return res.status(400).json({ error: 'Expected a JSON PEQ point object' });
+  }
+
+  const id = Number.isInteger(point.id) ? point.id : -1;
+  if (id < 0 || id >= MAX_OUTPUT_PEQ) {
+    return res.status(400).json({ error: 'PEQ point ID out of bounds' });
+  }
+
+  const peq = ctx.preset.config.outputs[ctx.outputIndex].peq;
+  if (id > peq.length) {
+    return res.status(400).json({ error: 'PEQ point ID would leave a gap' });
+  }
+
+  const stored = {
+    freq: clamp(Number(point.freq ?? 1000), 20, 20000),
+    gain: clamp(Number(point.gain ?? 0), -15, 15),
+    q: clamp(Number(point.q ?? 1), 0.1, 10)
+  };
+  await saveConfigPath(ctx.preset.name, `$.outputs[${ctx.outputIndex}].peq[${id}]`, stored);
+  res.status(204).end();
+}));
+
+// FIR file per output. The shared tap pool is enforced here: a load that
+// would exceed it is rejected with 409 (the UI surfaces used/total).
+app.put('/preset/output/fir', wrap(async (req, res) => {
+  const ctx = await requirePresetOutput(req, res);
+  if (!ctx) return;
+  const file = req.query.file;
+  if (file === undefined) {
+    return res.status(400).json({ error: 'Missing file parameter' });
+  }
+
+  const candidate = JSON.parse(JSON.stringify(ctx.preset.config));
+  candidate.outputs[ctx.outputIndex].fir = file;
+  const pool = firPool(candidate);
+  if (pool.used > pool.total) {
+    return res.status(409).json({
+      error: `FIR tap pool exceeded: ${pool.used} of ${pool.total} taps`,
+      used: pool.used,
+      total: pool.total,
+    });
+  }
+
+  await saveConfigPath(ctx.preset.name, `$.outputs[${ctx.outputIndex}].fir`, file);
+  res.json(broadcastOutputChanged(ctx.preset.name, ctx.outputIndex, { fir: file }, {
+    firPool: { total: pool.total, used: pool.used },
+  }));
+}));
+
+// Tap pool status for a preset
+app.get('/preset/fir/pool', wrap(async (req, res) => {
+  const presetName = req.query.preset_name;
+  if (!presetName) {
+    return res.status(400).json({ error: 'Missing preset_name parameter' });
+  }
+  const preset = await loadPreset(presetName);
+  if (!preset) {
+    return res.status(404).json({ error: 'Preset not found' });
+  }
+  res.json(firPool(preset.config));
+}));
+
+// ===== Master toggles (delays / FIR) =====
+
+app.put('/preset/delay/enabled', wrap(async (req, res) => {
+  const presetName = req.query.preset_name;
+  const enabled = parseOnOff(req.query.enabled);
+
+  if (!presetName) {
+    return res.status(400).json({ error: 'Missing preset_name parameter' });
+  }
+  if (enabled === null) {
+    return res.status(400).json({ error: "Invalid state. Must be 'on' or 'off'" });
+  }
+
+  const preset = await loadPreset(presetName);
+  if (!preset) {
+    return res.status(404).json({ error: 'Preset not found' });
+  }
+
+  await saveConfigPath(presetName, '$.delaysEnabled', enabled);
+  const payload = { messageType: 'delayEnabledChanged', presetName, status: 'ok', enabled };
+  broadcast(payload);
+  res.json(payload);
+}));
+
+app.put('/preset/fir/enabled', wrap(async (req, res) => {
+  const presetName = req.query.preset_name;
+  const enabled = parseOnOff(req.query.state);
+
+  if (!presetName) {
+    return res.status(400).json({ error: 'Missing preset_name parameter' });
+  }
+  if (enabled === null) {
+    return res.status(400).json({ error: 'Invalid state' });
+  }
+
+  const preset = await loadPreset(presetName);
+  if (!preset) {
+    return res.status(404).json({ error: 'Preset not found' });
+  }
+
+  await saveConfigPath(presetName, '$.firEnabled', enabled);
+  const payload = { messageType: 'firEnabledChanged', presetName, status: 'ok', FIRFiltersEnabled: enabled };
+  broadcast(payload);
+  res.json(payload);
+}));
+
+// ===== Input EQ (shared L/R bus: preference curve + SPL sets) =====
+
+/** Find the spl=0 set index, creating the set if needed. */
+function getOrCreateSpl0SetIndex(config) {
+  let index = config.inputEq.sets.findIndex((s) => s.spl === 0);
+  if (index === -1) {
+    config.inputEq.sets.push({ spl: 0, points: [] });
+    index = config.inputEq.sets.length - 1;
+  }
+  return index;
+}
+
+// EQ Points (JSON body): array of points, values clamped, replies 204
+app.put('/preset/eq', wrap(async (req, res) => {
   const presetName = req.query.preset_name;
   if (!presetName) {
     return res.status(400).json({ error: 'Missing required parameters' });
@@ -780,47 +1205,37 @@ app.put('/preset/eq', (req, res) => {
     return res.status(400).json({ error: 'Too many PEQ points' });
   }
 
+  const preset = await loadPreset(presetName);
+  if (!preset) {
+    return res.status(404).json({ error: 'Preset not found' });
+  }
+
   const points = pointsArray.map((point) => ({
     freq: clamp(Number(point.freq ?? 1000), 20, 20000),
     gain: clamp(Number(point.gain ?? 0), -15, 15),
     q: clamp(Number(point.q ?? 1), 0.1, 10)
   }));
 
-  db.get("SELECT name FROM presets WHERE name = ?", [presetName], (err, preset) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    if (!preset) {
-      return res.status(404).json({ error: 'Preset not found' });
-    }
+  const setIndex = getOrCreateSpl0SetIndex(preset.config);
+  preset.config.inputEq.sets[setIndex].points = points;
+  await saveConfigPath(presetName, '$.inputEq.sets', preset.config.inputEq.sets);
 
-    db.run(
-      "INSERT OR REPLACE INTO eq_configs (preset_name, type, spl, peq_data) VALUES (?, 'pref', 0, ?)",
-      [presetName, JSON.stringify(points)],
-      function(err) {
-        if (err) {
-          return res.status(500).json({ error: err.message });
-        }
-
-        broadcast({
-          messageType: 'eqPointsChanged',
-          presetName,
-          status: 'ok',
-          eqType: 'pref',
-          spl: 0,
-          numPoints: points.length
-        });
-
-        res.status(204).end();
-      }
-    );
+  broadcast({
+    messageType: 'eqPointsChanged',
+    presetName,
+    status: 'ok',
+    eqType: 'pref',
+    spl: 0,
+    numPoints: points.length
   });
-});
 
-// Single EQ point (hot path while dragging) - api_preset_config.cpp
-// handlePutPresetEQPoint: rejects out-of-bounds ids and ids that would leave
-// a gap (only update-in-place or append), replies 204 without broadcasting
-app.put('/preset/eq/point', (req, res) => {
+  res.status(204).end();
+}));
+
+// Single EQ point (hot path while dragging): rejects out-of-bounds ids and
+// ids that would leave a gap (only update-in-place or append), replies 204
+// without broadcasting
+app.put('/preset/eq/point', wrap(async (req, res) => {
   const presetName = req.query.preset_name;
   if (!presetName) {
     return res.status(400).json({ error: 'Missing required parameters' });
@@ -836,342 +1251,53 @@ app.put('/preset/eq/point', (req, res) => {
     return res.status(400).json({ error: 'PEQ point ID out of bounds' });
   }
 
-  db.get("SELECT name FROM presets WHERE name = ?", [presetName], (err, preset) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    if (!preset) {
-      return res.status(404).json({ error: 'Preset not found' });
-    }
+  const preset = await loadPreset(presetName);
+  if (!preset) {
+    return res.status(404).json({ error: 'Preset not found' });
+  }
 
-    db.get(
-      "SELECT peq_data FROM eq_configs WHERE preset_name = ? AND type = 'pref' AND spl = 0",
-      [presetName],
-      (err, row) => {
-        if (err) {
-          return res.status(500).json({ error: err.message });
-        }
+  const setIndex = getOrCreateSpl0SetIndex(preset.config);
+  const points = preset.config.inputEq.sets[setIndex].points;
+  if (id > points.length) {
+    return res.status(400).json({ error: 'PEQ point ID would leave a gap' });
+  }
 
-        let points = [];
-        if (row) {
-          try { points = JSON.parse(row.peq_data); } catch (e) { points = []; }
-        }
-        if (id > points.length) {
-          return res.status(400).json({ error: 'PEQ point ID would leave a gap' });
-        }
-        points[id] = {
-          freq: clamp(Number(point.freq ?? 1000), 20, 20000),
-          gain: clamp(Number(point.gain ?? 0), -15, 15),
-          q: clamp(Number(point.q ?? 1), 0.1, 10)
-        };
+  points[id] = {
+    freq: clamp(Number(point.freq ?? 1000), 20, 20000),
+    gain: clamp(Number(point.gain ?? 0), -15, 15),
+    q: clamp(Number(point.q ?? 1), 0.1, 10)
+  };
+  await saveConfigPath(presetName, `$.inputEq.sets[${setIndex}].points[${id}]`, points[id]);
+  res.status(204).end();
+}));
 
-        db.run(
-          "INSERT OR REPLACE INTO eq_configs (preset_name, type, spl, peq_data) VALUES (?, 'pref', 0, ?)",
-          [presetName, JSON.stringify(points)],
-          function(err) {
-            if (err) {
-              return res.status(500).json({ error: err.message });
-            }
-            res.status(204).end();
-          }
-        );
-      }
-    );
-  });
-});
-
-// Crossover - api_preset_config.cpp handlePutPresetCrossover (20-20000 Hz)
-app.put('/preset/crossover', (req, res) => {
+app.put('/preset/eq/enabled', wrap(async (req, res) => {
   const presetName = req.query.preset_name;
-  const freq = req.query.frequency;
+  const enabled = parseOnOff(req.query.enabled);
 
-  if (!presetName || freq === undefined) {
-    return res.status(400).json({ error: 'Missing required parameters' });
+  if (!presetName) {
+    return res.status(400).json({ error: 'Missing preset_name parameter' });
+  }
+  if (enabled === null) {
+    return res.status(400).json({ error: "Invalid state. Must be 'on' or 'off'" });
   }
 
-  const frequency = parseInt(freq);
-
-  if (isNaN(frequency) || frequency < 20 || frequency > 20000) {
-    return res.status(400).json({ error: 'Crossover frequency must be between 20 and 20000 Hz' });
+  const preset = await loadPreset(presetName);
+  if (!preset) {
+    return res.status(404).json({ error: 'Preset not found' });
   }
 
-  db.run("UPDATE presets SET crossover_freq = ? WHERE name = ?",
-    [frequency.toString(), presetName],
-    function(err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
+  await saveConfigPath(presetName, '$.inputEq.enabled', enabled);
+  const payload = { messageType: 'eqEnabledChanged', presetName, status: 'ok', enabled };
+  broadcast(payload);
+  res.json(payload);
+}));
 
-      if (this.changes === 0) {
-        return res.status(404).json({ error: 'Preset not found' });
-      }
-
-      const payload = { messageType: 'crossoverChanged', presetName, status: 'ok', crossoverFreq: frequency };
-      broadcast(payload);
-      res.json(payload);
-    }
-  );
-});
-
-// Preset Management
-app.get('/presets', (req, res) => {
-  db.all("SELECT name, is_current FROM presets ORDER BY rowid", (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    const presets = rows.map(row => ({
-      name: row.name,
-      isCurrent: Boolean(row.is_current)
-    }));
-    res.json(presets);
-  });
-});
-
-app.delete('/preset', (req, res) => {
-  const name = req.query.name;
-
-  if (!name) {
-    return res.status(400).json({ error: 'Missing required parameters' });
-  }
-
-  db.get("SELECT name FROM presets WHERE name = ?", [name], (err, existing) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    if (!existing) {
-      return res.status(404).json({ error: 'Preset not found' });
-    }
-
-    // api_presets.cpp handleDeletePreset: refuse to delete the last
-    // remaining preset (names can be changed, so protecting "Default" by
-    // name wouldn't protect anything)
-    db.get("SELECT COUNT(*) as count FROM presets", (err, countRow) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      if (countRow.count <= 1) {
-        return res.status(400).json({ error: 'Cannot delete the last remaining preset' });
-      }
-
-      // First, delete associated EQ configurations
-      db.run("DELETE FROM eq_configs WHERE preset_name = ?", [name], function(eqErr) {
-        if (eqErr) {
-          console.error("Error deleting eq_configs for preset:", name, eqErr.message);
-          return res.status(500).json({ error: `Failed to delete associated EQ configs: ${eqErr.message}` });
-        }
-
-        // Then, delete the preset itself
-        db.run("DELETE FROM presets WHERE name = ?", [name], function(presetErr) {
-          if (presetErr) {
-            return res.status(500).json({ error: `Failed to delete preset: ${presetErr.message}` });
-          }
-
-          // Like the ESP, deleting the active preset falls back to the
-          // first remaining preset
-          db.get("SELECT name FROM presets WHERE is_current = 1", (err, row) => {
-            if (!err && !row) {
-              db.run("UPDATE presets SET is_current = 1 WHERE rowid = (SELECT MIN(rowid) FROM presets)");
-            }
-            res.json({});
-          });
-        });
-      });
-    });
-  });
-});
-
-// Full preset - shape matches api_presets.cpp handleGetPreset
-app.get('/preset', (req, res) => {
-  const name = req.query.name;
-  if (!name) {
-    return res.status(400).json({ error: 'Missing required parameters' });
-  }
-
-  db.get("SELECT * FROM presets WHERE name = ?", [name], (err, preset) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    if (!preset) {
-      return res.status(404).json({ error: 'Preset not found' });
-    }
-
-    db.all("SELECT spl, peq_data FROM eq_configs WHERE preset_name = ? AND type = 'pref' ORDER BY spl", [name], (err, eqRows) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-
-      const preferenceEQ = [];
-      eqRows.forEach(row => {
-        try {
-          const peqData = JSON.parse(row.peq_data);
-          preferenceEQ.push({
-            spl: row.spl,
-            peqs: peqData.map(p => ({ freq: p.freq, gain: p.gain, q: p.q }))
-          });
-        } catch (e) {
-          console.error('Error parsing PEQ data for row:', row, e);
-        }
-      });
-
-      res.json({
-        name: preset.name,
-        isCurrent: Boolean(preset.is_current),
-        speakerDelays: JSON.parse(preset.speaker_delays),
-        isSpeakerDelayEnabled: Boolean(preset.is_speaker_delay_enabled),
-        crossoverFreq: parseInt(preset.crossover_freq),
-        isCrossoverEnabled: Boolean(preset.is_crossover_enabled),
-        isFIREnabled: Boolean(preset.is_fir_enabled),
-        firLeft: preset.fir_left,
-        firRight: preset.fir_right,
-        firSub: preset.fir_sub,
-        isPreferenceEQEnabled: Boolean(preset.is_preference_eq_enabled),
-        preferenceEQ
-      });
-    });
-  });
-});
-
-app.post('/preset', (req, res) => {
-  const action = req.query.action;
-
-  if (action === 'create') {
-    // api_presets.cpp handlePostPresetCreate: everything starts disabled,
-    // crossover at 80 Hz, and a default spl=0 preference set of three flat
-    // points at 100/1000/10000 Hz. Does not change the active preset.
-    const name = req.query.name;
-
-    if (!name) {
-      return res.status(400).json({ error: 'Missing required parameters' });
-    }
-
-    const defaultPEQPoints = [
-      { freq: 100, gain: 0, q: 1 },
-      { freq: 1000, gain: 0, q: 1 },
-      { freq: 10000, gain: 0, q: 1 }
-    ];
-
-    db.get("SELECT name FROM presets WHERE name = ?", [name], (err, existing) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      if (existing) {
-        return res.status(409).json({ error: 'Preset name already exists' });
-      }
-
-      db.run(
-        `INSERT INTO presets (name, is_current, crossover_freq, speaker_delays,
-           is_speaker_delay_enabled, is_crossover_enabled, is_fir_enabled, is_preference_eq_enabled)
-         VALUES (?, 0, '80', '{"left": 0, "right": 0, "sub": 0}', 0, 0, 0, 0)`,
-        [name],
-        function(err) {
-          if (err) {
-            return res.status(500).json({ error: `Failed to create preset: ${err.message}` });
-          }
-
-          db.run(
-            "INSERT INTO eq_configs (preset_name, type, spl, peq_data) VALUES (?, 'pref', 0, ?)",
-            [name, JSON.stringify(defaultPEQPoints)],
-            function(err) {
-              if (err) {
-                return res.status(500).json({ error: `Failed to add preference curve settings: ${err.message}` });
-              }
-              res.status(201).json({});
-            }
-          );
-        }
-      );
-    });
-  } else if (action === 'copy') {
-    // api_presets.cpp handlePostPresetCopy: source + destination params
-    const sourceName = req.query.source;
-    const destName = req.query.destination;
-
-    if (!sourceName || !destName) {
-      return res.status(400).json({ error: 'Missing required parameters' });
-    }
-
-    db.get("SELECT name FROM presets WHERE name = ?", [destName], (err, existing) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      if (existing) {
-        return res.status(409).json({ error: 'Destination preset name already exists' });
-      }
-
-      db.get("SELECT * FROM presets WHERE name = ?", [sourceName], (err, source) => {
-        if (err) {
-          return res.status(500).json({ error: err.message });
-        }
-        if (!source) {
-          return res.status(404).json({ error: 'Source preset not found' });
-        }
-
-        db.run(`INSERT INTO presets (name, speaker_delays, crossover_freq, is_current, is_speaker_delay_enabled, is_crossover_enabled, is_fir_enabled, is_preference_eq_enabled, fir_left, fir_right, fir_sub, gains)
-                VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
-               [destName, source.speaker_delays, source.crossover_freq, source.is_speaker_delay_enabled, source.is_crossover_enabled, source.is_fir_enabled, source.is_preference_eq_enabled, source.fir_left, source.fir_right, source.fir_sub, source.gains],
-               function(err) {
-          if (err) {
-            return res.status(500).json({ error: err.message });
-          }
-
-          // Copy EQ configurations
-          db.all("SELECT type, spl, peq_data FROM eq_configs WHERE preset_name = ?", [sourceName], (err, eqRows) => {
-            if (err) {
-              return res.status(500).json({ error: err.message });
-            }
-
-            const stmt = db.prepare("INSERT INTO eq_configs (preset_name, type, spl, peq_data) VALUES (?, ?, ?, ?)");
-            eqRows.forEach(row => {
-              stmt.run(destName, row.type, row.spl, row.peq_data);
-            });
-            stmt.finalize();
-
-            res.status(201).json({});
-          });
-        });
-      });
-    });
-  } else {
-    res.status(400).json({ error: 'Missing or unknown action' });
-  }
-});
-
-app.put('/preset', (req, res) => {
-  const action = req.query.action;
-
-  if (action === 'rename') {
-    // api_presets.cpp handlePutPresetRename: old_name + new_name params
-    const oldName = req.query.old_name;
-    const newName = req.query.new_name;
-
-    if (!oldName || !newName) {
-      return res.status(400).json({ error: 'Missing required parameters' });
-    }
-
-    db.run("UPDATE presets SET name = ? WHERE name = ?", [newName, oldName], function(err) {
-      if (err) {
-        if (err.code === 'SQLITE_CONSTRAINT') {
-          return res.status(409).json({ error: 'New preset name already exists' });
-        }
-        return res.status(500).json({ error: err.message });
-      }
-
-      if (this.changes === 0) {
-        return res.status(404).json({ error: 'Preset to rename not found' });
-      }
-
-      // Update EQ configurations
-      db.run("UPDATE eq_configs SET preset_name = ? WHERE preset_name = ?", [newName, oldName], (err) => {
-        if (err) {
-          return res.status(500).json({ error: err.message });
-        }
-
-        res.json({});
-      });
-    });
-  } else {
-    res.status(400).json({ error: 'Missing or unknown action' });
-  }
+// ===== FIR file listing =====
+// Plain array of filenames, like the Teensy's getFiles reply relayed by the
+// ESP ([] when the list is unavailable)
+app.get('/fir/files', (req, res) => {
+  res.json(Object.keys(FIR_FILE_TAPS));
 });
 
 // Backup and Restore
@@ -1191,19 +1317,12 @@ app.get('/backup', (req, res) => {
         return res.status(500).json({ error: err.message });
       }
 
-      db.all("SELECT * FROM eq_configs", (err, eqConfigs) => {
-        if (err) {
-          return res.status(500).json({ error: err.message });
-        }
+      const backup = {
+        settings,
+        presets
+      };
 
-        const backup = {
-          settings,
-          presets,
-          eqConfigs
-        };
-
-        res.json(backup);
-      });
+      res.json(backup);
     });
   });
 });

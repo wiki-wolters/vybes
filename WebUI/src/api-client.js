@@ -57,13 +57,21 @@ class VybesAPI {
 
     try {
       const response = await fetch(url, config);
+      const text = await response.text();
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        // Attach the status and parsed body so callers can act on
+        // structured rejections (e.g. 409 lock/floor/pool errors)
+        let errorBody = null;
+        try { errorBody = text ? JSON.parse(text) : null; } catch (e) { /* not JSON */ }
+        const message = (errorBody && errorBody.error) || `HTTP ${response.status}: ${response.statusText}`;
+        const error = new Error(message);
+        error.status = response.status;
+        error.body = errorBody;
+        throw error;
       }
-      
+
       // Handle empty responses
-      const text = await response.text();
       return text ? JSON.parse(text) : {};
     } catch (error) {
       console.error(`API request failed: ${method} ${endpoint}`, error);
@@ -155,15 +163,6 @@ class VybesAPI {
   }
 
   /**
-   * Set crossover frequency for a preset
-   * @param {string} presetName - Name of the preset
-   * @param {number} frequency - Crossover frequency in Hz
-   */
-  async setCrossoverFreq(presetName, frequency) {
-    return this.request('PUT', `/preset/crossover?preset_name=${encodeURIComponent(presetName)}&frequency=${frequency}`);
-  }
-
-  /**
    * Get the list of FIR filter files on the Teensy's SD card
    * @returns {Promise<Array<string>>} Array of filenames (empty when none)
    */
@@ -173,16 +172,6 @@ class VybesAPI {
 
   async updateFIREnabled(presetName, value) {
     return this.request('PUT', `/preset/fir/enabled?preset_name=${encodeURIComponent(presetName)}&state=${value ? 'on' : 'off'}`);
-  }
-
-  /**
-   * Set FIR filter for a channel
-   * @param {string} presetName - Name of the preset
-   * @param {string} channel - Channel ('left', 'right', or 'sub')
-   * @param {string} filterName - Name of the FIR filter file (empty string to clear)
-   */
-  async setFirFilter(presetName, channel, filterName) {
-    return this.request('PUT', `/preset/fir?preset_name=${encodeURIComponent(presetName)}&speaker=${channel}&file=${encodeURIComponent(filterName)}`);
   }
 
   /**
@@ -210,9 +199,121 @@ class VybesAPI {
   /**
    * Create new preset
    * @param {string} name - Preset name (must be unique)
+   * @param {string} [template] - Template id (defaults to 2.1 server-side)
    */
-  async createPreset(name) {
-    return this.request('POST', `/preset?action=create&name=${encodeURIComponent(name)}`);
+  async createPreset(name, template = null) {
+    const templateParam = template ? `&template=${encodeURIComponent(template)}` : '';
+    return this.request('POST', `/preset?action=create&name=${encodeURIComponent(name)}${templateParam}`);
+  }
+
+  /**
+   * List the available preset templates
+   * @returns {Promise<Array>} [{id, label, description, outputsUsed}]
+   */
+  async getTemplates() {
+    return this.request('GET', '/templates');
+  }
+
+  // ===== V1 CROSSOVER POINTS =====
+
+  /**
+   * Set a crossover point's frequency. Locked points require confirm=true
+   * (the server rejects with 409 otherwise).
+   * @param {string} presetName - Preset name
+   * @param {string} id - Crossover point id (e.g. 'sub_xo')
+   * @param {number} frequency - Frequency in Hz (within the point's min/max)
+   * @param {boolean} [confirm] - Explicit confirmation for locked points
+   */
+  async setCrossoverPointFreq(presetName, id, frequency, confirm = false) {
+    const confirmParam = confirm ? '&confirm=true' : '';
+    return this.request('PUT',
+      `/preset/crossover?preset_name=${encodeURIComponent(presetName)}&id=${encodeURIComponent(id)}&frequency=${frequency}${confirmParam}`);
+  }
+
+  /**
+   * Enable/bypass a crossover point on every output filter referencing it.
+   * Locked points require confirm=true; a bypass that would drop a
+   * protected output's high-pass below its floor is rejected with 409.
+   */
+  async setCrossoverPointEnabled(presetName, id, enabled, confirm = false) {
+    const confirmParam = confirm ? '&confirm=true' : '';
+    return this.request('PUT',
+      `/preset/crossover/enabled?preset_name=${encodeURIComponent(presetName)}&id=${encodeURIComponent(id)}&enabled=${enabled ? 'on' : 'off'}${confirmParam}`);
+  }
+
+  // ===== V1 OUTPUT CHANNELS =====
+
+  _outputEndpoint(path, presetName, output, extraParams = '') {
+    return `${path}?preset_name=${encodeURIComponent(presetName)}&output=${output}${extraParams}`;
+  }
+
+  async setOutputLabel(presetName, output, label) {
+    return this.request('PUT', this._outputEndpoint('/preset/output/label', presetName, output,
+      `&label=${encodeURIComponent(label)}`));
+  }
+
+  async setOutputEnabled(presetName, output, enabled) {
+    return this.request('PUT', this._outputEndpoint('/preset/output/enabled', presetName, output,
+      `&state=${enabled ? 'on' : 'off'}`));
+  }
+
+  /** Source mix: {left, right} gains 0..1 on the input buses */
+  async setOutputSource(presetName, output, source) {
+    return this.request('PUT', this._outputEndpoint('/preset/output/source', presetName, output), source);
+  }
+
+  /** Output gain in dB (-40..+10) */
+  async setOutputGain(presetName, output, gainDb) {
+    return this.request('PUT', this._outputEndpoint('/preset/output/gain', presetName, output,
+      `&value=${gainDb}`));
+  }
+
+  async setOutputMute(presetName, output, mute) {
+    return this.request('PUT', this._outputEndpoint('/preset/output/mute', presetName, output,
+      `&state=${mute ? 'on' : 'off'}`));
+  }
+
+  async setOutputInvert(presetName, output, invert) {
+    return this.request('PUT', this._outputEndpoint('/preset/output/invert', presetName, output,
+      `&state=${invert ? 'on' : 'off'}`));
+  }
+
+  /** Output delay in microseconds (0..20000) */
+  async setOutputDelay(presetName, output, delayUs) {
+    return this.request('PUT', this._outputEndpoint('/preset/output/delay', presetName, output,
+      `&value=${delayUs}`));
+  }
+
+  /**
+   * Set an output's HP or LP section.
+   * @param {string} which - 'hp' or 'lp'
+   * @param {Object} filter - {mode:'off'} | {mode:'xover', xover:id} |
+   *                          {mode:'manual', freq, type}
+   */
+  async setOutputFilter(presetName, output, which, filter) {
+    return this.request('PUT', this._outputEndpoint('/preset/output/filter', presetName, output,
+      `&which=${which}`), filter);
+  }
+
+  /** Replace an output's PEQ point array (max 10 points) */
+  async saveOutputEq(presetName, output, points) {
+    return this.request('PUT', this._outputEndpoint('/preset/output/eq', presetName, output), points);
+  }
+
+  /** Update/append a single output PEQ point (hot path while dragging) */
+  async updateOutputEqPoint(presetName, output, point) {
+    return this.request('PUT', this._outputEndpoint('/preset/output/eq/point', presetName, output), point);
+  }
+
+  /** Assign a FIR file to an output ('' clears). 409 when the tap pool is exceeded. */
+  async setOutputFir(presetName, output, file) {
+    return this.request('PUT', this._outputEndpoint('/preset/output/fir', presetName, output,
+      `&file=${encodeURIComponent(file)}`));
+  }
+
+  /** Tap pool status: {total, used, outputs:[{output, file, taps}]} */
+  async getFirPool(presetName) {
+    return this.request('GET', `/preset/fir/pool?preset_name=${encodeURIComponent(presetName)}`);
   }
 
   /**
@@ -242,20 +343,6 @@ class VybesAPI {
   }
 
   // ===== SPEAKER DELAYS =====
-
-  /**
-   * Set speaker delay
-   * @param {string} presetName - Preset name
-   * @param {string} speaker - Speaker type: "left", "right", or "sub"
-   * @param {number} delayUs - Delay in microseconds (float)
-   */
-  async setSpeakerDelay(presetName, speaker, delayUs) {
-    const validSpeakers = ['left', 'right', 'sub'];
-    if (!validSpeakers.includes(speaker)) {
-      throw new Error('Speaker must be "left", "right", or "sub"');
-    }
-    return this.request('PUT', `/preset/delay?preset_name=${encodeURIComponent(presetName)}&speaker=${speaker}&value=${delayUs}`);
-  }
 
   async setSpeakerDelayEnabled(presetName, enabled) {
     return this.request('PUT', `/preset/delay/enabled?preset_name=${encodeURIComponent(presetName)}&enabled=${enabled ? 'on' : 'off'}`);
@@ -289,29 +376,6 @@ class VybesAPI {
    * @param {Array} peqSet - Array of PEQ points with frequency, gain, and Q
    */
 
-  // ===== CROSSOVER =====
-
-  /**
-   * Set crossover enabled state for a preset
-   * @param {string} presetName - Preset name
-   * @param {boolean} enabled - Whether crossover is enabled
-   */
-  async updateCrossoverEnabled(presetName, enabled) {
-    return this.request('PUT', `/preset/crossover/enabled?preset_name=${encodeURIComponent(presetName)}&enabled=${enabled ? 'on' : 'off'}`);
-  }
-
-  /**
-   * Set crossover configuration
-   * @param {string} presetName - Preset name
-   * @param {number} frequency - Crossover frequency (40-500 Hz)
-   */
-  async updateCrossoverFreq(presetName, frequency) {
-    if (frequency < 40 || frequency > 500) {
-      throw new Error('Crossover frequency must be between 40 and 500 Hz');
-    }
-    return this.request('PUT', `/preset/crossover?preset_name=${encodeURIComponent(presetName)}&frequency=${frequency}`);
-  }
-
   // ===== CONFIGURATION =====
 
   /**
@@ -326,19 +390,6 @@ class VybesAPI {
    */
   async restore(formData) {
     return this.request('POST', '/restore', formData, true);
-  }
-
-  // ===== SPEAKER GAIN ===== //
-  async setGlobalSpeakerGain(speaker, gain) {
-    return this.request('PUT', `/gains/speaker?speaker=${speaker}&value=${gain}`);
-  }
-
-  async getPresetGains(presetName) {
-    return this.request('GET', `/preset/gains?preset_name=${encodeURIComponent(presetName)}`);
-  }
-
-  async setPresetGains(presetName, gains) {
-    return this.request('PUT', `/preset/gains?preset_name=${encodeURIComponent(presetName)}`, gains);
   }
 
   // ===== VOLUME ===== //

@@ -266,12 +266,21 @@ const props = defineProps({
   eqType: {
     type: String,
     default: 'pref' // Assuming this component is primarily for preference EQ
+  },
+  // Output channel index for per-output PEQ; null targets the input EQ
+  output: {
+    type: Number,
+    default: null
+  },
+  maxPoints: {
+    type: Number,
+    default: 15
   }
 });
 
 const emit = defineEmits(['change']);
 
-const MAX_POINTS = 15;
+const MAX_POINTS = computed(() => props.maxPoints);
 const MIN_FREQ = 20;
 const MAX_FREQ = 20000;
 const MAX_GAIN = 15;
@@ -315,7 +324,7 @@ function parseREW(text) {
       q: clamp(parseFloat(match[4]), MIN_Q, MAX_Q)
     });
   }
-  return points.slice(0, MAX_POINTS);
+  return points.slice(0, MAX_POINTS.value);
 }
 
 const importParsedPoints = computed(() => parseREW(importText.value));
@@ -506,7 +515,10 @@ const sendPointUpdateToAPI = async () => {
   };
 
   try {
-    pendingRequest = VybesAPI.updateEqPoint(props.presetName, pointToEmit);
+    // Per-output PEQ and the shared input EQ use different endpoints
+    pendingRequest = props.output === null
+      ? VybesAPI.updateEqPoint(props.presetName, pointToEmit)
+      : VybesAPI.updateOutputEqPoint(props.presetName, props.output, pointToEmit);
     await pendingRequest;
   } catch (error) {
     console.error('Failed to update EQ point:', error);
@@ -620,7 +632,7 @@ const addPoint = () => {
 };
 
 const addPointAt = (freq, gain) => {
-  if (localEqPoints.length >= MAX_POINTS) return;
+  if (localEqPoints.length >= MAX_POINTS.value) return;
 
   localEqPoints.push({
     freq: clamp(freq, MIN_FREQ, MAX_FREQ),
