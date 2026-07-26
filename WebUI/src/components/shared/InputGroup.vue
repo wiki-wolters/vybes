@@ -12,7 +12,9 @@
       :step="step"
       :placeholder="placeholder"
       :disabled="disabled"
-      class="w-full px-3 py-2 bg-vybes-dark-input border border-vybes-dark-border rounded-md text-vybes-text-primary"
+      :inputmode="type === 'number' ? 'decimal' : undefined"
+      class="w-full px-3 py-2 bg-vybes-dark-input border border-vybes-border rounded-md text-vybes-text-primary"
+      :class="{ 'tabular-nums': type === 'number' }"
     >
   </div>
 </template>

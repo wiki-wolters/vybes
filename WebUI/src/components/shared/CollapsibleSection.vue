@@ -21,6 +21,8 @@
         <ToggleSwitch
           v-if="toggleable"
           :model-value="modelValue"
+          :aria-label="`Enable ${title}`"
+          variant="accent"
           @update:modelValue="onEnabledToggle"
         />
       </div>
@@ -67,6 +69,12 @@ const props = defineProps({
   animate: {
     type: Boolean,
     default: true
+  },
+  // Overrides the default open/closed state. Boolean-with-null-default so an
+  // omitted prop stays distinguishable from an explicit false.
+  startExpanded: {
+    type: Boolean,
+    default: null
   }
 })
 
@@ -74,7 +82,9 @@ const emit = defineEmits(['update:modelValue'])
 
 // Enabled sections start expanded; disabled ones start collapsed but can
 // still be opened to inspect their settings.
-const isExpanded = ref(props.toggleable ? props.modelValue : true)
+const isExpanded = ref(
+  props.startExpanded ?? (props.toggleable ? props.modelValue : true)
+)
 const contentRef = ref(null)
 // 'none' while at rest so content can grow (e.g. the EQ adding bands)
 // without being clipped by a stale measured height.

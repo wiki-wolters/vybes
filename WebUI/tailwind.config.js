@@ -7,29 +7,33 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Blues collapsed to one hue family (previously #0088ff and #3b82f6
-        // competed). vybes-blue/light-blue kept as aliases so existing
+        // Mirrors the CSS variables in src/style.css — that file is the
+        // source of truth, these are the Tailwind class aliases. Blues are
+        // one hue family (interactive); amber is "currently in effect".
+        // vybes-blue/light-blue/*-hover kept as aliases so existing
         // classes still work.
         'vybes-primary': '#3b82f6',
         'vybes-primary-dark': '#2563eb',
         'vybes-primary-hover': '#2563eb',
         'vybes-blue': '#3b82f6',
         'vybes-light-blue': '#60a5fa',
-        'vybes-accent': '#f59e0b',
-        'vybes-accent-light': '#fbbf24',
-        'vybes-accent-hover': '#fbbf24',
-        'vybes-dark': '#111827',
-        'vybes-dark-bg': '#111827',
-        'vybes-dark-element': '#1f2937',
-        'vybes-dark-card': '#374151',
-        'vybes-dark-input': '#4b5563',
-        'vybes-dark-border': '#111',
-        'vybes-border': '#6b7280',
-        'vybes-text-primary': '#f9fafb',
-        'vybes-text-secondary': '#d1d5db',
+        'vybes-accent': '#f5c04e',
+        'vybes-accent-light': '#f8d488',
+        'vybes-accent-hover': '#f8d488',
+        'vybes-dark': '#10141a',
+        'vybes-dark-bg': '#10141a',
+        'vybes-dark-element': '#161b22',
+        'vybes-dark-card': '#1a2029',
+        'vybes-dark-input': '#222a35',
+        'vybes-dark-border': '#0b0e13',
+        'vybes-border': 'rgba(148, 168, 196, 0.16)',
+        'vybes-border-solid': '#3a4451',
+        'vybes-text-primary': '#e5ebf3',
+        'vybes-text-secondary': '#8b96a8',
+        'vybes-live': '#22c55e',
       },
       fontFamily: {
-        sans: ['Segoe UI', 'system-ui', 'sans-serif'],
+        sans: ['system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
       }
     },
   },

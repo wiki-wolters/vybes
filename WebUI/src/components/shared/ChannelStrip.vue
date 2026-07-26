@@ -1,9 +1,28 @@
 <template>
-  <div class="rounded-lg bg-vybes-dark-element/40 p-4" :class="{ 'opacity-60': !output.enabled }">
-    <!-- Header: label + enable -->
-    <div class="flex items-center justify-between gap-2 mb-3">
+  <div
+    class="rounded-lg bg-vybes-dark-element/40 p-4 self-start"
+    :class="{ 'opacity-60': !output.enabled }"
+  >
+    <!-- Collapsed header: index, label, enable, and a one-line summary -->
+    <div class="flex items-center justify-between gap-2">
       <div class="flex items-center gap-2 min-w-0">
-        <span class="text-xs font-mono text-vybes-text-secondary flex-none">{{ output.index + 1 }}</span>
+        <button
+          v-if="output.enabled"
+          type="button"
+          class="p-1 -ml-1 flex-none text-vybes-text-secondary cursor-pointer"
+          :aria-expanded="expanded"
+          :aria-label="`${expanded ? 'Collapse' : 'Expand'} ${output.label}`"
+          @click="$emit('toggle')"
+        >
+          <svg
+            class="w-4 h-4 transition-transform duration-200"
+            :class="{ 'rotate-90': expanded }"
+            fill="none" stroke="currentColor" viewBox="0 0 24 24"
+          >
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+        <span class="text-xs font-mono tabular-nums text-vybes-text-secondary flex-none">{{ output.index + 1 }}</span>
         <input
           :value="output.label"
           type="text"
@@ -15,13 +34,23 @@
       </div>
       <ToggleSwitch
         :model-value="output.enabled"
+        :aria-label="`Enable output ${output.index + 1}`"
         @update:modelValue="store.setOutputEnabled(output.index, $event)"
       />
     </div>
 
-    <template v-if="output.enabled">
+    <!-- Summary stands in for the collapsed contents -->
+    <button
+      v-if="output.enabled && !expanded"
+      type="button"
+      class="mt-1.5 w-full text-left text-xs text-vybes-text-secondary tabular-nums cursor-pointer"
+      :aria-label="`Expand ${output.label}`"
+      @click="$emit('toggle')"
+    >{{ summary }}</button>
+
+    <template v-if="output.enabled && expanded">
       <!-- Source mix -->
-      <div class="strip-row">
+      <div class="strip-row mt-3">
         <span class="strip-label">Source</span>
         <SourceMixInput
           :model-value="output.source"
@@ -33,7 +62,7 @@
       <div class="strip-row">
         <span class="strip-label">High-pass
           <span v-if="output.hpFloor > 0" class="text-vybes-accent" :title="`Protected: high-pass cannot go below ${output.hpFloor} Hz`">
-            &ge;{{ output.hpFloor }} Hz
+            &ge;{{ formatValue(output.hpFloor, 'Hz', 0) }}
           </span>
         </span>
         <FilterSelect which="hp" :output="output" />
@@ -83,7 +112,13 @@
       </div>
 
       <!-- PEQ -->
-      <CollapsibleSection :title="`PEQ (${output.peq.length}/10)`" :toggleable="false" :animate="false" class="!mb-0">
+      <CollapsibleSection
+        :title="`PEQ (${output.peq.length}/10)`"
+        :toggleable="false"
+        :animate="false"
+        :start-expanded="false"
+        class="!mb-0"
+      >
         <ParametricEQ
           :peq-points="peqPoints"
           :preset-name="store.presetName"
@@ -121,13 +156,49 @@ import SourceMixInput from './SourceMixInput.vue';
 import CollapsibleSection from './CollapsibleSection.vue';
 import ParametricEQ from '../ParametricEQ.vue';
 import { usePresetStore } from '../../stores/preset.js';
+import { formatValue } from '../../utilities.js';
 
 const props = defineProps({
   /** Output object from the store, including its `index` */
   output: { type: Object, required: true },
+  /** Accordion state; the parent owns it so it can enforce the mobile rule */
+  expanded: { type: Boolean, default: false },
 });
 
+defineEmits(['toggle']);
+
 const store = usePresetStore();
+
+// What the collapsed strip has to convey on one line:
+// "Left · HP 80 Hz · LP off · 0 dB · 2 PEQ"
+const summary = computed(() => {
+  const o = props.output;
+  const parts = [sourceLabel(o.source), filterLabel(o.hp, 'HP'), filterLabel(o.lp, 'LP'),
+    formatValue(o.gainDb, 'dB', 1)];
+  if (o.delayUs > 0) parts.push(formatValue(o.delayUs, 'µs', 0));
+  if (o.fir) parts.push('FIR');
+  if (o.peq.length) parts.push(`${o.peq.length} PEQ`);
+  if (o.mute) parts.push('muted');
+  if (o.invert) parts.push('inverted');
+  return parts.join(' · ');
+});
+
+function sourceLabel({ left, right }) {
+  if (left > 0 && right > 0) {
+    return left === right ? 'Mono' : `L ${Math.round(left * 100)}/R ${Math.round(right * 100)}`;
+  }
+  if (left > 0) return 'Left';
+  if (right > 0) return 'Right';
+  return 'No source';
+}
+
+function filterLabel(filter, prefix) {
+  if (!filter || filter.mode === 'off') return `${prefix} off`;
+  const freq = filter.mode === 'manual'
+    ? filter.freq
+    : store.crossovers.find((x) => x.id === filter.xover)?.freq;
+  return freq ? `${prefix} ${formatValue(Number(freq), 'Hz', 0)}` : `${prefix} on`;
+}
 
 // ParametricEQ expects points with ids
 const peqPoints = computed(() =>

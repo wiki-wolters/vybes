@@ -1,5 +1,5 @@
 <template>
-  <div class="container mx-auto px-0 sm:px-4 py-3">
+  <div class="container mx-auto px-0 sm:px-4 py-3 max-w-3xl">
     <h1 class="text-2xl font-semibold mb-6 px-3 sm:px-0 text-vybes-text-primary">Audio Tools</h1>
 
     <!-- General Feedback Message Area -->
@@ -12,7 +12,7 @@
       {{ toolMessage }}
     </div>
 
-    <div class="grid md:grid-cols-1 lg:grid-cols-3 gap-8">
+    <div class="grid sm:grid-cols-2 gap-4 items-start">
       <!-- Tone Generator Section -->
       <CardSection title="Tone Generator">
         <div class="mb-4">
@@ -22,7 +22,7 @@
             :min="20"
             :max="20000"
             :decimals="0"
-            unit=" Hz"
+            unit="Hz"
             logarithmic
           />
         </div>
@@ -40,7 +40,7 @@
           <span v-if="isGeneratingTone">Stop Tone</span>
           <span v-else>Start Tone</span>
         </button>
-        <p v-if="isGeneratingTone" class="mt-3 text-xs text-green-400 text-center">Tone is currently active.</p>
+        <p v-if="isGeneratingTone" class="mt-3 text-xs text-vybes-live text-center">Tone is currently active.</p>
       </CardSection>
 
       <!-- Pink Noise Generator Section -->
@@ -60,7 +60,19 @@
           <span v-if="isGeneratingNoise">Stop Pink Noise</span>
           <span v-else>Start Pink Noise</span>
         </button>
-        <p v-if="isGeneratingNoise" class="mt-3 text-xs text-green-400 text-center">Pink noise is currently active.</p>
+        <p v-if="isGeneratingNoise" class="mt-3 text-xs text-vybes-live text-center">Pink noise is currently active.</p>
+      </CardSection>
+
+      <!-- Device configuration: whole-device backup, not per-preset -->
+      <CardSection title="Configuration">
+        <p class="text-sm text-vybes-text-secondary mb-4">
+          Download every preset and system setting as one file, or restore from a
+          previous backup. Restoring reboots the device.
+        </p>
+        <div class="flex flex-wrap gap-3">
+          <button @click="backupConfiguration" class="btn-secondary">Backup</button>
+          <button @click="restoreConfiguration" class="btn-secondary">Restore</button>
+        </div>
       </CardSection>
     </div>
   </div>
@@ -229,15 +241,31 @@ async function togglePinkNoise() {
   }
 }
 
-</script>
+// ===== Device configuration backup / restore =====
 
-<style scoped>
-input[type="number"]::-webkit-inner-spin-button,
-input[type="number"]::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
+function backupConfiguration() {
+  window.location.href = `${apiClient.baseUrl}/backup`;
 }
-input[type="number"] {
-  -moz-appearance: textfield; /* Firefox */
+
+function restoreConfiguration() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.msgpack';
+  input.onchange = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      await apiClient.restore(formData);
+    } catch (error) {
+      // The device reboots mid-request, so a failure here is expected and
+      // says nothing about whether the restore took.
+      console.log('Ignoring expected error during restore:', error);
+    }
+    alert('Configuration restore initiated. The device will now reboot. The page will reload automatically to reflect the restored state.');
+    setTimeout(() => { window.location.reload(); }, 3000);
+  };
+  input.click();
 }
-</style>
+</script>

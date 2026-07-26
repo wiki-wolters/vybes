@@ -21,6 +21,17 @@
         "5199"
       ],
       "port": 5199
+    },
+    {
+      "name": "webui-dev-alt",
+      "runtimeExecutable": "/Users/lancewolters/.nvm/versions/node/v20.19.6/bin/node",
+      "runtimeArgs": [
+        "WebUI/node_modules/vite/bin/vite.js",
+        "WebUI",
+        "--port",
+        "5299"
+      ],
+      "port": 5299
     }
   ]
 }

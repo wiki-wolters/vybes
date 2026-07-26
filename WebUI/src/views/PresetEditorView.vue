@@ -12,7 +12,9 @@
           <p class="text-center text-vybes-text-secondary">No preset selected</p>
         </div>
         <div v-else>
-          <div class="flex items-center px-3 sm:px-0 mb-4">
+          <!-- Header + tabs share the Tuning tab's cap so they stay aligned
+               with the cards below; the Channels grid alone runs full width -->
+          <div class="flex items-center px-3 sm:px-0 mb-4 max-w-3xl mx-auto">
             <h2 class="text-2xl font-semibold text-vybes-text-primary mr-2 truncate">
               {{ store.presetName }}
             </h2>
@@ -22,17 +24,17 @@
             </span>
             <div class="ml-2 flex space-x-1 flex-none">
               <button @click="openPresetModal('rename', store.presetName)" class="btn-icon icon-neutral" title="Rename preset" aria-label="Rename preset">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
                 </svg>
               </button>
               <button @click="openPresetModal('copy', store.presetName)" class="btn-icon icon-neutral" title="Copy preset" aria-label="Copy preset">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
                 </svg>
               </button>
               <button @click="openPresetModal('delete', store.presetName)" class="btn-icon icon-danger" title="Delete preset" aria-label="Delete preset">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
                 </svg>
               </button>
@@ -40,7 +42,7 @@
           </div>
 
           <!-- Tuning | Channels tabs -->
-          <div class="flex gap-1 px-3 sm:px-0 mb-4" role="tablist">
+          <div class="flex gap-1 px-3 sm:px-0 mb-4 max-w-3xl mx-auto" role="tablist">
             <button
               v-for="tab in TABS" :key="tab.id"
               role="tab"
@@ -51,7 +53,7 @@
           </div>
 
           <!-- ===== Tuning tab ===== -->
-          <div v-if="activeTab === 'tuning'">
+          <div v-if="activeTab === 'tuning'" class="max-w-3xl mx-auto">
             <CollapsibleSection title="EQ" :model-value="store.preset.inputEq.enabled" @update:modelValue="store.setInputEqEnabled($event)" :animate="animationsEnabled">
               <div :class="{ 'opacity-50 pointer-events-none': !store.preset.inputEq.enabled }">
                 <EQSection
@@ -98,8 +100,8 @@
                 </template>
               </div>
               <div class="flex items-center justify-between mt-4">
-                <span class="text-sm text-vybes-text-secondary">
-                  Taps used: {{ store.firPool.used.toLocaleString() }} / {{ store.firPool.total.toLocaleString() }}
+                <span class="text-sm text-vybes-text-secondary tabular-nums">
+                  Taps used: {{ formatValue(store.firPool.used, '', 0) }} / {{ formatValue(store.firPool.total, '', 0) }}
                 </span>
                 <button v-if="store.firFiles.length === 0" @click="store.loadFirFiles" class="btn-secondary">Refresh</button>
               </div>
@@ -140,14 +142,34 @@
 
           <!-- ===== Channels tab: the full 8-output matrix ===== -->
           <div v-else-if="activeTab === 'channels'" class="px-3 sm:px-0">
+            <!-- Jump bar: on narrow screens the grid is one long column, so
+                 reaching channel 7 by scrolling is the slow path -->
+            <div class="lg:hidden sticky top-0 z-20 -mx-3 sm:mx-0 px-3 sm:px-0 py-2 bg-vybes-dark/95 backdrop-blur-sm">
+              <div class="channel-rail">
+                <button
+                  v-for="output in store.outputs"
+                  :key="output.index"
+                  type="button"
+                  class="channel-chip"
+                  :class="{ 'channel-chip-active': expandedChannels.includes(output.index) }"
+                  @click="focusChannel(output.index)"
+                >
+                  <span class="tabular-nums">{{ output.index + 1 }}</span> {{ output.label }}
+                </button>
+              </div>
+            </div>
+
             <div class="mb-4">
               <FirPoolBar :used="store.firPool.used" :total="store.firPool.total" />
             </div>
-            <div class="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-4 gap-4">
+            <div class="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-4 gap-4 items-start">
               <ChannelStrip
                 v-for="output in store.outputs"
                 :key="output.index"
+                :id="`channel-${output.index}`"
                 :output="output"
+                :expanded="expandedChannels.includes(output.index)"
+                @toggle="toggleChannel(output.index)"
               />
             </div>
           </div>
@@ -194,6 +216,7 @@ import CollapsibleSection from '../components/shared/CollapsibleSection.vue';
 import Loading from '../components/shared/Loading.vue';
 import { useRouter } from 'vue-router';
 import { usePresetStore } from '../stores/preset.js';
+import { formatValue } from '../utilities.js';
 
 const router = useRouter();
 const store = usePresetStore();
@@ -231,6 +254,28 @@ const TABS = [
   { id: 'channels', label: 'Channels' },
 ];
 const activeTab = ref('tuning');
+
+// Channel accordion: all collapsed to start. Desktop can keep several open
+// side by side; on phones the strips stack, so one at a time is enough.
+const expandedChannels = ref([]);
+const isNarrow = () => window.matchMedia('(max-width: 639px)').matches;
+
+function toggleChannel(index) {
+  if (expandedChannels.value.includes(index)) {
+    expandedChannels.value = expandedChannels.value.filter((i) => i !== index);
+  } else {
+    expandedChannels.value = isNarrow() ? [index] : [...expandedChannels.value, index];
+  }
+}
+
+async function focusChannel(index) {
+  if (!expandedChannels.value.includes(index)) toggleChannel(index);
+  await nextTick();
+  document.getElementById(`channel-${index}`)?.scrollIntoView({
+    behavior: 'smooth',
+    block: 'start',
+  });
+}
 
 // Local feedback (CRUD errors); everything store-driven surfaces store.error
 const editorMessage = ref('');
@@ -403,11 +448,32 @@ async function handleModalConfirm() {
   @apply px-4 py-2 rounded-t-md text-sm font-medium transition-colors;
 }
 
+/* Blue: picking a tab is a selection, not a live state */
 .tab-active {
-  @apply bg-vybes-dark-element text-vybes-text-primary border-b-2 border-vybes-accent;
+  @apply bg-vybes-dark-element text-vybes-text-primary border-b-2 border-vybes-primary;
 }
 
 .tab-inactive {
   @apply text-vybes-text-secondary hover:text-vybes-text-primary hover:bg-vybes-dark-element/50;
+}
+
+/* Same chip language as the EQ band rail */
+.channel-rail {
+  @apply flex gap-2 overflow-x-auto pb-0.5;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.channel-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.channel-chip {
+  @apply flex-none rounded-full px-3 py-1.5 text-xs whitespace-nowrap cursor-pointer
+         bg-vybes-dark-card border border-vybes-border text-vybes-text-secondary;
+}
+
+.channel-chip-active {
+  @apply bg-vybes-dark-input text-vybes-text-primary border-vybes-primary;
 }
 </style>

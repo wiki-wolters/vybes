@@ -6,7 +6,7 @@
       :value="modelValue"
       @change="$emit('update:modelValue', $event.target.value)"
       :disabled="disabled"
-      class="w-full px-3 py-2 bg-vybes-dark-input border border-vybes-dark-border rounded-md text-vybes-text-primary"
+      class="w-full px-3 py-2 bg-vybes-dark-input border border-vybes-border rounded-md text-vybes-text-primary"
     >
       <slot></slot>
     </select>

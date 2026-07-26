@@ -22,20 +22,20 @@
         <!-- Legend / status -->
         <div class="flex flex-wrap items-center gap-x-5 gap-y-1 mb-3 text-xs">
           <span class="flex items-center gap-1.5">
-            <span class="inline-block w-3 h-0.5 rounded" style="background: #0088ff"></span>
+            <span class="inline-block w-3 h-0.5 rounded bg-vybes-primary"></span>
             <span class="text-vybes-text-secondary">Source</span>
-            <span :class="sourceLive ? 'text-green-400' : 'text-vybes-text-secondary'">
+            <span :class="sourceLive ? 'text-vybes-live' : 'text-vybes-text-secondary'">
               {{ sourceLive ? 'live' : 'waiting for device…' }}
             </span>
           </span>
           <span class="flex items-center gap-1.5">
-            <span class="inline-block w-3 h-0.5 rounded" style="background: #22c55e"></span>
+            <span class="inline-block w-3 h-0.5 rounded bg-vybes-live"></span>
             <span class="text-vybes-text-secondary">Microphone</span>
-            <span :class="micActive ? 'text-green-400' : 'text-vybes-text-secondary'">
+            <span :class="micActive ? 'text-vybes-live' : 'text-vybes-text-secondary'">
               {{ micActive ? (calCurve ? 'on (calibrated)' : 'on') : 'off' }}
             </span>
           </span>
-          <span v-if="micActive && sourceLive" class="text-vybes-text-secondary">
+          <span v-if="micActive && sourceLive" class="text-vybes-text-secondary tabular-nums">
             level aligned {{ offset >= 0 ? '+' : '' }}{{ offset.toFixed(1) }} dB
           </span>
         </div>
@@ -45,16 +45,16 @@
           <svg :width="width" :height="chartHeight" class="block">
             <!-- dB gridlines -->
             <g v-for="line in dbGridLines" :key="'db' + line.db">
-              <line :x1="padLeft" :y1="line.y" :x2="width" :y2="line.y" stroke="#333" stroke-width="1" opacity="0.5" />
-              <text :x="4" :y="line.y + 3" fill="#666" font-size="9">{{ line.db }}</text>
+              <line class="grid-line" :x1="padLeft" :y1="line.y" :x2="width" :y2="line.y" />
+              <text class="grid-label" :x="4" :y="line.y + 3" font-size="9">{{ line.db }}</text>
             </g>
             <!-- frequency gridlines -->
             <g v-for="line in freqGridLines" :key="'f' + line.label">
-              <line :x1="line.x" :y1="0" :x2="line.x" :y2="chartHeight - 14" stroke="#333" stroke-width="1" opacity="0.5" />
-              <text :x="line.x" :y="chartHeight - 4" fill="#666" font-size="9" text-anchor="middle">{{ line.label }}</text>
+              <line class="grid-line" :x1="line.x" :y1="0" :x2="line.x" :y2="chartHeight - 14" />
+              <text class="grid-label" :x="line.x" :y="chartHeight - 4" font-size="9" text-anchor="middle">{{ line.label }}</text>
             </g>
-            <path v-if="sourcePath" :d="sourcePath" fill="none" stroke="#0088ff" stroke-width="2" opacity="0.9" />
-            <path v-if="micPath" :d="micPath" fill="none" stroke="#22c55e" stroke-width="2" opacity="0.9" />
+            <path v-if="sourcePath" class="trace-source" :d="sourcePath" fill="none" stroke-width="2" opacity="0.9" />
+            <path v-if="micPath" class="trace-mic" :d="micPath" fill="none" stroke-width="2" opacity="0.9" />
           </svg>
         </div>
 
@@ -75,10 +75,10 @@
               @pointerleave="onDeltaLeave"
             >
               <g v-for="line in deltaGridLines" :key="'d' + line.db">
-                <line :x1="padLeft" :y1="line.y" :x2="width" :y2="line.y" stroke="#333" stroke-width="1" opacity="0.5" />
-                <text :x="4" :y="line.y + 3" fill="#666" font-size="9">{{ line.db > 0 ? '+' + line.db : line.db }}</text>
+                <line class="grid-line" :x1="padLeft" :y1="line.y" :x2="width" :y2="line.y" />
+                <text class="grid-label" :x="4" :y="line.y + 3" font-size="9">{{ line.db > 0 ? '+' + line.db : line.db }}</text>
               </g>
-              <line :x1="padLeft" :y1="deltaZeroY" :x2="width" :y2="deltaZeroY" stroke="#555" stroke-width="1.5" />
+              <line class="grid-line-strong" :x1="padLeft" :y1="deltaZeroY" :x2="width" :y2="deltaZeroY" stroke-width="1.5" />
               <rect
                 v-for="bar in deltaBars"
                 :key="'bar' + bar.index"
@@ -92,22 +92,22 @@
               />
               <!-- Proposed EQ correction and the predicted result of applying it -->
               <template v-if="frozen && generatedPoints.length">
-                <path :d="correctionPath" fill="none" stroke="#e879f9" stroke-width="2" opacity="0.9" />
-                <path :d="predictedPath" fill="none" stroke="#e5e7eb" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.75" />
+                <path class="trace-correction" :d="correctionPath" fill="none" stroke-width="2" opacity="0.9" />
+                <path class="trace-predicted" :d="predictedPath" fill="none" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.75" />
               </template>
               <!-- Crosshair: nearest band under the pointer/finger -->
               <g v-if="deltaHover" pointer-events="none">
                 <line :x1="deltaHover.x" :y1="0" :x2="deltaHover.x" :y2="deltaHeight" stroke="#fff" stroke-width="1" opacity="0.5" />
                 <circle v-if="deltaHover.hasValue" :cx="deltaHover.x" :cy="deltaHover.y" r="3" fill="#fff" />
-                <rect :x="deltaHover.labelX - 46" y="4" width="92" height="28" rx="4" fill="rgba(10, 13, 17, 0.9)" stroke="rgba(148, 168, 196, 0.25)" />
-                <text :x="deltaHover.labelX" y="16" fill="#e5e7eb" font-size="10" font-weight="600" text-anchor="middle">{{ deltaHover.freqLabel }}</text>
-                <text :x="deltaHover.labelX" y="27" fill="#9ca3af" font-size="9" text-anchor="middle">{{ deltaHover.valueLabel }}</text>
+                <rect class="hover-label-box" :x="deltaHover.labelX - 46" y="4" width="92" height="28" rx="4" />
+                <text class="hover-label-freq" :x="deltaHover.labelX" y="16" font-size="10" font-weight="600" text-anchor="middle">{{ deltaHover.freqLabel }}</text>
+                <text class="hover-label-value" :x="deltaHover.labelX" y="27" font-size="9" text-anchor="middle">{{ deltaHover.valueLabel }}</text>
               </g>
             </svg>
           </div>
           <p v-if="frozen && generatedPoints.length" class="mt-2 text-xs text-vybes-text-secondary">
-            <span style="color: #e879f9">━</span> proposed EQ correction ·
-            <span class="text-gray-300">┄</span> predicted result after EQ
+            <span class="legend-correction">━</span> proposed EQ correction ·
+            <span class="text-vybes-text-primary">┄</span> predicted result after EQ
           </p>
         </div>
         <p v-else class="mt-4 text-xs text-vybes-text-secondary">
@@ -199,13 +199,13 @@
           />
         </div>
 
-        <div class="mt-5 pt-4 border-t border-vybes-dark-input">
+        <div class="mt-5 pt-4 border-t border-vybes-border">
           <template v-if="generatedPoints.length">
             <div class="flex flex-wrap gap-2 mb-4">
               <span
                 v-for="(p, i) in generatedPoints"
                 :key="'gen' + i"
-                class="px-2.5 py-1 rounded-full text-xs font-mono bg-black/30 border border-vybes-dark-input text-vybes-text-primary"
+                class="px-2.5 py-1 rounded-full text-xs font-mono tabular-nums bg-black/30 border border-vybes-border text-vybes-text-primary"
               >
                 {{ fmtHz(p.freq) }} · {{ p.gain > 0 ? '+' : '' }}{{ p.gain.toFixed(1) }} dB · Q {{ p.q.toFixed(2) }}
               </span>
@@ -226,7 +226,7 @@
             Nothing to correct — the deviation stays within ±1 dB of the target inside the
             current frequency limits.
           </p>
-          <p v-if="applyState.message" class="mt-3 text-xs" :class="applyState.error ? 'text-red-400' : 'text-green-400'">
+          <p v-if="applyState.message" class="mt-3 text-xs" :class="applyState.error ? 'text-red-400' : 'text-vybes-live'">
             {{ applyState.message }}
             <router-link
               v-if="!applyState.error && activePresetName"
@@ -277,7 +277,7 @@
           </div>
         </div>
 
-        <div class="mt-6 pt-4 border-t border-vybes-dark-input">
+        <div class="mt-6 pt-4 border-t border-vybes-border">
           <p class="text-sm font-medium mb-2">Microphone calibration</p>
           <div class="flex flex-wrap items-center gap-3">
             <label class="btn-secondary cursor-pointer">
@@ -285,7 +285,7 @@
               <input type="file" accept=".txt,.cal,.frd,.csv" class="hidden" @change="onCalFileSelected" />
             </label>
             <template v-if="calCurve">
-              <span class="text-xs text-green-400">{{ calName }}</span>
+              <span class="text-xs text-vybes-live">{{ calName }}</span>
               <button class="text-xs text-vybes-text-secondary underline" @click="clearCal">remove</button>
             </template>
             <span v-else class="text-xs text-vybes-text-secondary">
@@ -599,6 +599,11 @@ const deltaValues = computed(() => {
 
 const clampDelta = (d) => Math.max(-DELTA_RANGE_DB, Math.min(DELTA_RANGE_DB, d));
 
+// Bar fills are bound per-bar, so they can't come from a stylesheet rule.
+// Kept in sync with the theme amber (--vybes-accent) by hand.
+const DELTA_BOOST_COLOR = '#f5c04e';
+const DELTA_LOSS_COLOR = '#38bdf8';
+
 const deltaBars = computed(() => {
   if (!deltaValues.value) return [];
   const bars = [];
@@ -613,7 +618,7 @@ const deltaBars = computed(() => {
       y: y0,
       w: bw,
       h: Math.max(1, Math.abs(deltaDbToY(d) - deltaZeroY)),
-      color: d >= 0 ? '#f59e0b' : '#38bdf8',
+      color: d >= 0 ? DELTA_BOOST_COLOR : DELTA_LOSS_COLOR,
       opacity: Math.abs(d) < 2 ? 0.35 : 0.9,
     });
   }
@@ -786,3 +791,55 @@ onUnmounted(() => {
   stopMic();
 });
 </script>
+
+<style scoped>
+/* SVG paint can't use Tailwind colour utilities, so the chart's chrome
+   reads the theme variables directly (same ramp as ParametricEQ). */
+.grid-line {
+  stroke: var(--vybes-grid-line);
+  stroke-width: 1;
+}
+
+.grid-line-strong {
+  stroke: var(--vybes-grid-line-strong);
+}
+
+.grid-label {
+  fill: var(--vybes-text-secondary);
+}
+
+.trace-source {
+  stroke: var(--vybes-primary);
+}
+
+.trace-mic {
+  stroke: var(--vybes-live);
+}
+
+.trace-correction {
+  stroke: #e879f9; /* magenta: proposed correction, distinct from both traces */
+}
+
+.trace-predicted {
+  stroke: var(--vybes-text-primary);
+}
+
+.legend-correction {
+  color: #e879f9;
+}
+
+.hover-label-box {
+  fill: rgba(10, 13, 17, 0.9);
+  stroke: var(--vybes-border);
+}
+
+.hover-label-freq {
+  fill: var(--vybes-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.hover-label-value {
+  fill: var(--vybes-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+</style>

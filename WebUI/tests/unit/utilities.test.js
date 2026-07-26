@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { asyncDebounce, debounce, throttleAndDebounce } from '../../src/utilities.js'
+import { asyncDebounce, debounce, throttleAndDebounce, formatValue } from '../../src/utilities.js'
+
+const NBSP = '\u00a0'
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -200,5 +202,58 @@ describe('throttleAndDebounce', () => {
     wrapped('b')
     expect(fn.mock.calls.length).toBe(callsBefore + 1)
     expect(fn).toHaveBeenLastCalledWith('b')
+  })
+})
+
+describe('formatValue', () => {
+  it('separates number and unit with a non-breaking space', () => {
+    expect(formatValue(0, 'dB', 1)).toBe(`0${NBSP}dB`)
+    expect(formatValue(-6.5, 'dB', 1)).toBe(`-6.5${NBSP}dB`)
+    expect(formatValue(-0.5, 'dB/oct', 1)).toBe(`-0.5${NBSP}dB/oct`)
+  })
+
+  it('keeps percent glued to the number', () => {
+    expect(formatValue(77, '%', 0)).toBe('77%')
+    expect(formatValue(100, '%', 0)).toBe('100%')
+  })
+
+  it('returns a bare number when there is no unit', () => {
+    expect(formatValue(8, '', 0)).toBe('8')
+    expect(formatValue(1.5, '', 2)).toBe('1.5')
+  })
+
+  it('collapses Hz to kHz at and above 1 kHz, like the EQ band chips', () => {
+    expect(formatValue(999, 'Hz', 0)).toBe(`999${NBSP}Hz`)
+    expect(formatValue(1000, 'Hz', 0)).toBe(`1.00${NBSP}kHz`)
+    expect(formatValue(6300, 'Hz', 0)).toBe(`6.30${NBSP}kHz`)
+    // Two decimals below 10 kHz, one above - four significant digits either way
+    expect(formatValue(12500, 'Hz', 0)).toBe(`12.5${NBSP}kHz`)
+    expect(formatValue(20000, 'Hz', 0)).toBe(`20.0${NBSP}kHz`)
+  })
+
+  it('rounds to `decimals` without padding trailing zeros', () => {
+    expect(formatValue(0.04, 'dB', 1)).toBe(`0${NBSP}dB`)
+    expect(formatValue(1.239, 'dB', 2)).toBe(`1.24${NBSP}dB`)
+    expect(formatValue(2.5, 'dB', 0)).toBe(`3${NBSP}dB`)
+  })
+
+  it('never renders a negative zero', () => {
+    expect(formatValue(-0.04, 'dB', 1)).toBe(`0${NBSP}dB`)
+    expect(formatValue(-0, 'dB', 1)).toBe(`0${NBSP}dB`)
+  })
+
+  it('groups large counts the way the FIR pool readout needs', () => {
+    expect(formatValue(32768, '', 0)).toBe((32768).toLocaleString())
+  })
+
+  it('tolerates a unit prop that still carries padding', () => {
+    expect(formatValue(80, ' Hz', 0)).toBe(`80${NBSP}Hz`)
+  })
+
+  it('passes non-finite and non-numeric values straight through', () => {
+    expect(formatValue(NaN, 'dB', 1)).toBe('NaN')
+    expect(formatValue(Infinity, 'dB', 1)).toBe('Infinity')
+    expect(formatValue(undefined, 'dB', 1)).toBe('undefined')
+    expect(formatValue('--', 'dB', 1)).toBe('--')
   })
 })

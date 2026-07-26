@@ -12,6 +12,7 @@
             <span class="font-medium text-vybes-text-primary">{{ pointTitle(point) }}</span>
             <ToggleSwitch
               :model-value="store.isCrossoverEnabled(point.id)"
+              :aria-label="`Enable ${pointTitle(point)}`"
               @update:modelValue="store.setCrossoverEnabled(point.id, $event)"
             />
           </div>
@@ -39,7 +40,7 @@
               <span class="font-medium text-vybes-text-primary truncate">{{ pointTitle(point) }}</span>
             </div>
             <div class="flex items-center gap-3 flex-none">
-              <span class="text-vybes-text-primary font-semibold">{{ point.freq }} Hz</span>
+              <span class="text-vybes-text-primary font-semibold tabular-nums">{{ formatValue(Number(point.freq), 'Hz', 0) }}</span>
               <span class="text-xs text-vybes-text-secondary">{{ point.type }}</span>
               <button class="btn-secondary" @click="openEdit(point)">Edit</button>
             </div>
@@ -78,6 +79,7 @@ import RangeSlider from './RangeSlider.vue';
 import ToggleSwitch from './ToggleSwitch.vue';
 import LockedValueModal from './LockedValueModal.vue';
 import { usePresetStore } from '../../stores/preset.js';
+import { formatValue } from '../../utilities.js';
 
 defineProps({
   animate: { type: Boolean, default: false },

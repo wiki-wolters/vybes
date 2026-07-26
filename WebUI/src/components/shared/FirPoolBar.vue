@@ -2,7 +2,7 @@
   <div>
     <div class="flex justify-between text-xs text-vybes-text-secondary mb-1">
       <span>FIR tap pool</span>
-      <span>{{ used.toLocaleString() }} / {{ total.toLocaleString() }}</span>
+      <span class="tabular-nums">{{ formatValue(used, '', 0) }} / {{ formatValue(total, '', 0) }}</span>
     </div>
     <div class="h-2 rounded-full bg-vybes-dark-input overflow-hidden">
       <div
@@ -16,6 +16,7 @@
 
 <script setup>
 import { computed } from 'vue';
+import { formatValue } from '../../utilities.js';
 
 const props = defineProps({
   used: { type: Number, required: true },

@@ -24,35 +24,37 @@
           <line
             v-for="f in freqMinorLines"
             :key="`fmin-${f.value}`"
+            class="grid-line"
             :x1="f.x" :y1="0" :x2="f.x" :y2="height"
-            stroke="rgba(148, 168, 196, 0.06)" stroke-width="1"
           />
           <line
             v-for="f in freqMajorLines"
             :key="`fmaj-${f.value}`"
+            class="grid-line-strong"
             :x1="f.x" :y1="0" :x2="f.x" :y2="height"
-            stroke="rgba(148, 168, 196, 0.16)" stroke-width="1"
           />
           <text
             v-for="f in freqMajorLines"
             :key="`flab-${f.value}`"
+            class="grid-label"
             :x="f.x" :y="height - 8"
-            fill="#5d6878" font-size="10" text-anchor="middle"
+            font-size="10" text-anchor="middle"
           >
             {{ f.label }}
           </text>
           <line
             v-for="g in gainGridLines"
             :key="`g-${g.value}`"
+            :class="g.value === 0 ? 'grid-line-zero' : 'grid-line'"
             :x1="0" :y1="g.y" :x2="width" :y2="g.y"
-            :stroke="g.value === 0 ? 'rgba(148, 168, 196, 0.30)' : 'rgba(148, 168, 196, 0.07)'"
             :stroke-width="g.value === 0 ? 1.5 : 1"
           />
           <text
             v-for="g in gainGridLines.filter(g => g.value !== -15)"
             :key="`glab-${g.value}`"
+            class="grid-label"
             :x="8" :y="g.y - 4"
-            fill="#5d6878" font-size="10"
+            font-size="10"
           >
             {{ g.label }}
           </text>
@@ -72,9 +74,9 @@
         <!-- Combined curve with fill against the 0 dB line -->
         <path :d="combinedFillPath" fill="url(#vybes-eq-fill)" stroke="none" />
         <path
+          class="combined-curve"
           :d="combinedPath"
           fill="none"
-          stroke="#f5c04e"
           stroke-width="2.5"
           stroke-linejoin="round"
         />
@@ -96,13 +98,15 @@
             r="13" fill="none" :stroke="bandColor(i)" stroke-width="2" opacity="0.45"
           />
           <circle
+            class="node-dot"
             :cx="frequencyToX(point.freq)" :cy="gainToY(point.gain)"
             :r="i === selectedPoint ? 8 : 6.5"
-            :fill="bandColor(i)" stroke="#10141a" stroke-width="2"
+            :fill="bandColor(i)" stroke-width="2"
           />
           <text
+            class="node-index"
             :x="frequencyToX(point.freq)" :y="gainToY(point.gain)"
-            fill="#10141a" font-size="9" font-weight="700"
+            font-size="9" font-weight="700"
             text-anchor="middle" dy="3" pointer-events="none"
           >
             {{ i + 1 }}
@@ -197,7 +201,7 @@
           :max="10"
           :step="0.1"
           unit=""
-          :decimals="3"
+          :decimals="2"
           :logarithmic="true"
           v-model="localEqPoints[selectedPoint].q"
           @update:modelValue="() => requestUpdate()"
@@ -211,13 +215,13 @@
       confirm-text="Import"
       @confirm="handleImport"
     >
-      <p class="mb-3 text-sm text-gray-400">
+      <p class="mb-3 text-sm text-vybes-text-secondary">
         Paste REW's "Export filter settings as text" output below, or choose the exported .txt file.
         Peaking (PK) filters are imported, up to {{ MAX_POINTS }} bands.
       </p>
       <textarea
         v-model="importText"
-        class="w-full h-40 p-2 border border-gray-600 rounded bg-gray-800 text-white font-mono text-xs"
+        class="w-full h-40 p-2 border border-vybes-border rounded bg-vybes-dark-input text-vybes-text-primary font-mono text-xs"
         placeholder="Filter 1: ON PK Fc 63.5 Hz Gain -4.5 dB Q 4.32"
         spellcheck="false"
       ></textarea>
@@ -846,11 +850,14 @@ const onWheel = (event) => {
   hideReadout(700);
 };
 
-// Fullscreen logic
+// Fullscreen logic: a phone rotated to landscape gets the whole screen.
+// The height cap keeps desktop windows (also landscape) out of it.
 const checkOrientation = () => {
-  const isLandscape = window.matchMedia("(orientation: landscape)").matches;
-  isFullscreen.value = isLandscape;
-  document.body.style.overflow = isLandscape ? 'hidden' : '';
+  const isPhoneLandscape = window.matchMedia(
+    "(orientation: landscape) and (max-height: 500px)"
+  ).matches;
+  isFullscreen.value = isPhoneLandscape;
+  document.body.style.overflow = isPhoneLandscape ? 'hidden' : '';
 
   // Allow time for orientation change and then update dimensions
   nextTick(() => {
@@ -904,9 +911,41 @@ onUnmounted(() => {
 
 <style scoped>
 .parametric-eq {
-  font-family: 'Segoe UI', system-ui, sans-serif;
-  color: #fff;
+  font-family: inherit;
+  color: var(--vybes-text-primary);
   width: 100%;
+}
+
+/* Chart chrome. SVG paint can't use Tailwind colour utilities, so these
+   read the theme variables from style.css directly. */
+.grid-line {
+  stroke: var(--vybes-grid-line);
+  stroke-width: 1;
+}
+
+.grid-line-strong {
+  stroke: var(--vybes-grid-line-strong);
+  stroke-width: 1;
+}
+
+.grid-line-zero {
+  stroke: rgba(148, 168, 196, 0.3);
+}
+
+.grid-label {
+  fill: var(--vybes-text-secondary);
+}
+
+.combined-curve {
+  stroke: var(--vybes-accent);
+}
+
+.node-dot {
+  stroke: var(--vybes-dark);
+}
+
+.node-index {
+  fill: var(--vybes-dark);
 }
 
 .parametric-eq.is-fullscreen {
@@ -917,7 +956,7 @@ onUnmounted(() => {
   height: 100vh;
   z-index: 9999;
   border-radius: 0;
-  background: #12161c;
+  background: var(--vybes-dark);
   /* Keep nodes reachable around the notch on landscape iPhones */
   padding: env(safe-area-inset-top) env(safe-area-inset-right)
            env(safe-area-inset-bottom) env(safe-area-inset-left);
@@ -934,7 +973,7 @@ onUnmounted(() => {
   position: relative;
   width: 100%;
   height: 280px;
-  background: linear-gradient(180deg, #161b22 0%, #12161c 100%);
+  background: linear-gradient(180deg, var(--vybes-dark-element) 0%, var(--vybes-dark) 100%);
   border-radius: 4px;
   overflow: hidden;
   margin-bottom: 12px;
@@ -969,7 +1008,7 @@ onUnmounted(() => {
   position: absolute;
   pointer-events: none;
   background: rgba(10, 13, 17, 0.92);
-  border: 1px solid rgba(148, 168, 196, 0.22);
+  border: 1px solid var(--vybes-border);
   border-radius: 6px;
   padding: 5px 9px;
   font-size: 11px;
@@ -993,7 +1032,7 @@ onUnmounted(() => {
   transform: translateX(-50%);
   pointer-events: none;
   background: rgba(10, 13, 17, 0.92);
-  border: 1px solid rgba(148, 168, 196, 0.22);
+  border: 1px solid var(--vybes-border);
   border-radius: 6px;
   padding: 5px 9px;
   font-size: 11px;
@@ -1030,23 +1069,23 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 7px;
-  background: #1a2029;
-  border: 1px solid rgba(148, 168, 196, 0.10);
+  background: var(--vybes-dark-card);
+  border: 1px solid var(--vybes-border);
   border-radius: 999px;
   padding: 7px 13px 7px 10px;
   font-size: 12px;
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   font-variant-numeric: tabular-nums;
-  color: #8b96a8;
+  color: var(--vybes-text-secondary);
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s, background 0.15s;
   -webkit-tap-highlight-color: transparent;
 }
 
 .point-chip.active {
-  color: #d7dee9;
-  background: #222a35;
-  border-color: var(--chip-color, rgba(148, 168, 196, 0.22));
+  color: var(--vybes-text-primary);
+  background: var(--vybes-dark-input);
+  border-color: var(--chip-color, var(--vybes-border));
 }
 
 .point-chip.chip-ghost {
@@ -1055,7 +1094,7 @@ onUnmounted(() => {
 }
 
 .point-chip:focus-visible {
-  outline: 2px solid #f5c04e;
+  outline: 2px solid var(--vybes-accent);
   outline-offset: 2px;
 }
 
@@ -1068,8 +1107,8 @@ onUnmounted(() => {
 
 /* ── Selected band controls ────────────────────────── */
 .eq-controls {
-  background: #1a2029;
-  border: 1px solid rgba(148, 168, 196, 0.10);
+  background: var(--vybes-dark-card);
+  border: 1px solid var(--vybes-border);
   padding: 16px;
   border-radius: 10px;
 }
@@ -1094,8 +1133,8 @@ onUnmounted(() => {
 .delete-band-btn {
   margin-left: auto;
   background: none;
-  border: 1px solid rgba(148, 168, 196, 0.22);
-  color: #8b96a8;
+  border: 1px solid var(--vybes-border);
+  color: var(--vybes-text-secondary);
   border-radius: 6px;
   font-size: 11px;
   padding: 4px 10px;
@@ -1109,8 +1148,8 @@ onUnmounted(() => {
 
 .import-file-btn {
   background: none;
-  border: 1px solid rgba(148, 168, 196, 0.22);
-  color: #8b96a8;
+  border: 1px solid var(--vybes-border);
+  color: var(--vybes-text-secondary);
   border-radius: 6px;
   font-size: 12px;
   padding: 5px 12px;
@@ -1118,8 +1157,8 @@ onUnmounted(() => {
 }
 
 .import-file-btn:hover {
-  color: #f5c04e;
-  border-color: #f5c04e;
+  color: var(--vybes-accent);
+  border-color: var(--vybes-accent);
 }
 
 .control-group {

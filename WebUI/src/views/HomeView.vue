@@ -9,159 +9,161 @@
       <p class="text-vybes-text-secondary">Loading system...</p>
     </div>
 
-    <!-- Error Message -->
-    <div v-if="errorMessage" class="bg-red-700 text-red-100 p-4 rounded-none sm:rounded-lg mb-6">
-      <p><strong>Error:</strong> {{ errorMessage }}</p>
+    <!-- Error Message: click anywhere (or the ✕) to dismiss -->
+    <div
+      v-if="errorMessage"
+      class="bg-red-700 text-red-100 p-4 rounded-none sm:rounded-lg mb-6 max-w-5xl mx-auto flex items-start gap-3 cursor-pointer"
+      @click="errorMessage = ''"
+    >
+      <p class="flex-1"><strong>Error:</strong> {{ errorMessage }}</p>
+      <button class="flex-none leading-none px-1 cursor-pointer" aria-label="Dismiss error">&#10005;</button>
     </div>
 
     <!-- Main Content -->
-    <div v-if="!isLoading">
-      <!-- Presets Section -->
-      <CardSection title="Presets">
-        <div class="flex flex-wrap gap-3">
-          <button
-            v-for="preset in presets"
-            :key="preset.name"
-            @click="setActivePreset(preset.name)"
-            :class="[
-              'preset-button',
-              preset.isCurrent ? 'preset-active' : 'preset-inactive'
-            ]"
-          >
-            {{ preset.name }}
+    <div v-if="!isLoading" class="max-w-5xl mx-auto lg:grid lg:grid-cols-2 lg:gap-4 lg:items-start">
+      <div>
+        <!-- Presets Section -->
+        <CardSection title="Presets">
+          <div class="flex flex-wrap gap-3">
+            <button
+              v-for="preset in presets"
+              :key="preset.name"
+              @click="setActivePreset(preset.name)"
+              :class="[
+                'preset-button',
+                preset.isCurrent ? 'preset-active' : 'preset-inactive'
+              ]"
+            >
+              {{ preset.name }}
             
-            <!-- Active preset controls -->
-            <div v-if="preset.isCurrent" class="preset-controls" @click.stop>
-              <button
-                @click="editPreset(preset.name)"
-                class="preset-control-btn"
-                title="Edit preset"
-              >
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
-                </svg>
-              </button>
-            </div>
-          </button>
+              <!-- Active preset controls -->
+              <div v-if="preset.isCurrent" class="preset-controls" @click.stop>
+                <button
+                  @click="editPreset(preset.name)"
+                  class="preset-control-btn"
+                  title="Edit preset"
+                  :aria-label="`Edit preset ${preset.name}`"
+                >
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                  </svg>
+                </button>
+              </div>
+            </button>
           
-          <!-- Add New Preset Button -->
-          <button
-            @click="showNewPresetDialog = true"
-            class="preset-button preset-add"
-          >
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
-            </svg>
-          </button>
-        </div>
-      </CardSection>
+            <!-- Add New Preset Button -->
+            <button
+              @click="showNewPresetDialog = true"
+              class="preset-button preset-add"
+            >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+              </svg>
+            </button>
+          </div>
+        </CardSection>
 
-      <!-- Volume -->
-      <CardSection title="Volume">
-        <div class="space-y-4">
-          <RangeSlider
-            :model-value="volume"
-            label="Master Volume"
-            :min="0"
-            :max="100"
-            :step="1"
-            unit="%"
-            @update:modelValue="updateVolume($event)"
-          />
-        </div>
-      </CardSection>
+        <!-- Volume -->
+        <CardSection title="Volume">
+          <div class="space-y-4">
+            <RangeSlider
+              :model-value="volume"
+              label="Master Volume"
+              :min="0"
+              :max="100"
+              :step="1"
+              unit="%"
+              @update:modelValue="updateVolume($event)"
+            />
+          </div>
+        </CardSection>
 
-      <!-- Input Source -->
-      <CardSection title="Input Source">
-        <div class="space-y-4">
-          <RangeSlider
-            :model-value="inputGainsDB.bluetooth"
-            label="Bluetooth"
-            :min="-40"
-            :max="MAX_DB"
-            :step="0.1"
-            unit="dB"
-            @update:modelValue="updateInputGain('bluetooth', $event)"
-          />
-          <RangeSlider
-            :model-value="inputGainsDB.spdif"
-            label="TV"
-            :min="-40"
-            :max="MAX_DB"
-            :step="0.1"
-            unit="dB"
-            @update:modelValue="updateInputGain('spdif', $event)"
-          />
-          <RangeSlider
-            :model-value="inputGainsDB.usb"
-            label="USB"
-            :min="-40"
-            :max="MAX_DB"
-            :step="0.1"
-            unit="dB"
-            @update:modelValue="updateInputGain('usb', $event)"
-          />
-          <RangeSlider
-            :model-value="inputGainsDB.tone"
-            label="Tone"
-            :min="-40"
-            :max="MAX_DB"
-            :step="0.1"
-            unit="dB"
-            @update:modelValue="updateInputGain('tone', $event)"
-          />
-          <RangeSlider
-            :model-value="inputGainsDB.analog"
-            label="Analog"
-            :min="-40"
-            :max="MAX_DB"
-            :step="0.1"
-            unit="dB"
-            @update:modelValue="updateInputGain('analog', $event)"
-          />
-        </div>
-      </CardSection>
-
-      <!-- Speakers: mute groups derived from the active preset's outputs -->
-      <CardSection v-if="muteGroups.length" title="Speakers">
-        <div class="flex justify-between gap-3 flex-wrap">
-          <div v-for="group in muteGroups" :key="group.id" class="switch-container">
+        <!-- Speakers: mute groups derived from the active preset's outputs -->
+        <CardSection v-if="muteGroups.length" title="Speakers">
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <ToggleSwitch
+              v-for="group in muteGroups"
+              :key="group.id"
               :model-value="group.playing"
               :label="group.label"
               @update:modelValue="toggleMuteGroup(group, $event)"
             />
           </div>
-        </div>
-      </CardSection>
+        </CardSection>
 
-      <CardSection title="Mute">
-        <div class="space-y-4">
-          <!-- Mute Percentage Slider -->
-          <RangeSlider
-            :model-value="mutePercentage"
-            label="Volume reduction"
-            :min="1"
-            :max="100"
-            unit="%"
-            @update:modelValue="updateMutePercentage($event)"
-          />
-          
-          <!-- Mute On/Off Switch -->
-          <ToggleSwitch v-model="muteEnabled" @change="toggleMute" label="Mute"/>
-        </div>
-      </CardSection>
+        <CardSection title="Dim">
+          <div class="space-y-4">
+            <RangeSlider
+              :model-value="system.dimPercent"
+              label="Volume reduction"
+              :min="1"
+              :max="100"
+              unit="%"
+              :decimals="0"
+              @update:modelValue="updateDimPercent($event)"
+            />
 
-      <CardSection title="Configuration">
-        <div class="flex justify-start gap-3">
-          <button @click="backupConfiguration" class="btn-secondary">Backup</button>
-          <button @click="restoreConfiguration" class="btn-secondary">Restore</button>
-        </div>
-      </CardSection>
+            <ToggleSwitch
+              :model-value="system.dimmed"
+              label="Dim"
+              @update:modelValue="toggleDim($event)"
+            />
+          </div>
+        </CardSection>
+      </div>
 
-
-
-
+      <div>
+        <!-- Input Source -->
+        <CardSection title="Input Source">
+          <div class="space-y-4">
+            <RangeSlider
+              :model-value="inputGainsDB.bluetooth"
+              label="Bluetooth"
+              :min="-40"
+              :max="MAX_DB"
+              :step="0.1"
+              unit="dB"
+              @update:modelValue="updateInputGain('bluetooth', $event)"
+            />
+            <RangeSlider
+              :model-value="inputGainsDB.spdif"
+              label="TV"
+              :min="-40"
+              :max="MAX_DB"
+              :step="0.1"
+              unit="dB"
+              @update:modelValue="updateInputGain('spdif', $event)"
+            />
+            <RangeSlider
+              :model-value="inputGainsDB.usb"
+              label="USB"
+              :min="-40"
+              :max="MAX_DB"
+              :step="0.1"
+              unit="dB"
+              @update:modelValue="updateInputGain('usb', $event)"
+            />
+            <RangeSlider
+              :model-value="inputGainsDB.tone"
+              label="Tone"
+              :min="-40"
+              :max="MAX_DB"
+              :step="0.1"
+              unit="dB"
+              @update:modelValue="updateInputGain('tone', $event)"
+            />
+            <RangeSlider
+              :model-value="inputGainsDB.analog"
+              label="Analog"
+              :min="-40"
+              :max="MAX_DB"
+              :step="0.1"
+              unit="dB"
+              @update:modelValue="updateInputGain('analog', $event)"
+            />
+          </div>
+        </CardSection>
+      </div>
     </div>
 
     <!-- New Preset Dialog -->
@@ -193,8 +195,11 @@ import RangeSlider from '../components/shared/RangeSlider.vue';
 import ModalDialog from '../components/shared/ModalDialog.vue';
 import ToggleSwitch from '../components/shared/ToggleSwitch.vue';
 import TemplateSelect from '../components/shared/TemplateSelect.vue';
+import { useSystemStore } from '../stores/system.js';
 
 const router = useRouter();
+// Dim lives in the shared store so the top bar can show it from any page
+const system = useSystemStore();
 
 // State
 const isLoading = ref(true);
@@ -203,11 +208,9 @@ const presets = ref([]);
 // Active preset's V1 config (drives the mute groups)
 const activePresetName = ref(null);
 const activeOutputs = ref([]);
-const muteEnabled = ref(false);
-const mutePercentage = ref(100);
 const inputGainsDB = ref({ bluetooth: -40, spdif: -40, usb: -40, tone: -40, analog: -40 });
 const inputGainsLinear = ref({ bluetooth: 0, spdif: 0, usb: 0, tone: 0, analog: 0 });
-let muteUpdateTimeout = null;
+let dimPercentUpdateTimeout = null;
 let inputGainsUpdateTimeout = null;
 const showNewPresetDialog = ref(false);
 const newPresetName = ref('');
@@ -243,8 +246,7 @@ async function loadSystemData() {
     // Load system status
     try {
       const status = await apiClient.getStatus();
-      muteEnabled.value = Boolean(status.mute?.muted);
-      mutePercentage.value = status.mute?.percent ?? 100;
+      system.applyStatus(status);
       if (status.inputGains) {
         inputGainsLinear.value = { ...status.inputGains };
         inputGainsDB.value.bluetooth = linearToDb(status.inputGains.bluetooth);
@@ -408,66 +410,34 @@ async function toggleMuteGroup(group, playing) {
   }
 }
 
-async function toggleMute() {
+// ===== Dim (the firmware's "mute") =====
+
+async function toggleDim(dimmed) {
+  system.dimmed = dimmed;
   try {
-    // Send the new state to the API
-    await apiClient.setMute(muteEnabled.value);
+    await apiClient.setMute(dimmed);
   } catch (error) {
-    console.error('Failed to toggle mute:', error);
-    errorMessage.value = `Failed to toggle mute: ${error.message}`;
-    // Revert state on error
-    muteEnabled.value = !muteEnabled.value;
+    console.error('Failed to toggle dim:', error);
+    errorMessage.value = `Failed to toggle dim: ${error.message}`;
+    system.dimmed = !dimmed;
   }
 }
 
-function updateMutePercentage(newValue) {
-  if (muteUpdateTimeout) {
-    clearTimeout(muteUpdateTimeout);
+function updateDimPercent(newValue) {
+  if (dimPercentUpdateTimeout) {
+    clearTimeout(dimPercentUpdateTimeout);
   }
 
-  mutePercentage.value = newValue;
-  
-  muteUpdateTimeout = setTimeout(async () => {
+  system.dimPercent = newValue;
+
+  dimPercentUpdateTimeout = setTimeout(async () => {
     try {
-      await apiClient.setMutePercent(mutePercentage.value);
+      await apiClient.setMutePercent(system.dimPercent);
     } catch (error) {
-      console.error('Failed to update mute percentage:', error);
-      errorMessage.value = `Failed to update volume: ${error.message}`;
+      console.error('Failed to update dim amount:', error);
+      errorMessage.value = `Failed to update dim amount: ${error.message}`;
     }
   }, 500);
-}
-
-async function backupConfiguration() {
-  window.location.href = `${apiClient.baseUrl}/backup`;
-}
-
-async function restoreConfiguration() {
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = '.msgpack';
-  input.onchange = async (event) => {
-    const file = event.target.files[0];
-    if (file) {
-      const formData = new FormData();
-      formData.append('file', file);
-      try {
-        await apiClient.restore(formData);
-        alert('Configuration restore initiated. The device will now reboot. The page will reload automatically to reflect the restored state.');
-        setTimeout(() => {
-          window.location.reload();
-        }, 3000);
-      } catch (error) {
-        // This error is expected because the server reboots.
-        // We can ignore it and proceed with the optimistic UI update.
-        console.log('Ignoring expected error during restore:', error);
-        alert('Configuration restore initiated. The device will now reboot. The page will reload automatically to reflect the restored state.');
-        setTimeout(() => {
-          window.location.reload();
-        }, 3000);
-      }
-    }
-  };
-  input.click();
 }
 
 // WebSocket live updates
@@ -524,7 +494,7 @@ onUnmounted(() => {
 @reference '../style.css';
 
 .preset-button {
-  @apply relative px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center space-x-2 cursor-pointer;
+  @apply relative px-4 py-2.5 rounded-lg font-medium transition-all duration-200 flex items-center space-x-2 cursor-pointer;
 }
 
 .preset-active {
@@ -544,10 +514,6 @@ onUnmounted(() => {
 }
 
 .preset-control-btn {
-  @apply p-1 hover:bg-white/20 rounded transition-colors cursor-pointer;
-}
-
-.switch-container {
-  @apply flex items-center space-x-3 cursor-pointer w-1/3;
+  @apply p-2.5 hover:bg-white/20 rounded-md transition-colors cursor-pointer;
 }
 </style>

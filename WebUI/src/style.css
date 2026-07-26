@@ -4,22 +4,30 @@
 /* Single source of truth for the theme. Tailwind classes (vybes-*) map to
    the same palette via tailwind.config.js. */
 :root {
+  /* Blue = interactive (buttons, thumbs, selection).
+     Amber = currently in effect (active preset, enabled section, wordmark). */
   --vybes-primary: #3b82f6;
   --vybes-primary-dark: #2563eb;
-  --vybes-accent: #f59e0b;
-  --vybes-accent-light: #fbbf24;
-  --vybes-dark: #111827;
-  --vybes-dark-element: #1f2937;
-  --vybes-dark-card: #374151;
-  --vybes-dark-input: #4b5563;
-  --vybes-border: #6b7280;
-  --vybes-text-primary: #f9fafb;
-  --vybes-text-secondary: #d1d5db;
+  --vybes-accent: #f5c04e;
+  --vybes-accent-light: #f8d488;
+  --vybes-dark: #10141a;
+  --vybes-dark-element: #161b22;
+  --vybes-dark-card: #1a2029;
+  --vybes-dark-input: #222a35;
+  --vybes-border: rgba(148, 168, 196, 0.16);
+  /* Solid equivalent for the places a border colour can't carry alpha
+     (SVG strokes, gradients, Tailwind ring/divide utilities). */
+  --vybes-border-solid: #3a4451;
+  --vybes-grid-line: rgba(148, 168, 196, 0.07);
+  --vybes-grid-line-strong: rgba(148, 168, 196, 0.16);
+  --vybes-text-primary: #e5ebf3;
+  --vybes-text-secondary: #8b96a8;
+  --vybes-live: #22c55e; /* semantic "live signal" green */
 }
 
 body {
   @apply bg-vybes-dark text-vybes-text-primary;
-  font-family: 'Segoe UI', system-ui, sans-serif; /* Matches tailwind.config.js */
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; /* Matches tailwind.config.js */
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -44,13 +52,14 @@ body {
 }
 
 .btn-secondary {
-  @apply bg-vybes-dark-input hover:bg-vybes-border text-vybes-text-primary font-semibold py-2 px-4 rounded-md shadow transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer;
+  @apply bg-vybes-dark-input hover:bg-vybes-border-solid text-vybes-text-primary font-semibold py-2 px-4 rounded-md shadow transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer;
 }
 
 .btn-danger {
   @apply bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-md shadow transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer;
 }
 
+/* p-2.5 + a 20px icon keeps the hit area at 44px for touch */
 .btn-icon {
-  @apply p-1.5 rounded-md transition-colors duration-150 cursor-pointer;
+  @apply p-2.5 rounded-md transition-colors duration-150 cursor-pointer;
 }

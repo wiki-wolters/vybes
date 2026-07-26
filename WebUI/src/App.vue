@@ -2,13 +2,20 @@
   <div id="app" class="min-h-screen bg-vybes-dark text-vybes-text-primary flex flex-col">
     <!-- Top bar: brand always, links on desktop only -->
     <nav class="bg-vybes-dark-element border-b border-vybes-dark-input">
-      <div class="container mx-auto px-4 py-3 sm:py-4 flex items-center justify-between">
-        <router-link
-          to="/"
-          class="text-xl sm:text-2xl font-bold text-vybes-accent hover:text-vybes-accent-light transition-colors"
-        >
-          Vybes DSP
-        </router-link>
+      <div class="container mx-auto px-4 py-3 sm:py-4 flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2 min-w-0">
+          <router-link
+            to="/"
+            class="text-xl sm:text-2xl font-bold text-vybes-accent hover:text-vybes-accent-light transition-colors"
+          >
+            Vybes DSP
+          </router-link>
+
+          <!-- Dim is a live state, so it stays visible from every page -->
+          <span v-if="system.dimmed" class="dim-pill" title="Volume is dimmed">
+            <span class="dim-dot"></span>Dimmed
+          </span>
+        </div>
 
         <div class="hidden sm:flex space-x-6">
           <router-link
@@ -63,8 +70,10 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRoute } from 'vue-router';
 import apiClient from './api-client.js';
+import { useSystemStore } from './stores/system.js';
 
 const route = useRoute();
+const system = useSystemStore();
 
 const tabs = [
   {
@@ -109,14 +118,28 @@ onMounted(() => {
   });
   apiClient.ensureLiveConnection();
   setTimeout(() => { graceOver.value = true; }, 2500);
+  system.connect();
 });
 
 onUnmounted(() => {
   if (unsubscribeStatus) unsubscribeStatus();
+  system.disconnect();
 });
 </script>
 
 <style scoped>
+@reference "./style.css";
+
+.dim-pill {
+  @apply flex-none flex items-center gap-1.5 rounded-full px-2 py-0.5
+         text-[11px] sm:text-xs font-semibold uppercase tracking-wide
+         bg-vybes-accent/15 text-vybes-accent border border-vybes-accent/40;
+}
+
+.dim-dot {
+  @apply w-1.5 h-1.5 rounded-full bg-vybes-accent;
+}
+
 .nav-link {
   color: var(--vybes-text-secondary);
   font-weight: 500;
