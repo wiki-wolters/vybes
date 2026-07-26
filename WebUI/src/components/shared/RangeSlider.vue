@@ -180,6 +180,10 @@ function cancelEdit() {
 
 input[type="range"] {
   -webkit-touch-callout: none;
+  /* Horizontal drags belong to the slider, never the page (stops iOS
+     treating a thumb drag as a pan/rubber-band); pan-y keeps vertical
+     page scrolling alive on slider-dense views like Home. */
+  touch-action: pan-y;
 }
 
 /* Tailwind's arbitrary variants above don't reach Firefox's track */
