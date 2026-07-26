@@ -10,7 +10,7 @@
         @pointermove="onPointerMove"
         @pointerup="onPointerUp"
         @pointercancel="onPointerCancel"
-        @wheel.prevent="onWheel"
+        @wheel="onWheel"
       >
         <defs>
           <linearGradient id="vybes-eq-fill" x1="0" y1="0" x2="0" y2="1">
@@ -118,6 +118,11 @@
       >
         {{ fmtFreq(readout.freq) }}<br>
         {{ fmtGain(readout.gain) }} · Q {{ readout.q.toFixed(2) }}
+      </div>
+
+      <!-- One-time hint shown when a plain scroll passes over the EQ -->
+      <div class="wheel-hint" :class="{ show: wheelHint }">
+        pinch or Ctrl+scroll to adjust Q
       </div>
     </div>
 
@@ -704,6 +709,18 @@ const hideReadout = (delay = 0) => {
   readoutHideTimer = setTimeout(() => { readout.show = false; }, delay);
 };
 
+// One-time hint so mouse users discover the modifier now that a plain
+// scroll no longer adjusts Q.
+const wheelHint = ref(false);
+let wheelHintShown = false;
+let wheelHintTimer = null;
+const showWheelHintOnce = () => {
+  if (wheelHintShown) return;
+  wheelHintShown = true;
+  wheelHint.value = true;
+  wheelHintTimer = setTimeout(() => { wheelHint.value = false; }, 2500);
+};
+
 const onPointerDown = (event) => {
   const pos = svgPos(event);
   pointers.set(event.pointerId, pos);
@@ -813,8 +830,16 @@ const onPointerUp = (event) => finishPointer(event, false);
 const onPointerCancel = (event) => finishPointer(event, true);
 
 const onWheel = (event) => {
+  // Trackpad pinches arrive as wheel events with ctrlKey set, so this
+  // gate makes "pinch = Q" on desktop too (or Ctrl/Cmd-scroll on a
+  // mouse). Plain two-finger scrolls fall through and scroll the page.
+  if (!event.ctrlKey && !event.metaKey) {
+    showWheelHintOnce();
+    return;
+  }
   const point = localEqPoints[selectedPoint.value];
   if (!point) return;
+  event.preventDefault(); // keep the browser from zooming the page
   point.q = clamp(point.q * Math.exp(-event.deltaY * 0.002), MIN_Q, MAX_Q);
   requestUpdate();
   showReadout(frequencyToX(point.freq), gainToY(point.gain));
@@ -872,6 +897,7 @@ onUnmounted(() => {
   clearTimeout(interactionEndTimeout);
   clearTimeout(trailingTimeout);
   clearTimeout(readoutHideTimer);
+  clearTimeout(wheelHintTimer);
   pendingRequest = null; // Ensure no pending requests block future operations if component unmounts
 });
 </script>
@@ -957,6 +983,26 @@ onUnmounted(() => {
 }
 
 .drag-readout.show {
+  opacity: 1;
+}
+
+.wheel-hint {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  background: rgba(10, 13, 17, 0.92);
+  border: 1px solid rgba(148, 168, 196, 0.22);
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 11px;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.wheel-hint.show {
   opacity: 1;
 }
 
