@@ -112,7 +112,7 @@
         </div>
         <p v-else class="mt-4 text-xs text-vybes-text-secondary">
           Start the microphone while music (ideally
-          <router-link to="/tools" class="text-vybes-accent underline">pink noise</router-link>)
+          <button class="text-vybes-accent underline cursor-pointer" @click="openNoiseGenerator">pink noise</button>)
           is playing to see where the room and system deviate from the source.
         </p>
       </CardSection>
@@ -316,6 +316,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
 import apiClient from '../api-client.js';
+import { useGeneratorStore } from '../stores/generator.js';
 import CardSection from '../components/shared/CardSection.vue';
 import SelectGroup from '../components/shared/SelectGroup.vue';
 import RangeSlider from '../components/shared/RangeSlider.vue';
@@ -369,6 +370,13 @@ const averagingOptions = [
 ];
 
 const micSupported = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
+
+// "pink noise" in the helper text opens the generator dock ready to start
+const generator = useGeneratorStore();
+function openNoiseGenerator() {
+  generator.setSource('noise');
+  generator.expanded = true;
+}
 const sourceLive = computed(
   () => sourceDb.value && nowTick.value - lastSourceFrameAt.value < SOURCE_STALE_MS
 );

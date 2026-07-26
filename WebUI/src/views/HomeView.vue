@@ -144,15 +144,6 @@
               @update:modelValue="updateInputGain('usb', $event)"
             />
             <RangeSlider
-              :model-value="inputGainsDB.tone"
-              label="Tone"
-              :min="-40"
-              :max="MAX_DB"
-              :step="0.1"
-              unit="dB"
-              @update:modelValue="updateInputGain('tone', $event)"
-            />
-            <RangeSlider
               :model-value="inputGainsDB.analog"
               label="Analog"
               :min="-40"
@@ -161,6 +152,20 @@
               unit="dB"
               @update:modelValue="updateInputGain('analog', $event)"
             />
+          </div>
+        </CardSection>
+      </div>
+
+      <!-- Device configuration: whole-device backup, not per-preset -->
+      <div class="lg:col-span-2">
+        <CardSection title="Configuration">
+          <p class="text-sm text-vybes-text-secondary mb-4">
+            Download every preset and system setting as one file, or restore from a
+            previous backup. Restoring reboots the device.
+          </p>
+          <div class="flex flex-wrap gap-3">
+            <button @click="backupConfiguration" class="btn-secondary">Backup</button>
+            <button @click="restoreConfiguration" class="btn-secondary">Restore</button>
           </div>
         </CardSection>
       </div>
@@ -208,8 +213,11 @@ const presets = ref([]);
 // Active preset's V1 config (drives the mute groups)
 const activePresetName = ref(null);
 const activeOutputs = ref([]);
-const inputGainsDB = ref({ bluetooth: -40, spdif: -40, usb: -40, tone: -40, analog: -40 });
-const inputGainsLinear = ref({ bluetooth: 0, spdif: 0, usb: 0, tone: 0, analog: 0 });
+// The generator ("tone") input gain is not shown here: the generator dock's
+// volume slider is the single level control, and the store pins the input
+// stage to unity whenever a generator starts.
+const inputGainsDB = ref({ bluetooth: -40, spdif: -40, usb: -40, analog: -40 });
+const inputGainsLinear = ref({ bluetooth: 0, spdif: 0, usb: 0, analog: 0 });
 let dimPercentUpdateTimeout = null;
 let inputGainsUpdateTimeout = null;
 const showNewPresetDialog = ref(false);
@@ -248,12 +256,10 @@ async function loadSystemData() {
       const status = await apiClient.getStatus();
       system.applyStatus(status);
       if (status.inputGains) {
-        inputGainsLinear.value = { ...status.inputGains };
-        inputGainsDB.value.bluetooth = linearToDb(status.inputGains.bluetooth);
-        inputGainsDB.value.spdif = linearToDb(status.inputGains.spdif);
-        inputGainsDB.value.usb = linearToDb(status.inputGains.usb);
-        inputGainsDB.value.tone = linearToDb(status.inputGains.tone);
-        inputGainsDB.value.analog = linearToDb(status.inputGains.analog);
+        for (const source of Object.keys(inputGainsLinear.value)) {
+          inputGainsLinear.value[source] = status.inputGains[source] ?? 0;
+          inputGainsDB.value[source] = linearToDb(inputGainsLinear.value[source]);
+        }
       }
       volume.value = status.volume ?? 50;
       await loadActivePresetOutputs(status.currentPreset);
@@ -269,6 +275,11 @@ async function loadSystemData() {
   }
 }
 
+// Debounced partial update: only the sources touched since the last send go
+// on the wire, so this page can never clobber gains it doesn't own (the
+// generator's input gain, pinned by the generator store).
+let pendingInputGains = {};
+
 function updateInputGain(source, dbValue) {
   if (inputGainsUpdateTimeout) {
     clearTimeout(inputGainsUpdateTimeout);
@@ -276,16 +287,13 @@ function updateInputGain(source, dbValue) {
 
   inputGainsDB.value[source] = dbValue;
   inputGainsLinear.value[source] = dbToLinear(dbValue);
+  pendingInputGains[source] = inputGainsLinear.value[source];
 
   inputGainsUpdateTimeout = setTimeout(async () => {
+    const gains = pendingInputGains;
+    pendingInputGains = {};
     try {
-      await apiClient.setInputGains(
-        inputGainsLinear.value.bluetooth,
-        inputGainsLinear.value.spdif,
-        inputGainsLinear.value.usb,
-        inputGainsLinear.value.tone,
-        inputGainsLinear.value.analog
-      );
+      await apiClient.updateInputGains(gains);
     } catch (error) {
       console.error('Failed to update input gains:', error);
       errorMessage.value = `Failed to update input gains: ${error.message}`;
@@ -488,6 +496,34 @@ onMounted(() => {
 onUnmounted(() => {
   if (unsubscribeLive) unsubscribeLive();
 });
+
+// ===== Device configuration backup / restore =====
+
+function backupConfiguration() {
+  window.location.href = `${apiClient.baseUrl}/backup`;
+}
+
+function restoreConfiguration() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.msgpack';
+  input.onchange = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      await apiClient.restore(formData);
+    } catch (error) {
+      // The device reboots mid-request, so a failure here is expected and
+      // says nothing about whether the restore took.
+      console.log('Ignoring expected error during restore:', error);
+    }
+    alert('Configuration restore initiated. The device will now reboot. The page will reload automatically to reflect the restored state.');
+    setTimeout(() => { window.location.reload(); }, 3000);
+  };
+  input.click();
+}
 </script>
 
 <style scoped>

@@ -398,14 +398,12 @@ class VybesAPI {
   }
 
   /**
-   * Set input gains
-   * @param {number} bluetooth - Bluetooth gain (0.0-1.0)
-   * @param {number} spdif - SPDIF gain (0.0-1.0)
-   * @param {number} tone - Tone generator gain (0.0-1.0)
-   * @param {number} analog - Analog line-in gain (0.0-1.0)
+   * Update input gains (0.0-1.0 linear). Accepts a partial object —
+   * keys left out keep their current value on the device.
+   * @param {Object} gains - e.g. { bluetooth: 0.8 } or { tone: 1 }
    */
-  async setInputGains(bluetooth, spdif, usb, tone, analog) {
-    return this.request('PUT', `/gains/input`, { bluetooth, spdif, usb, tone, analog });
+  async updateInputGains(gains) {
+    return this.request('PUT', `/gains/input`, gains);
   }
 
   // ===== WEBSOCKET LIVE UPDATES =====

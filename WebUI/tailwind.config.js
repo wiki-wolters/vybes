@@ -25,6 +25,7 @@ export default {
         'vybes-dark-element': '#161b22',
         'vybes-dark-card': '#1a2029',
         'vybes-dark-input': '#222a35',
+        'vybes-dark-float': '#1f2836',
         'vybes-dark-border': '#0b0e13',
         'vybes-border': 'rgba(148, 168, 196, 0.16)',
         'vybes-border-solid': '#3a4451',

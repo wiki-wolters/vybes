@@ -14,6 +14,9 @@
   --vybes-dark-element: #161b22;
   --vybes-dark-card: #1a2029;
   --vybes-dark-input: #222a35;
+  /* Floating surfaces (generator dock): lighter than cards so overlays
+     read as a layer above the page, usually with translucency + blur. */
+  --vybes-dark-float: #1f2836;
   --vybes-border: rgba(148, 168, 196, 0.16);
   /* Solid equivalent for the places a border colour can't carry alpha
      (SVG strokes, gradients, Tailwind ring/divide utilities). */

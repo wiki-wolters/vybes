@@ -1,6 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import HomeView from '../views/HomeView.vue'
-import ToolsView from '../views/ToolsView.vue'
 import AnalyzerView from '../views/AnalyzerView.vue'
 import PresetView from '../views/PresetEditorView.vue'
 
@@ -11,14 +10,6 @@ const routes = [
     component: HomeView,
     meta: {
       title: 'Vybes DSP - Home'
-    }
-  },
-  {
-    path: '/tools',
-    name: 'Tools',
-    component: ToolsView,
-    meta: {
-      title: 'Tone generator etc'
     }
   },
   {

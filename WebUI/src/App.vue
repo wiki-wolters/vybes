@@ -17,7 +17,7 @@
           </span>
         </div>
 
-        <div class="hidden sm:flex space-x-6">
+        <div class="hidden sm:flex space-x-6 items-center">
           <router-link
             v-for="tab in tabs"
             :key="tab.name"
@@ -27,6 +27,14 @@
           >
             {{ tab.label }}
           </router-link>
+          <button
+            class="nav-link flex items-center gap-1.5 cursor-pointer"
+            :class="{ 'nav-link-active': generator.expanded }"
+            @click="generator.expanded = !generator.expanded"
+          >
+            Generator
+            <span v-if="generator.isActive" class="w-1.5 h-1.5 rounded-full bg-vybes-live"></span>
+          </button>
         </div>
       </div>
     </nav>
@@ -42,7 +50,14 @@
     <!-- Main Content -->
     <main class="flex-1 pb-20 sm:pb-0">
       <router-view />
+      <!-- In-flow spacer matching the fixed dock's height, so the page
+           bottom can scroll clear of it (collapses to 0 when hidden) -->
+      <div :style="{ height: dockClearance }" aria-hidden="true"></div>
     </main>
+
+    <!-- Signal generator dock: opened via the Generator nav item, stays
+         visible from every page while a generator runs -->
+    <GeneratorDock />
 
     <!-- Bottom tab bar: thumb-reach navigation on phones -->
     <nav
@@ -61,6 +76,19 @@
           </svg>
           {{ tab.label }}
         </router-link>
+        <button
+          class="flex flex-col items-center gap-0.5 py-2 text-[11px] font-medium transition-colors cursor-pointer"
+          :class="generator.expanded ? 'text-vybes-primary' : 'text-vybes-text-secondary'"
+          @click="generator.expanded = !generator.expanded"
+        >
+          <span class="relative">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 12c1.5-5 3-5 4.5 0s3 5 4.5 0 3-5 4.5 0 3 5 4.5 0" />
+            </svg>
+            <span v-if="generator.isActive" class="absolute -top-0.5 -right-1 w-1.5 h-1.5 rounded-full bg-vybes-live"></span>
+          </span>
+          Generator
+        </button>
       </div>
     </nav>
   </div>
@@ -71,9 +99,12 @@ import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRoute } from 'vue-router';
 import apiClient from './api-client.js';
 import { useSystemStore } from './stores/system.js';
+import { useGeneratorStore } from './stores/generator.js';
+import GeneratorDock from './components/GeneratorDock.vue';
 
 const route = useRoute();
 const system = useSystemStore();
+const generator = useGeneratorStore();
 
 const tabs = [
   {
@@ -90,17 +121,16 @@ const tabs = [
     to: '/analyzer',
     matches: ['Analyzer'],
     icon: 'M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z'
-  },
-  {
-    name: 'Tools',
-    label: 'Tools',
-    to: '/tools',
-    matches: ['Tools'],
-    icon: 'M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085'
   }
 ];
 
 const isActive = (tab) => tab.matches.includes(route.name);
+
+// Dock height + a 2rem gap (which also absorbs the dock's own bottom
+// offset), so the last card can scroll fully above the dock.
+const dockClearance = computed(() =>
+  generator.dockHeight ? `${generator.dockHeight + 32}px` : '0px'
+);
 
 // Connection banner. A short grace period avoids flashing "offline" during
 // the initial connect on page load.
@@ -119,11 +149,13 @@ onMounted(() => {
   apiClient.ensureLiveConnection();
   setTimeout(() => { graceOver.value = true; }, 2500);
   system.connect();
+  generator.connect();
 });
 
 onUnmounted(() => {
   if (unsubscribeStatus) unsubscribeStatus();
   system.disconnect();
+  generator.disconnect();
 });
 </script>
 
