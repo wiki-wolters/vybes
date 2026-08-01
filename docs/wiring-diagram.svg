@@ -1,0 +1,227 @@
+<svg viewBox="0 0 1560 1100" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+  <!-- Vybes full wiring overview (ESP32-S3 build). Colors are per net class; see legend. -->
+  <rect x="0" y="0" width="1560" height="1100" fill="#ffffff"/>
+
+  <text x="80" y="38" font-size="21" font-weight="bold" fill="#212121">Vybes wiring — ESP32-S3</text>
+  <text x="80" y="64" font-size="11" fill="#616161">(ESP32-S3 pin numbers shown)</text>
+
+  <!-- ============ module boxes ============ -->
+  <!-- LCD -->
+  <rect x="80" y="80" width="210" height="100" rx="8" fill="#fff" stroke="#90a4ae" stroke-width="2"/>
+  <text x="185" y="112" font-size="14" font-weight="bold" fill="#212121" text-anchor="middle">1602 LCD</text>
+  <text x="185" y="130" font-size="11" fill="#616161" text-anchor="middle">PCF8574 backpack @ 0x27</text>
+  <text x="185" y="148" font-size="11" fill="#616161" text-anchor="middle">5 V · GND</text>
+  <text x="110" y="172" font-size="10" fill="#00897b" text-anchor="middle">SDA</text>
+  <text x="150" y="172" font-size="10" fill="#00897b" text-anchor="middle">SCL</text>
+
+  <!-- IR receiver -->
+  <rect x="330" y="90" width="150" height="80" rx="8" fill="#fff" stroke="#90a4ae" stroke-width="2"/>
+  <text x="405" y="120" font-size="14" font-weight="bold" fill="#212121" text-anchor="middle">IR receiver</text>
+  <text x="405" y="138" font-size="11" fill="#616161" text-anchor="middle">3V3 · GND</text>
+  <text x="370" y="162" font-size="10" fill="#546e7a" text-anchor="middle">OUT</text>
+
+  <!-- Front button -->
+  <rect x="500" y="90" width="150" height="70" rx="8" fill="#fff" stroke="#90a4ae" stroke-width="2"/>
+  <text x="575" y="118" font-size="14" font-weight="bold" fill="#212121" text-anchor="middle">Front button</text>
+  <text x="575" y="136" font-size="11" fill="#616161" text-anchor="middle">other leg → GND</text>
+
+  <!-- ESP32 -->
+  <rect x="80" y="420" width="220" height="260" rx="8" fill="#f5f9ff" stroke="#455a64" stroke-width="2.5"/>
+  <text x="110" y="449" font-size="10" fill="#00897b" text-anchor="middle">8 SDA</text>
+  <text x="150" y="465" font-size="10" fill="#00897b" text-anchor="middle">9 SCL</text>
+  <text x="195" y="449" font-size="10" fill="#546e7a" text-anchor="middle">4 IR</text>
+  <text x="240" y="465" font-size="10" fill="#546e7a" text-anchor="middle">5 BTN</text>
+  <text x="295" y="484" font-size="10" fill="#7b1fa2" text-anchor="end">17 TX2</text>
+  <text x="295" y="519" font-size="10" fill="#7b1fa2" text-anchor="end">16 RX2</text>
+  <text x="295" y="564" font-size="10" fill="#546e7a" text-anchor="end">6 PAIR</text>
+  <text x="190" y="545" font-size="15" font-weight="bold" fill="#212121" text-anchor="middle">ESP32-S3</text>
+  <text x="190" y="563" font-size="12" fill="#212121" text-anchor="middle">DevKitC-1</text>
+  <text x="190" y="608" font-size="11" fill="#616161" text-anchor="middle">WiFi · web UI</text>
+  <text x="190" y="626" font-size="11" fill="#616161" text-anchor="middle">USB: power + debug</text>
+
+  <!-- Teensy -->
+  <rect x="560" y="280" width="210" height="470" rx="8" fill="#f5fff7" stroke="#455a64" stroke-width="2.5"/>
+  <text x="665" y="305" font-size="15" font-weight="bold" fill="#212121" text-anchor="middle">Teensy 4.1</text>
+  <text x="764" y="324" font-size="10" fill="#ef6c00" text-anchor="end">21 BCLK1</text>
+  <text x="764" y="354" font-size="10" fill="#ef6c00" text-anchor="end">20 LRCLK1</text>
+  <text x="764" y="389" font-size="10" fill="#1565c0" text-anchor="end">8 IN1</text>
+  <text x="764" y="424" font-size="10" fill="#1565c0" text-anchor="end">7 OUT1A</text>
+  <text x="764" y="454" font-size="10" fill="#1565c0" text-anchor="end">32 OUT1B</text>
+  <text x="665" y="505" font-size="10.5" fill="#78909c" text-anchor="middle">(6, 9 → DAC 3 &amp; 4, future)</text>
+  <text x="764" y="569" font-size="10" fill="#2e7d32" text-anchor="end">5 IN2</text>
+  <text x="764" y="599" font-size="10" fill="#2e7d32" text-anchor="end">4 BCLK2</text>
+  <text x="764" y="629" font-size="10" fill="#2e7d32" text-anchor="end">3 LRCLK2</text>
+  <text x="764" y="659" font-size="10" fill="#2e7d32" text-anchor="end">33 MCLK2</text>
+  <text x="566" y="484" font-size="10" fill="#7b1fa2">0 RX1</text>
+  <text x="566" y="519" font-size="10" fill="#7b1fa2">1 TX1</text>
+  <text x="566" y="634" font-size="10" fill="#6d4c41">15 SPDIF IN</text>
+  <text x="566" y="714" font-size="10" fill="#6d4c41">14 SPDIF OUT</text>
+  <text x="665" y="678" font-size="11" fill="#616161" text-anchor="middle">built-in SD: FIR files</text>
+  <text x="665" y="696" font-size="11" fill="#616161" text-anchor="middle">USB: audio in + debug</text>
+
+  <!-- TinySine AudioB -->
+  <rect x="960" y="80" width="260" height="200" rx="8" fill="#fff" stroke="#90a4ae" stroke-width="2"/>
+  <text x="1090" y="106" font-size="14" font-weight="bold" fill="#212121" text-anchor="middle">TinySine AudioB I2S v3</text>
+  <text x="1090" y="123" font-size="11" fill="#616161" text-anchor="middle">Bluetooth receiver — I2S slave</text>
+  <text x="1190" y="96" font-size="10" fill="#546e7a" text-anchor="middle">pair</text>
+  <text x="966" y="154" font-size="10" fill="#ef6c00">8 BCK</text>
+  <text x="966" y="189" font-size="10" fill="#1565c0">9 SD</text>
+  <text x="966" y="224" font-size="10" fill="#ef6c00">10 LRCK</text>
+  <text x="1214" y="154" font-size="10" fill="#c62828" text-anchor="end">11 VIN = 5 V</text>
+  <text x="1214" y="177" font-size="10" fill="#37474f" text-anchor="end">16 GND</text>
+  <text x="1214" y="200" font-size="10" fill="#616161" text-anchor="end">15 = +1.8 V out</text>
+  <text x="1090" y="250" font-size="10.5" fill="#616161" text-anchor="middle">controls (17-20: FWD/REW/PLAY/MUTE)</text>
+  <text x="1090" y="266" font-size="10.5" fill="#616161" text-anchor="middle">are 1.8 V logic — 8.2 kΩ series only</text>
+
+  <!-- ADC -->
+  <rect x="960" y="520" width="180" height="200" rx="8" fill="#fff" stroke="#90a4ae" stroke-width="2"/>
+  <text x="966" y="569" font-size="10" fill="#2e7d32">DOUT</text>
+  <text x="966" y="599" font-size="10" fill="#2e7d32">BCK</text>
+  <text x="966" y="629" font-size="10" fill="#2e7d32">LRC</text>
+  <text x="966" y="659" font-size="10" fill="#2e7d32">SCK</text>
+  <text x="1050" y="688" font-size="14" font-weight="bold" fill="#212121" text-anchor="middle">ADC — PCM1808</text>
+  <text x="1050" y="706" font-size="10.5" fill="#616161" text-anchor="middle">analog line-in · VCC = 3V3</text>
+
+  <!-- DAC 1 -->
+  <rect x="1260" y="300" width="200" height="130" rx="8" fill="#fff" stroke="#90a4ae" stroke-width="2"/>
+  <text x="1360" y="322" font-size="14" font-weight="bold" fill="#212121" text-anchor="middle">DAC 1 — PCM5102A</text>
+  <text x="1360" y="340" font-size="11" fill="#616161" text-anchor="middle">outputs 1-2 · main L / R</text>
+  <text x="1266" y="364" font-size="10" fill="#ef6c00">BCK</text>
+  <text x="1266" y="389" font-size="10" fill="#ef6c00">LCK</text>
+  <text x="1266" y="424" font-size="10" fill="#1565c0">DIN</text>
+  <text x="1360" y="408" font-size="10" fill="#78909c" text-anchor="middle">SCK pad → GND (on-board)</text>
+  <text x="1452" y="374" font-size="10" fill="#d81b60" text-anchor="end">VIN</text>
+
+  <!-- DAC 2 -->
+  <rect x="1260" y="470" width="200" height="130" rx="8" fill="#fff" stroke="#90a4ae" stroke-width="2"/>
+  <text x="1360" y="492" font-size="14" font-weight="bold" fill="#212121" text-anchor="middle">DAC 2 — PCM5102A</text>
+  <text x="1360" y="510" font-size="11" fill="#616161" text-anchor="middle">outputs 3-4 · subwoofer(s)</text>
+  <text x="1266" y="539" font-size="10" fill="#ef6c00">BCK</text>
+  <text x="1266" y="564" font-size="10" fill="#ef6c00">LCK</text>
+  <text x="1266" y="589" font-size="10" fill="#1565c0">DIN</text>
+  <text x="1452" y="544" font-size="10" fill="#d81b60" text-anchor="end">VIN</text>
+
+  <text x="1360" y="626" font-size="10.5" fill="#78909c" text-anchor="middle">(DAC 3 &amp; 4: DIN from Teensy 6 &amp; 9,</text>
+  <text x="1360" y="641" font-size="10.5" fill="#78909c" text-anchor="middle">same clock bus)</text>
+
+  <!-- Regulator -->
+  <rect x="1260" y="660" width="200" height="90" rx="8" fill="#fff" stroke="#90a4ae" stroke-width="2"/>
+  <text x="1360" y="692" font-size="14" font-weight="bold" fill="#212121" text-anchor="middle">3.3 V linear regulator</text>
+  <text x="1360" y="710" font-size="11" fill="#616161" text-anchor="middle">powers the DAC boards only</text>
+
+  <!-- Toslink -->
+  <rect x="330" y="600" width="170" height="60" rx="8" fill="#fff" stroke="#90a4ae" stroke-width="2"/>
+  <text x="415" y="625" font-size="13" font-weight="bold" fill="#212121" text-anchor="middle">Toslink receiver</text>
+  <text x="415" y="643" font-size="11" fill="#616161" text-anchor="middle">SPDIF in</text>
+  <rect x="330" y="680" width="170" height="60" rx="8" fill="#fff" stroke="#90a4ae" stroke-width="2"/>
+  <text x="415" y="705" font-size="13" font-weight="bold" fill="#212121" text-anchor="middle">Toslink transmitter</text>
+  <text x="415" y="723" font-size="11" fill="#616161" text-anchor="middle">SPDIF out</text>
+
+  <!-- ============ wires ============ -->
+  <g fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- UART -->
+    <path d="M300,480 L560,480" stroke="#7b1fa2"/>
+    <path d="M560,515 L300,515" stroke="#7b1fa2"/>
+    <!-- I2C -->
+    <path d="M110,180 L110,420" stroke="#00897b"/>
+    <path d="M150,180 L150,420" stroke="#00897b"/>
+    <!-- GPIO -->
+    <path d="M370,170 L370,250 L195,250 L195,420" stroke="#546e7a"/>
+    <path d="M540,160 L540,210 L240,210 L240,420" stroke="#546e7a"/>
+    <path d="M300,560 L320,560 L320,52 L980,52" stroke="#546e7a"/>
+    <path d="M1040,52 L1190,52 L1190,80" stroke="#546e7a"/>
+    <!-- I2S1 clocks -->
+    <path d="M770,320 L1230,320 L1230,535 L1260,535" stroke="#ef6c00"/>
+    <path d="M1230,360 L1260,360" stroke="#ef6c00"/>
+    <path d="M850,320 L850,150 L960,150" stroke="#ef6c00"/>
+    <path d="M770,350 L1205,350 L1205,560 L1260,560" stroke="#ef6c00"/>
+    <path d="M1205,385 L1260,385" stroke="#ef6c00"/>
+    <path d="M880,350 L880,220 L960,220" stroke="#ef6c00"/>
+    <!-- I2S1 data -->
+    <path d="M960,185 L830,185 L830,385 L770,385" stroke="#1565c0"/>
+    <path d="M770,420 L1260,420" stroke="#1565c0"/>
+    <path d="M770,450 L1150,450 L1150,585 L1260,585" stroke="#1565c0"/>
+    <!-- I2S2 -->
+    <path d="M770,565 L960,565" stroke="#2e7d32"/>
+    <path d="M770,595 L960,595" stroke="#2e7d32"/>
+    <path d="M770,625 L960,625" stroke="#2e7d32"/>
+    <path d="M770,655 L960,655" stroke="#2e7d32"/>
+    <!-- SPDIF -->
+    <path d="M500,630 L560,630" stroke="#6d4c41"/>
+    <path d="M500,710 L560,710" stroke="#6d4c41"/>
+    <!-- power -->
+    <path d="M1200,700 L1260,700" stroke="#c62828"/>
+    <path d="M1460,370 L1505,370 L1505,700 L1460,700" stroke="#d81b60"/>
+    <path d="M1460,540 L1505,540" stroke="#d81b60"/>
+    <!-- decoupling caps + gnd symbols -->
+    <path d="M1480,370 L1480,381 M1471,381 L1489,381 M1471,387 L1489,387 M1480,387 L1480,398" stroke="#d81b60"/>
+    <path d="M1471,398 L1489,398 M1474,402 L1486,402 M1477,406 L1483,406" stroke="#37474f"/>
+    <path d="M1480,540 L1480,551 M1471,551 L1489,551 M1471,557 L1489,557 M1480,557 L1480,568" stroke="#d81b60"/>
+    <path d="M1471,568 L1489,568 M1474,572 L1486,572 M1477,576 L1483,576" stroke="#37474f"/>
+  </g>
+
+  <!-- junction dots -->
+  <g fill="#ef6c00">
+    <circle cx="850" cy="320" r="3.5"/>
+    <circle cx="880" cy="350" r="3.5"/>
+    <circle cx="1230" cy="360" r="3.5"/>
+    <circle cx="1205" cy="385" r="3.5"/>
+  </g>
+  <g fill="#d81b60">
+    <circle cx="1480" cy="370" r="3.5"/>
+    <circle cx="1480" cy="540" r="3.5"/>
+    <circle cx="1505" cy="540" r="3.5"/>
+  </g>
+
+  <!-- series resistor on the pairing line -->
+  <rect x="980" y="45" width="60" height="14" fill="#fff" stroke="#546e7a" stroke-width="1.5"/>
+  <text x="1010" y="40" font-size="10" fill="#546e7a" text-anchor="middle">8.2 kΩ</text>
+
+  <!-- ============ wire labels ============ -->
+  <text x="430" y="473" font-size="11" fill="#7b1fa2" text-anchor="middle">GPIO17 TX2 → RX1 (pin 0)</text>
+  <text x="430" y="532" font-size="11" fill="#7b1fa2" text-anchor="middle">GPIO16 RX2 ← TX1 (pin 1)</text>
+  <text x="620" y="44" font-size="11" fill="#546e7a" text-anchor="middle">GPIO6 → pairing (in place of a button press)</text>
+  <text x="1000" y="312" font-size="11" fill="#ef6c00" text-anchor="middle">21 BCLK1 → every BCK</text>
+  <text x="1010" y="343" font-size="11" fill="#ef6c00" text-anchor="middle">20 LRCLK1 → every LCK / LRCK</text>
+  <text x="895" y="178" font-size="11" fill="#1565c0" text-anchor="middle">9 SD → 8 IN1</text>
+  <text x="950" y="412" font-size="11" fill="#1565c0" text-anchor="middle">7 → DAC 1 DIN</text>
+  <text x="950" y="442" font-size="11" fill="#1565c0" text-anchor="middle">32 → DAC 2 DIN</text>
+  <text x="865" y="557" font-size="11" fill="#2e7d32" text-anchor="middle">I2S2</text>
+  <text x="1192" y="704" font-size="11" fill="#c62828" text-anchor="end">5 V</text>
+  <text x="1498" y="360" font-size="11" fill="#d81b60" text-anchor="end">3.3 V</text>
+  <text x="1466" y="392" font-size="10" fill="#616161" text-anchor="end">100 nF</text>
+  <text x="1466" y="562" font-size="10" fill="#616161" text-anchor="end">100 nF</text>
+
+  <!-- ============ legend ============ -->
+  <rect x="80" y="790" width="1380" height="290" rx="8" fill="#fafafa" stroke="#cfd8dc" stroke-width="1.5"/>
+  <text x="100" y="818" font-size="14" font-weight="bold" fill="#212121">Legend</text>
+
+  <g stroke-width="3" stroke-linecap="round">
+    <line x1="100" y1="845" x2="140" y2="845" stroke="#7b1fa2"/>
+    <line x1="100" y1="873" x2="140" y2="873" stroke="#00897b"/>
+    <line x1="100" y1="901" x2="140" y2="901" stroke="#546e7a"/>
+    <line x1="100" y1="929" x2="140" y2="929" stroke="#ef6c00"/>
+    <line x1="100" y1="957" x2="140" y2="957" stroke="#1565c0"/>
+    <line x1="100" y1="985" x2="140" y2="985" stroke="#2e7d32"/>
+    <line x1="100" y1="1013" x2="140" y2="1013" stroke="#6d4c41"/>
+  </g>
+  <g font-size="12" fill="#212121">
+    <text x="152" y="849">UART command link — 115200 baud, 3.3 V logic</text>
+    <text x="152" y="877">I2C — LCD only · no external pull-ups needed (the backpack has its own)</text>
+    <text x="152" y="905">GPIO — IR in, button in (internal pull-up), Bluetooth pairing out</text>
+    <text x="152" y="933">I2S1 clocks — Teensy is bus master; shared by the BT module and every DAC</text>
+    <text x="152" y="961">I2S1 data — BT SD in (pin 8), one DIN per DAC (7, 32 — later 6, 9)</text>
+    <text x="152" y="989">I2S2 — analog line-in ADC (Teensy master; the PCM1808 needs MCLK on 33)</text>
+    <text x="152" y="1017">SPDIF — Toslink optical in (15) and out (14)</text>
+  </g>
+
+  <g font-size="12" fill="#212121">
+    <text x="770" y="849">• All grounds are common. ESP32 + Teensy are powered over USB / shared 5 V.</text>
+    <text x="770" y="877">• DAC boards: 3.3 V from the dedicated regulator, 100 nF ceramic across VIN-GND at each board.</text>
+    <text x="770" y="905">• TinySine VIN = 5 V; its control pins are 1.8 V logic — only drive them via 8.2 kΩ series resistors.</text>
+    <text x="770" y="933">• TinySine pitch is 2.0 mm (not breadboard-compatible): solder leads directly or use an adapter PCB.</text>
+    <text x="770" y="961">• PCM5102A SCK stays tied to GND (usually on-board) — the DAC generates its own master clock.</text>
+    <text x="770" y="989">• Optional: 100 Ω series resistors at the Teensy end of BCK / LCK as ringing insurance on the bus.</text>
+    <text x="770" y="1017">• Pin numbers are for the ESP32-S3 build — the classic ESP32 uses different GPIOs (see WIRING.md).</text>
+  </g>
+</svg>

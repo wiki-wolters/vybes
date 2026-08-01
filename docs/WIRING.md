@@ -13,6 +13,9 @@ ESP is used only for the 1602 LCD backpack.
              └────────────┘                        └─────────────┘
 ```
 
+A full visual diagram (ESP32-S3 pin numbers) lives in
+[wiring-diagram.svg](wiring-diagram.svg).
+
 ## ESP32 pins
 
 Two boards are supported; pin maps live in `ESP/esp-web-server/board_pins.h`
@@ -30,6 +33,9 @@ DevKitC, `-e esp32s3` for the S3 — see `ESP/platformio.ini`).
 | Bluetooth module pairing input  | GPIO **33**              | GPIO **6**         | Driven HIGH while the button is held (`button.cpp`) |
 | Debug console + flashing        | USB port                 | USB port labeled "UART" | 115200 baud |
 | Common ground                   | GND                      | GND                | Shared with Teensy, DACs, BT module |
+
+No external pull-up resistors are needed on the I2C lines — the PCF8574
+backpack has its own on-board.
 
 When rewiring onto other pins, avoid:
 
@@ -81,6 +87,32 @@ The Bluetooth input shares the I2S1 clocks (BCLK1 = 21, LRCLK1 = 20) with the
 L/R DAC. The Teensy is the I2S clock master on that bus, so the Bluetooth
 board must be wired to those same clock lines and run as an I2S slave.
 
+### Bluetooth module (TinySine AudioB I2S v3)
+
+Product page: <https://www.tinysineaudio.com/products/audiob-i2s-v3-bluetooth-digital-audio-receiver-module-i2s-slave>
+
+| AudioB pin | Signal     | Connects to                 | Notes |
+|------------|------------|-----------------------------|-------|
+| **8**      | BCK        | Teensy pin 21 (BCLK1)       | shared I2S1 bit clock |
+| **9**      | SD         | Teensy pin 8 (IN1 data)     | audio data out |
+| **10**     | LRCK       | Teensy pin 20 (LRCLK1)      | shared I2S1 word clock |
+| **11**     | VIN        | 5V                          | |
+| **16**     | GND        | common ground               | |
+| **15**     | +1.8V out  | control-pin pull source     | for the module's own buttons |
+| **17-20**  | FORWARD / REWIND / PLAY-PAUSE / MUTE | control inputs | **1.8V logic** — always through 8.2kΩ series resistors |
+
+Watch-outs:
+
+- The control pins (17-20) are **1.8V logic**: the module's own button wiring
+  pulls them to the +1.8V pin (15) through 8.2kΩ. The ESP's pairing output
+  (GPIO33 classic / GPIO6 S3) drives the pairing control input in place of a
+  button press — keep the 8.2kΩ series resistor in that line so the 3.3V GPIO
+  can't overdrive the pin. Wire it to whichever control input triggers pairing
+  on your module's firmware (see the TinySine manual).
+- The header pitch is **2.0mm, not 2.54mm** — it won't fit a breadboard or
+  0.1" perfboard. Solder wires directly to the pins or use a 2.0mm→2.54mm
+  adapter PCB.
+
 The analog line-in ADC lives on I2S2, where the Teensy is also clock master.
 A PCM1808 breakout works as-is: it defaults to I2S slave format and takes
 its system clock from MCLK2 (pin 33, 256×fs). Wire VCC (3.3V), GND, and the
@@ -104,6 +136,10 @@ clock — leave the module's SCK tied to GND (most boards do this on-board)
 so the DAC generates its own. Keep the shared clock runs short; a 100 Ω
 series resistor at the Teensy end of BCK and LCK is cheap insurance
 against ringing once several boards hang off them.
+
+The DAC boards are powered from a dedicated **5V → 3.3V linear regulator**
+(kept off the ESP/Teensy 3.3V rails for a quieter supply), with a **100nF
+ceramic capacitor across each board's VIN-GND**, close to the pins.
 
 ## Front button & Bluetooth pairing
 
