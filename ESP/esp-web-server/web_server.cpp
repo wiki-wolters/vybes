@@ -273,9 +273,15 @@ void setupWebServer() {
         serverHttps.ssl_config.httpd.max_uri_handlers = 60;
         // Each TLS connection costs ~45KB of heap - keep the count low
         serverHttps.ssl_config.httpd.max_open_sockets = 3;
-        serverHttps.listen(443, serverCert.c_str(), serverKey.c_str());
-        registerRoutes(serverHttps, &wsHttps);
-        DebugSerial.println("HTTPS server started on port 443");
+        // Every esp-idf httpd instance needs its own control socket; the
+        // default (32768) is already taken by the HTTP listener above
+        serverHttps.ssl_config.httpd.ctrl_port = 32769;
+        if (serverHttps.listen(443, serverCert.c_str(), serverKey.c_str()) == ESP_OK) {
+            registerRoutes(serverHttps, &wsHttps);
+            DebugSerial.println("HTTPS server started on port 443");
+        } else {
+            DebugSerial.println("HTTPS server failed to start");
+        }
     } else {
         DebugSerial.println("No certificates in /certs - HTTPS disabled (see ESP/make-certs.sh)");
     }
