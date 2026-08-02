@@ -199,6 +199,10 @@ static void registerRoutes(PsychicHttpServer &s, PsychicWebSocketHandler *ws) {
     // API Routes - Crossover points
     s.on("/preset/crossover", HTTP_PUT, handlePutPresetCrossover);
 
+    // API Routes - Dynamics (mixed-input multiband compressor)
+    s.on("/preset/dynamics", HTTP_PUT, (PsychicJsonRequestCallback)handlePutPresetDynamics);
+    s.on("/comp/solo", HTTP_POST, handlePostCompSolo);
+
     // API Routes - Output channels (V1)
     s.on("/preset/output/label", HTTP_PUT, handlePutOutputLabel);
     s.on("/preset/output/enabled", HTTP_PUT, handlePutOutputEnabled);

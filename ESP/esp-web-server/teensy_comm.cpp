@@ -5,9 +5,9 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
-// Outgoing queue. A full V1 preset sync is ~180 commands worst case
-// (8 outputs x up to 19 commands each, plus input EQ and globals).
-#define QUEUE_SIZE 200
+// Outgoing queue. A full V1 preset sync is ~190 commands worst case
+// (8 outputs x up to 19 commands each, plus input EQ, dynamics and globals).
+#define QUEUE_SIZE 220
 // Incoming line assembly. Sized for the longest line the Teensy sends: a
 // 121-band RTA frame ("RTA " + 242 hex chars = 246 chars).
 #define RX_LINE_MAX 300
@@ -89,7 +89,9 @@ static int coalesceKeyTokens(const char* command) {
     if (strncmp(command, "setOutput", 9) == 0 ||
         strcmp(command, CMD_RESET_OUTPUT_EQ) == 0 ||
         strcmp(command, CMD_SET_FIR) == 0 ||
-        strcmp(command, CMD_SET_INPUT_EQ) == 0) {
+        strcmp(command, CMD_SET_INPUT_EQ) == 0 ||
+        strcmp(command, CMD_SET_COMP_BAND) == 0 ||
+        strcmp(command, CMD_SET_COMP_BAND_BYPASS) == 0) {
         return 2;
     }
     return 1;
@@ -257,6 +259,10 @@ static void handleTeensyLine(const char* line) {
     // forward them straight to the websocket, no debug logging.
     if (strncmp(line, "RTA ", 4) == 0) {
         broadcastRtaFrame(line + 4);
+        return;
+    }
+    if (strncmp(line, "GRM ", 4) == 0) {
+        broadcastGrmFrame(line + 4);
         return;
     }
 

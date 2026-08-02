@@ -65,7 +65,7 @@ public:
     static const int LINE_BUFFER_SIZE = 256;
 
 private:
-    static const int MAX_COMMANDS = 32;
+    static const int MAX_COMMANDS = 48;
 
     struct Command {
         String name;

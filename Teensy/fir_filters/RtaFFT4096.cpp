@@ -1,6 +1,5 @@
 #include "RtaFFT4096.h"
-#include <arm_const_structs.h>
-#include <arm_common_tables.h>
+#include "RtaFftTables.h"
 
 RtaFFT4096::RtaFFT4096()
   : AudioStream(1, inputQueueArray),
@@ -25,11 +24,15 @@ RtaFFT4096::RtaFFT4096()
 
   // Build the FFT instance by hand instead of calling arm_rfft_fast_init_f32:
   // its size switch links the twiddle tables for every FFT length (see the
-  // same trick in FirEngine); referencing the 4096-point tables directly
-  // links only what we use.
-  rfft.Sint = arm_cfft_sR_f32_len2048;
+  // same trick in FirEngine). The tables themselves are our own PROGMEM
+  // copies (RtaFftTables) - the core's live in DTCM, and 40KB of RAM1 is
+  // too dear for a 10Hz analyzer.
+  rfft.Sint.fftLen = FFT_SIZE / 2;
+  rfft.Sint.pTwiddle = (const float32_t*)rtaTwiddleCoef2048Bits;
+  rfft.Sint.pBitRevTable = rtaBitRevIndexTable2048;
+  rfft.Sint.bitRevLength = 3808; // ARMBITREVINDEXTABLE_2048_TABLE_LENGTH
   rfft.fftLenRFFT = FFT_SIZE;
-  rfft.pTwiddleRFFT = (float32_t*)twiddleCoef_rfft_4096;
+  rfft.pTwiddleRFFT = (float32_t*)rtaTwiddleCoefRfft4096Bits;
 }
 
 void RtaFFT4096::update(void) {

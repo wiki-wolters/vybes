@@ -14,7 +14,9 @@
 // Version history:
 // 1 - Initial 8-output V1 schema
 // 2 - Added deviceName (multi-device support; older files default to "vybes")
-#define CONFIG_CURRENT_VERSION 2
+// 3 - Added per-preset dynamics (mixed-input multiband compressor); absent
+//     sections parse to defaults (disabled), so no doc rewrite is needed
+#define CONFIG_CURRENT_VERSION 3
 
 #define MAX_PRESETS 12
 // Long enough for the contract suite's generated "contract-test-…" names
@@ -112,6 +114,34 @@ struct Output {
     bool mute = false;
 };
 
+// One band of the mixed-input multiband compressor. Ranges are clamped by
+// the API handler and again by the Teensy.
+struct CompBand {
+    float threshold = -24.0f; // dBFS
+    float ratio = 2.0f;       // 1..20, 1 = no compression
+    float attack = 10.0f;     // ms
+    float release = 150.0f;   // ms
+    float makeup = 0.0f;      // dB
+    bool bypass = false;
+};
+
+#define COMP_BANDS 3
+#define COMP_MODE_MAX_LEN 15
+
+// Mixed-input multiband compressor ("dynamics" in the API/UI). mode is a
+// UI label ("off" | "voice" | "night" | "punch" | "custom") - the numeric
+// fields are what the device actually runs; the label just tells the UI
+// which chip to highlight.
+struct Dynamics {
+    bool enabled = false;
+    char mode[COMP_MODE_MAX_LEN + 1] = "voice";
+    float strength = 70.0f;     // % of the computed reduction to apply
+    float xoverLow = 250.0f;    // bass/mid split, Hz
+    float xoverHigh = 4000.0f;  // mid/treble split, Hz
+    float voicePriority = 6.0f; // extra bass duck while the mid band is active, dB
+    CompBand bands[COMP_BANDS]; // 0 bass, 1 mid/voice, 2 treble
+};
+
 // Represents a single preset (V1 schema)
 struct Preset {
     char name[PRESET_NAME_MAX_LEN] = "";
@@ -122,6 +152,7 @@ struct Preset {
     Output outputs[NUM_OUTPUTS];
     bool delaysEnabled = false;
     bool firEnabled = false;
+    Dynamics dynamics;
 };
 
 struct SpeakerGains {
@@ -242,6 +273,7 @@ void filter_to_json(const FilterSection& section, JsonObject obj);
 void crossover_to_json(const CrossoverPoint& point, JsonObject obj);
 void output_to_json(const Output& output, JsonObject obj);
 void input_eq_to_json(const InputEq& eq, JsonObject obj);
+void dynamics_to_json(const Dynamics& dyn, JsonObject obj);
 
 void updateTeensyWithActivePresetParameters();
 
@@ -253,6 +285,9 @@ void sendOutputEqPointToTeensy(int channel, int band, const PEQPoint& point);
 
 // Queue the resolved HP+LP sections of one output for the Teensy
 void sendOutputFiltersToTeensy(int channel, const Preset& preset);
+
+// Queue the full dynamics (multiband compressor) state for the Teensy
+void sendDynamicsToTeensy(const Dynamics& dyn);
 
 void loadFirFilters();
 

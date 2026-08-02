@@ -170,6 +170,25 @@ void input_eq_to_json(const InputEq& eq, JsonObject obj) {
     }
 }
 
+void dynamics_to_json(const Dynamics& dyn, JsonObject obj) {
+    obj["enabled"] = dyn.enabled;
+    obj["mode"] = dyn.mode;
+    obj["strength"] = dyn.strength;
+    obj["xoverLow"] = dyn.xoverLow;
+    obj["xoverHigh"] = dyn.xoverHigh;
+    obj["voicePriority"] = dyn.voicePriority;
+    JsonArray bands = obj.createNestedArray("bands");
+    for (int i = 0; i < COMP_BANDS; i++) {
+        JsonObject band = bands.createNestedObject();
+        band["threshold"] = dyn.bands[i].threshold;
+        band["ratio"] = dyn.bands[i].ratio;
+        band["attack"] = dyn.bands[i].attack;
+        band["release"] = dyn.bands[i].release;
+        band["makeup"] = dyn.bands[i].makeup;
+        band["bypass"] = dyn.bands[i].bypass;
+    }
+}
+
 // --- JSON parsing (storage load) ---
 
 static void filter_from_json(JsonObject obj, FilterSection& section) {
@@ -255,6 +274,29 @@ static void preset_from_json(JsonObject obj, Preset& preset) {
 
     preset.delaysEnabled = obj["delaysEnabled"] | false;
     preset.firEnabled = obj["firEnabled"] | false;
+
+    // Absent in configs saved before v3 - defaults leave it disabled
+    preset.dynamics = Dynamics();
+    JsonObject dyn = obj["dynamics"];
+    if (!dyn.isNull()) {
+        preset.dynamics.enabled = dyn["enabled"] | false;
+        strlcpy(preset.dynamics.mode, dyn["mode"] | "voice", sizeof(preset.dynamics.mode));
+        preset.dynamics.strength = dyn["strength"] | 70.0f;
+        preset.dynamics.xoverLow = dyn["xoverLow"] | 250.0f;
+        preset.dynamics.xoverHigh = dyn["xoverHigh"] | 4000.0f;
+        preset.dynamics.voicePriority = dyn["voicePriority"] | 6.0f;
+        int bandCount = 0;
+        for (JsonObject band : dyn["bands"].as<JsonArray>()) {
+            if (bandCount >= COMP_BANDS) break;
+            CompBand& target = preset.dynamics.bands[bandCount++];
+            target.threshold = band["threshold"] | target.threshold;
+            target.ratio = band["ratio"] | target.ratio;
+            target.attack = band["attack"] | target.attack;
+            target.release = band["release"] | target.release;
+            target.makeup = band["makeup"] | target.makeup;
+            target.bypass = band["bypass"] | false;
+        }
+    }
 }
 
 static void preset_to_json(const Preset& preset, JsonObject obj) {
@@ -271,6 +313,7 @@ static void preset_to_json(const Preset& preset, JsonObject obj) {
     }
     obj["delaysEnabled"] = preset.delaysEnabled;
     obj["firEnabled"] = preset.firEnabled;
+    dynamics_to_json(preset.dynamics, obj.createNestedObject("dynamics"));
 }
 
 // --- Load / save ---
@@ -279,8 +322,9 @@ static void preset_to_json(const Preset& preset, JsonObject obj) {
 // normal parse runs. Returns false for versions that can't be migrated.
 static bool migrate_config(JsonDocument& doc, uint8_t fromVersion) {
     (void)doc;
-    // v1 -> v2: deviceName was added; absent keys parse to the default,
-    // so no doc rewrite is needed.
+    // v1 -> v2: deviceName was added; absent keys parse to the default.
+    // v2 -> v3: per-preset dynamics was added; an absent section parses to
+    // defaults (disabled). No doc rewrite is needed for either.
     return fromVersion >= 1 && fromVersion <= CONFIG_CURRENT_VERSION;
 }
 
@@ -541,6 +585,29 @@ void sendOutputFiltersToTeensy(int channel, const Preset& preset) {
     sendToTeensy(CMD_SET_OUTPUT_LP, chStr, freqStr, resolve_filter_type(preset, output.lp));
 }
 
+void sendDynamicsToTeensy(const Dynamics& dyn) {
+    char a[16], b[16];
+    snprintf(a, sizeof(a), "%.1f", dyn.xoverLow);
+    snprintf(b, sizeof(b), "%.1f", dyn.xoverHigh);
+    sendToTeensy(CMD_SET_COMP_XOVER, a, b);
+    for (int i = 0; i < COMP_BANDS; i++) {
+        char idx[4];
+        snprintf(idx, sizeof(idx), "%d", i);
+        // Five values space-packed into one builder param; the Teensy's
+        // router re-splits them (same trick as setInputEq's point data)
+        char packed[56];
+        snprintf(packed, sizeof(packed), "%.1f %.2f %.1f %.1f %.1f",
+                 dyn.bands[i].threshold, dyn.bands[i].ratio, dyn.bands[i].attack,
+                 dyn.bands[i].release, dyn.bands[i].makeup);
+        sendToTeensy(CMD_SET_COMP_BAND, idx, packed);
+        sendToTeensy(CMD_SET_COMP_BAND_BYPASS, idx, dyn.bands[i].bypass ? "1" : "0");
+    }
+    sendFloatToTeensy(CMD_SET_COMP_STRENGTH, dyn.strength);
+    sendFloatToTeensy(CMD_SET_COMP_VOICE_PRIORITY, dyn.voicePriority);
+    // Enable last, so the compressor turns on with its parameters in place
+    sendOnOffToTeensy(CMD_SET_COMP_ENABLED, dyn.enabled);
+}
+
 void updateTeensyWithActivePresetParameters() {
     Preset* activePreset = &current_config.presets[current_config.active_preset_index];
 
@@ -585,6 +652,9 @@ void updateTeensyWithActivePresetParameters() {
     // Preset-level master toggles
     sendOnOffToTeensy(CMD_SET_DELAYS_ENABLED, activePreset->delaysEnabled);
     sendOnOffToTeensy(CMD_SET_FIR_ENABLED, activePreset->firEnabled);
+
+    // Mixed-input dynamics
+    sendDynamicsToTeensy(activePreset->dynamics);
 
     // Shared input EQ. Points are always sent (even when EQ is disabled) so
     // the Teensy has the right curve the moment EQ is enabled.

@@ -109,6 +109,16 @@ static const ProtocolCase kProtocolCases[] = {
     {CMD_STOP_TONE, nullptr, nullptr, nullptr, nullptr, nullptr, 0},
     {CMD_SET_NOISE, "25.00", nullptr, nullptr, nullptr, nullptr, 1},
     {CMD_SET_RTA, "1", nullptr, nullptr, nullptr, nullptr, 1},
+    // setCompBand carries "<thr> <ratio> <atk> <rel> <mk>" as one builder
+    // parameter (config.cpp sendDynamicsToTeensy), split back by the router
+    {CMD_SET_COMP_ENABLED, "1", nullptr, nullptr, nullptr, nullptr, 1},
+    {CMD_SET_COMP_XOVER, "250.0", "4000.0", nullptr, nullptr, nullptr, 2},
+    {CMD_SET_COMP_BAND, "0", "-24.0 6.00 5.0 150.0 3.0", nullptr, nullptr, nullptr, 6},
+    {CMD_SET_COMP_BAND_BYPASS, "1", "0", nullptr, nullptr, nullptr, 2},
+    {CMD_SET_COMP_SOLO, "-1", nullptr, nullptr, nullptr, nullptr, 1},
+    {CMD_SET_COMP_STRENGTH, "70.00", nullptr, nullptr, nullptr, nullptr, 1},
+    {CMD_SET_COMP_VOICE_PRIORITY, "6.00", nullptr, nullptr, nullptr, nullptr, 1},
+    {CMD_SET_GRM, "1", nullptr, nullptr, nullptr, nullptr, 1},
     {CMD_SET_MUTE, "1", nullptr, nullptr, nullptr, nullptr, 1},
     {CMD_SET_MUTE_PERCENT, "50.00", nullptr, nullptr, nullptr, nullptr, 1},
     {CMD_PING, nullptr, nullptr, nullptr, nullptr, nullptr, 0},

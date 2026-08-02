@@ -202,6 +202,76 @@ esp_err_t handlePutPresetCrossoverEnabled(PsychicRequest *request) {
     return sendJsonAndBroadcast(request, doc);
 }
 
+// PUT /preset/dynamics?preset_name= - replace the preset's whole dynamics
+// (multiband compressor) block. The UI always sends the full object, so
+// there is no per-field endpoint.
+esp_err_t handlePutPresetDynamics(PsychicRequest *request, JsonVariant &json) {
+    if (!request->hasParam("preset_name")) {
+        return request->reply(400, "text/plain", "Missing required parameters");
+    }
+    String presetName = request->getParam("preset_name")->value();
+
+    int presetIndex = find_preset_by_name(presetName.c_str());
+    if (presetIndex == -1) {
+        return request->reply(404, "text/plain", "Preset not found");
+    }
+
+    JsonObject body = json.as<JsonObject>();
+    if (body.isNull()) {
+        return request->reply(400, "text/plain", "Expected a JSON dynamics object");
+    }
+
+    Preset* preset = &current_config.presets[presetIndex];
+    {
+        ConfigLock lock;
+        Dynamics& dyn = preset->dynamics;
+        dyn.enabled = body["enabled"] | dyn.enabled;
+        strlcpy(dyn.mode, body["mode"] | dyn.mode, sizeof(dyn.mode));
+        dyn.strength = clampf(body["strength"] | dyn.strength, 0.0f, 100.0f);
+        dyn.xoverLow = clampf(body["xoverLow"] | dyn.xoverLow, 40.0f, 1000.0f);
+        dyn.xoverHigh = clampf(body["xoverHigh"] | dyn.xoverHigh, 2.0f * dyn.xoverLow, 12000.0f);
+        dyn.voicePriority = clampf(body["voicePriority"] | dyn.voicePriority, 0.0f, 24.0f);
+        JsonArray bands = body["bands"];
+        int count = 0;
+        for (JsonObject band : bands) {
+            if (count >= COMP_BANDS) break;
+            CompBand& target = dyn.bands[count++];
+            target.threshold = clampf(band["threshold"] | target.threshold, -60.0f, 0.0f);
+            target.ratio = clampf(band["ratio"] | target.ratio, 1.0f, 20.0f);
+            target.attack = clampf(band["attack"] | target.attack, 0.5f, 500.0f);
+            target.release = clampf(band["release"] | target.release, 10.0f, 2000.0f);
+            target.makeup = clampf(band["makeup"] | target.makeup, -12.0f, 12.0f);
+            target.bypass = band["bypass"] | target.bypass;
+        }
+        scheduleConfigWrite();
+    }
+
+    if (presetIndex == current_config.active_preset_index) {
+        sendDynamicsToTeensy(preset->dynamics);
+    }
+
+    JsonDocument responseDoc;
+    responseDoc["messageType"] = "dynamicsChanged";
+    responseDoc["presetName"] = presetName;
+    responseDoc["status"] = "ok";
+    dynamics_to_json(preset->dynamics, responseDoc.createNestedObject("dynamics"));
+    return sendJsonAndBroadcast(request, responseDoc);
+}
+
+// POST /comp/solo?band= - audition one compressor band (-1 restores all).
+// Transient: relayed to the Teensy, never stored in the preset.
+esp_err_t handlePostCompSolo(PsychicRequest *request) {
+    if (!request->hasParam("band")) {
+        return request->reply(400, "text/plain", "Missing required parameters");
+    }
+    int band = request->getParam("band")->value().toInt();
+    if (band < -1 || band >= COMP_BANDS) {
+        return request->reply(400, "text/plain", "Band out of range");
+    }
+    sendIntToTeensy(CMD_SET_COMP_SOLO, band);
+    return request->reply(204);
+}
+
 esp_err_t handlePutPresetEQPoints(PsychicRequest *request, JsonVariant &json) {
     if (!request->hasParam("preset_name")) {
         return request->reply(400, "text/plain", "Missing required parameters");

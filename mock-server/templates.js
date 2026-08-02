@@ -144,6 +144,26 @@ function defaultInputEq() {
 }
 
 /**
+ * Default dynamics (mixed-input multiband compressor) block. Must match
+ * the ESP's Dynamics struct defaults (config.h).
+ */
+function defaultDynamics() {
+  return {
+    enabled: false,
+    mode: 'voice',
+    strength: 70,
+    xoverLow: 250,
+    xoverHigh: 4000,
+    voicePriority: 6,
+    bands: [
+      { threshold: -24, ratio: 2, attack: 10, release: 150, makeup: 0, bypass: false },
+      { threshold: -24, ratio: 2, attack: 10, release: 150, makeup: 0, bypass: false },
+      { threshold: -24, ratio: 2, attack: 10, release: 150, makeup: 0, bypass: false },
+    ],
+  };
+}
+
+/**
  * Build a full V1 preset config object from a template id.
  * Throws on unknown template ids.
  */
@@ -166,6 +186,7 @@ function buildPresetConfig(templateId = DEFAULT_TEMPLATE) {
     outputs,
     delaysEnabled: false,
     firEnabled: false,
+    dynamics: defaultDynamics(),
   };
 }
 
@@ -188,5 +209,6 @@ module.exports = {
   CROSSOVER_TYPES,
   DEFAULT_TEMPLATE,
   buildPresetConfig,
+  defaultDynamics,
   listTemplates,
 };

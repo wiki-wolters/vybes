@@ -38,6 +38,11 @@ static int totalClients() {
 static unsigned long rtaLastClientKeepaliveAt = 0;
 static bool rtaActive = false;
 
+// GRM (compressor gain-reduction meter) subscription: identical scheme,
+// driven by "grm:keepalive" from any page showing the meters.
+static unsigned long grmLastClientKeepaliveAt = 0;
+static bool grmActive = false;
+
 static void setupHandler(PsychicWebSocketHandler &handler, std::atomic<int> &clientCount) {
     handler.onOpen([&clientCount](PsychicWebSocketClient *client) {
         clientCount.fetch_add(1);
@@ -52,6 +57,10 @@ static void setupHandler(PsychicWebSocketHandler &handler, std::atomic<int> &cli
             // frame->payload is not null-terminated - compare with length
             if (frame->len == 13 && strncmp((const char*)frame->payload, "rta:keepalive", 13) == 0) {
                 rtaLastClientKeepaliveAt = millis();
+                return ESP_OK;
+            }
+            if (frame->len == 13 && strncmp((const char*)frame->payload, "grm:keepalive", 13) == 0) {
+                grmLastClientKeepaliveAt = millis();
                 return ESP_OK;
             }
             DebugSerial.printf("WebSocket received: %.*s\n", (int)frame->len, (const char*)frame->payload);
@@ -126,7 +135,18 @@ void broadcastRtaFrame(const char* hexData) {
     broadcastToAllListeners(buf);
 }
 
-// Relay RTA interest to the Teensy: refresh its keepalive while a web
+// Forward one GRM frame (the hex payload after "GRM ") to all clients.
+// Called from teensyCommLoop at ~10Hz while meters are streaming.
+void broadcastGrmFrame(const char* hexData) {
+    if (totalClients() == 0) return;
+    size_t len = strlen(hexData);
+    if (len == 0 || len > 6) return; // 3 bands * 2 hex chars
+    char buf[48];
+    snprintf(buf, sizeof(buf), "{\"type\":\"grm\",\"d\":\"%s\"}", hexData);
+    broadcastToAllListeners(buf);
+}
+
+// Relay RTA/GRM interest to the Teensy: refresh each keepalive while a web
 // client wants frames, send a single stop when interest lapses.
 void websocketLoop() {
     unsigned long now = millis();
@@ -143,5 +163,20 @@ void websocketLoop() {
     } else if (rtaActive) {
         rtaActive = false;
         sendToTeensy(CMD_SET_RTA, "0");
+    }
+
+    bool wantGrm = grmLastClientKeepaliveAt != 0 &&
+                   now - grmLastClientKeepaliveAt < RTA_CLIENT_TIMEOUT_MS &&
+                   totalClients() > 0;
+    static unsigned long lastGrmRefreshAt = 0;
+    if (wantGrm) {
+        grmActive = true;
+        if (now - lastGrmRefreshAt >= RTA_TEENSY_REFRESH_MS) {
+            lastGrmRefreshAt = now;
+            sendToTeensy(CMD_SET_GRM, "1");
+        }
+    } else if (grmActive) {
+        grmActive = false;
+        sendToTeensy(CMD_SET_GRM, "0");
     }
 }

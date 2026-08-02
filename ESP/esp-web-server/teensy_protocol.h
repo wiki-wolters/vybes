@@ -64,6 +64,27 @@
 // "setRta 0" stops. The Teensy replies with "RTA <hex>" frames.
 #define CMD_SET_RTA "setRta"
 
+// Mixed-input multiband compressor (3 bands: 0 bass, 1 mid/voice, 2 treble)
+//   setCompEnabled       <0|1>
+//   setCompXover         <f1> <f2>
+//   setCompBand          <band> <thresholdDb ratio attackMs releaseMs makeupDb>
+//                        (five values space-packed into one builder param)
+//   setCompBandBypass    <band> <0|1>
+//   setCompSolo          <band, -1 clears>
+//   setCompStrength      <0-100>
+//   setCompVoicePriority <dB>
+#define CMD_SET_COMP_ENABLED "setCompEnabled"
+#define CMD_SET_COMP_XOVER "setCompXover"
+#define CMD_SET_COMP_BAND "setCompBand"
+#define CMD_SET_COMP_BAND_BYPASS "setCompBandBypass"
+#define CMD_SET_COMP_SOLO "setCompSolo"
+#define CMD_SET_COMP_STRENGTH "setCompStrength"
+#define CMD_SET_COMP_VOICE_PRIORITY "setCompVoicePriority"
+
+// GRM (compressor gain-reduction meter) streaming: same keepalive scheme as
+// setRta. The Teensy replies with "GRM <6 hex>" frames.
+#define CMD_SET_GRM "setGrm"
+
 // System Commands
 #define CMD_SET_MUTE "setMute"
 #define CMD_SET_MUTE_PERCENT "setMutePercent"

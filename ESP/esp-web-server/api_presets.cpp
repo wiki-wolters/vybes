@@ -79,6 +79,7 @@ esp_err_t handleGetPreset(PsychicRequest *request) {
 
     doc["delaysEnabled"] = preset.delaysEnabled;
     doc["firEnabled"] = preset.firEnabled;
+    dynamics_to_json(preset.dynamics, doc.createNestedObject("dynamics"));
 
     JsonObject firPool = doc.createNestedObject("firPool");
     firPool["total"] = FIR_TAP_POOL;

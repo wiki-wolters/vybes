@@ -197,6 +197,23 @@ class VybesAPI {
   }
 
   /**
+   * Replace a preset's dynamics (multiband compressor) block
+   * @param {string} presetName - Name of the preset
+   * @param {Object} dynamics - Full dynamics object
+   */
+  async savePresetDynamics(presetName, dynamics) {
+    return this.request('PUT', `/preset/dynamics?preset_name=${encodeURIComponent(presetName)}`, dynamics);
+  }
+
+  /**
+   * Audition one compressor band (transient, not stored). -1 restores all.
+   * @param {number} band - Band index 0-2, or -1
+   */
+  async setCompSolo(band) {
+    return this.request('POST', `/comp/solo?band=${band}`);
+  }
+
+  /**
    * Create new preset
    * @param {string} name - Preset name (must be unique)
    * @param {string} [template] - Template id (defaults to 2.1 server-side)

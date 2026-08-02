@@ -154,6 +154,9 @@
             />
           </div>
         </CardSection>
+
+        <!-- Mixed-input multiband compressor -->
+        <DynamicsCard />
       </div>
 
       <!-- Device configuration: whole-device backup, not per-preset -->
@@ -200,6 +203,7 @@ import RangeSlider from '../components/shared/RangeSlider.vue';
 import ModalDialog from '../components/shared/ModalDialog.vue';
 import ToggleSwitch from '../components/shared/ToggleSwitch.vue';
 import TemplateSelect from '../components/shared/TemplateSelect.vue';
+import DynamicsCard from '../components/DynamicsCard.vue';
 import { useSystemStore } from '../stores/system.js';
 
 const router = useRouter();

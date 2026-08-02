@@ -13,4 +13,8 @@ esp_err_t handlePutPresetEQEnabled(PsychicRequest *request);
 esp_err_t handlePutPresetCrossover(PsychicRequest *request);
 esp_err_t handlePutPresetCrossoverEnabled(PsychicRequest *request);
 
+// Dynamics (mixed-input multiband compressor) endpoints
+esp_err_t handlePutPresetDynamics(PsychicRequest *request, JsonVariant &json);
+esp_err_t handlePostCompSolo(PsychicRequest *request);
+
 #endif // API_PRESET_CONFIG_H

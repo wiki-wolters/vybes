@@ -12,6 +12,7 @@ const {
   CROSSOVER_TYPES,
   DEFAULT_TEMPLATE,
   buildPresetConfig,
+  defaultDynamics,
   listTemplates,
 } = require('./templates');
 
@@ -169,6 +170,10 @@ wss.on('connection', (ws) => {
     if (msg.toString() === 'rta:keepalive') {
       rtaLastKeepaliveAt = Date.now();
     }
+    // Any page showing the compressor meters sends this
+    if (msg.toString() === 'grm:keepalive') {
+      grmLastKeepaliveAt = Date.now();
+    }
   });
 
   ws.on('close', () => {
@@ -205,6 +210,26 @@ function mockRtaFrameHex(t) {
 setInterval(() => {
   if (Date.now() - rtaLastKeepaliveAt > 5000) return;
   broadcast({ type: 'rta', d: mockRtaFrameHex(Date.now()) });
+}, 100);
+
+// --- Mock GRM (compressor gain-reduction meter) streaming ---
+// Three bytes ("{type:'grm', d:'<6 hex>'}"), one per band, value =
+// dB of reduction * 8, matching the firmware. The bass band pumps like a
+// compressor riding explosions; mid barely moves; treble twitches.
+let grmLastKeepaliveAt = 0;
+
+function mockGrmFrameHex(t) {
+  const bassDb = Math.max(0, 9 * Math.sin(t / 900)) + 1.5 * Math.random();
+  const midDb = 0.4 + 0.8 * Math.random();
+  const trebleDb = Math.max(0, 3 * Math.sin(t / 700 + 2)) + 0.8 * Math.random();
+  return [bassDb, midDb, trebleDb]
+    .map((db) => Math.max(0, Math.min(255, Math.round(db * 8))).toString(16).padStart(2, '0'))
+    .join('');
+}
+
+setInterval(() => {
+  if (Date.now() - grmLastKeepaliveAt > 5000) return;
+  broadcast({ type: 'grm', d: mockGrmFrameHex(Date.now()) });
 }, 100);
 
 // Helper functions
@@ -664,6 +689,8 @@ app.get('/preset', wrap(async (req, res) => {
     outputs: c.outputs,
     delaysEnabled: c.delaysEnabled,
     firEnabled: c.firEnabled,
+    // Presets saved before dynamics existed default to disabled
+    dynamics: c.dynamics || defaultDynamics(),
     firPool: { total: pool.total, used: pool.used },
   });
 }));
@@ -1201,6 +1228,63 @@ app.put('/preset/fir/enabled', wrap(async (req, res) => {
   const payload = { messageType: 'firEnabledChanged', presetName, status: 'ok', FIRFiltersEnabled: enabled };
   broadcast(payload);
   res.json(payload);
+}));
+
+// ===== Dynamics (mixed-input multiband compressor) =====
+
+// Replace the preset's whole dynamics block (JSON body). Mirrors the ESP:
+// clamps every field, stores, broadcasts dynamicsChanged, replies with the
+// stored block.
+app.put('/preset/dynamics', wrap(async (req, res) => {
+  const presetName = req.query.preset_name;
+  if (!presetName) {
+    return res.status(400).json({ error: 'Missing preset_name parameter' });
+  }
+  const preset = await loadPreset(presetName);
+  if (!preset) {
+    return res.status(404).json({ error: 'Preset not found' });
+  }
+  const body = req.body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return res.status(400).json({ error: 'Expected a JSON dynamics object' });
+  }
+
+  const stored = preset.config.dynamics || defaultDynamics();
+  const dyn = {
+    enabled: typeof body.enabled === 'boolean' ? body.enabled : stored.enabled,
+    mode: typeof body.mode === 'string' ? body.mode.slice(0, 15) : stored.mode,
+    strength: clamp(Number(body.strength ?? stored.strength), 0, 100),
+    xoverLow: clamp(Number(body.xoverLow ?? stored.xoverLow), 40, 1000),
+    voicePriority: clamp(Number(body.voicePriority ?? stored.voicePriority), 0, 24),
+    bands: stored.bands.map((prev, i) => {
+      const b = Array.isArray(body.bands) ? body.bands[i] || {} : {};
+      return {
+        threshold: clamp(Number(b.threshold ?? prev.threshold), -60, 0),
+        ratio: clamp(Number(b.ratio ?? prev.ratio), 1, 20),
+        attack: clamp(Number(b.attack ?? prev.attack), 0.5, 500),
+        release: clamp(Number(b.release ?? prev.release), 10, 2000),
+        makeup: clamp(Number(b.makeup ?? prev.makeup), -12, 12),
+        bypass: typeof b.bypass === 'boolean' ? b.bypass : prev.bypass,
+      };
+    }),
+  };
+  dyn.xoverHigh = clamp(Number(body.xoverHigh ?? stored.xoverHigh), 2 * dyn.xoverLow, 12000);
+
+  preset.config.dynamics = dyn;
+  await saveConfig(presetName, preset.config);
+
+  const payload = { messageType: 'dynamicsChanged', presetName, status: 'ok', dynamics: dyn };
+  broadcast(payload);
+  res.json(payload);
+}));
+
+// Transient band audition; nothing to store in the mock
+app.post('/comp/solo', wrap(async (req, res) => {
+  const band = Number(req.query.band);
+  if (!Number.isInteger(band) || band < -1 || band > 2) {
+    return res.status(400).json({ error: 'Band out of range' });
+  }
+  res.status(204).end();
 }));
 
 // ===== Input EQ (shared L/R bus: preference curve + SPL sets) =====

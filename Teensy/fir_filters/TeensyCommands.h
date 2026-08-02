@@ -33,6 +33,14 @@
   X(stopTone, handleStopTone) \
   X(setNoise, handleSetNoise) \
   X(setRta, handleSetRta) \
+  X(setCompEnabled, handleSetCompEnabled) \
+  X(setCompXover, handleSetCompXover) \
+  X(setCompBand, handleSetCompBand) \
+  X(setCompBandBypass, handleSetCompBandBypass) \
+  X(setCompSolo, handleSetCompSolo) \
+  X(setCompStrength, handleSetCompStrength) \
+  X(setCompVoicePriority, handleSetCompVoicePriority) \
+  X(setGrm, handleSetGrm) \
   X(setMute, handleSetMute) \
   X(setMutePercent, handleSetMutePercent) \
   X(ping, handlePing)

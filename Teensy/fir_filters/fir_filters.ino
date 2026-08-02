@@ -5,6 +5,7 @@
 #include "FIRLoader.h"
 #include "PEQProcessor.h"
 #include "CrossoverFilter.h"
+#include "MultibandCompressor.h"
 #include "SerialCommandRouter.h"
 #include "TeensyCommands.h"
 #include "OutputStream.h"
@@ -81,6 +82,10 @@ AudioAmplifier           Right_Pre_EQ_amp;
 PEQProcessor peqLeft;
 PEQProcessor peqRight;
 
+// Mixed-input multiband compressor: sits after the input EQ, ahead of the
+// per-output source mixers, so every output hears the same dynamics.
+MultibandCompressor inputComp;
+
 // Per-output processing chain, one entry per output channel 0-7:
 // source mixer (in 0 = L bus, in 1 = R bus) -> HP/LP crossover -> PEQ ->
 // FIR -> delay -> amp (gain * volume, invert via negative gain, mute via 0).
@@ -137,6 +142,8 @@ AudioConnection patchCord_LeftMixerToPreEQ(Left_mixer, 0, Left_Pre_EQ_amp, 0);
 AudioConnection patchCord_RightMixerToPreEQ(Right_mixer, 0, Right_Pre_EQ_amp, 0);
 AudioConnection patchCord_LeftPreEQToPEQ(Left_Pre_EQ_amp, 0, peqLeft, 0);
 AudioConnection patchCord_RightPreEQToPEQ(Right_Pre_EQ_amp, 0, peqRight, 0);
+AudioConnection patchCord_LeftPeqToComp(peqLeft, 0, inputComp, 0);
+AudioConnection patchCord_RightPeqToComp(peqRight, 0, inputComp, 1);
 
 // Per-output connections, wired in setup() so they can be built in a loop
 // (Teensyduino 1.54+ supports unconnected AudioConnection + connect()).
@@ -259,11 +266,12 @@ void setup() {
   // Initialize the shared input EQ
   peqLeft.begin(AUDIO_SAMPLE_RATE);
   peqRight.begin(AUDIO_SAMPLE_RATE);
+  inputComp.begin(AUDIO_SAMPLE_RATE);
 
   // Wire and initialize the eight output chains
   for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
-    busCords[ch][0].connect(peqLeft, 0, sourceMixer[ch], 0);
-    busCords[ch][1].connect(peqRight, 0, sourceMixer[ch], 1);
+    busCords[ch][0].connect(inputComp, 0, sourceMixer[ch], 0);
+    busCords[ch][1].connect(inputComp, 1, sourceMixer[ch], 1);
     chainCords[ch][0].connect(sourceMixer[ch], 0, xover[ch], 0);
     chainCords[ch][1].connect(xover[ch], 0, outputPeq[ch], 0);
     chainCords[ch][2].connect(outputPeq[ch], 0, firFilter[ch], 0);
@@ -368,6 +376,7 @@ void loop() {
   router.loop();
   updateAudioVolume(); // Call this frequently to smooth gain changes
   rtaLoop();
+  grmLoop();
 }
 
 void setRtaEnabled(bool enabled) {
@@ -435,6 +444,43 @@ void rtaLoop() {
   if ((size_t)Serial1.availableForWrite() < pos) return;
   Serial1.write((const uint8_t*)frame, pos);
   rtaLastFrameAt = millis();
+}
+
+// --- GRM (compressor gain-reduction meter) streaming ---
+// Same keepalive scheme as the RTA: the ESP refreshes "setGrm 1" while a
+// web client is watching the meters; streaming stops on its own otherwise.
+#define GRM_FRAME_INTERVAL_MS 100
+#define GRM_KEEPALIVE_TIMEOUT_MS 7000
+bool grmEnabled = false;
+unsigned long grmLastKeepaliveAt = 0;
+unsigned long grmLastFrameAt = 0;
+
+// While enabled, send "GRM <6 hex chars>\n" frames at ~10Hz: one byte per
+// band, value = dB of reduction * 8 (0..31.9dB in 0.125dB steps).
+void grmLoop() {
+  if (!grmEnabled) return;
+  if (millis() - grmLastKeepaliveAt > GRM_KEEPALIVE_TIMEOUT_MS) {
+    grmEnabled = false;
+    return;
+  }
+  if (millis() - grmLastFrameAt < GRM_FRAME_INTERVAL_MS) return;
+
+  static const char HEX_DIGITS[] = "0123456789abcdef";
+  char frame[4 + COMP_NUM_BANDS * 2 + 2];
+  memcpy(frame, "GRM ", 4);
+  size_t pos = 4;
+  for (int b = 0; b < COMP_NUM_BANDS; b++) {
+    int v = (int)roundf(inputComp.gainReductionDb(b) * 8.0f);
+    if (v < 0) v = 0;
+    if (v > 255) v = 255;
+    frame[pos++] = HEX_DIGITS[v >> 4];
+    frame[pos++] = HEX_DIGITS[v & 0x0F];
+  }
+  frame[pos++] = '\n';
+
+  if ((size_t)Serial1.availableForWrite() < pos) return;
+  Serial1.write((const uint8_t*)frame, pos);
+  grmLastFrameAt = millis();
 }
 
 // Move 'current' toward 'target' with an exponential ramp whose speed is
@@ -980,6 +1026,62 @@ void handleSetNoise(const String& command, String* args, int argCount, OutputStr
 void handleSetRta(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 1) {
     setRtaEnabled(args[0].toInt() == 1);
+  }
+}
+
+// --- Mixed-input multiband compressor ---
+
+void handleSetCompEnabled(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 1) {
+    inputComp.setEnabled(args[0].toInt() == 1);
+  }
+}
+
+void handleSetCompXover(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 2) {
+    inputComp.setCrossovers(args[0].toFloat(), args[1].toFloat());
+  }
+}
+
+// "setCompBand <band> <thresholdDb> <ratio> <attackMs> <releaseMs> <makeupDb>"
+void handleSetCompBand(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 6) {
+    inputComp.setBand(args[0].toInt(), args[1].toFloat(), args[2].toFloat(),
+                      args[3].toFloat(), args[4].toFloat(), args[5].toFloat());
+  }
+}
+
+void handleSetCompBandBypass(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 2) {
+    inputComp.setBandBypass(args[0].toInt(), args[1].toInt() == 1);
+  }
+}
+
+// -1 (or any out-of-range index) clears the solo
+void handleSetCompSolo(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 1) {
+    inputComp.setSolo(args[0].toInt());
+  }
+}
+
+void handleSetCompStrength(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 1) {
+    inputComp.setStrength(args[0].toFloat());
+  }
+}
+
+void handleSetCompVoicePriority(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 1) {
+    inputComp.setVoicePriority(args[0].toFloat());
+  }
+}
+
+// "setGrm 1" enables gain-reduction meter streaming (and acts as the
+// keepalive while it repeats); "setGrm 0" stops it immediately.
+void handleSetGrm(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 1) {
+    grmLastKeepaliveAt = millis();
+    grmEnabled = args[0].toInt() == 1;
   }
 }
 

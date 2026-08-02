@@ -21,6 +21,9 @@ void broadcastWebSocket(const char* message);
 // Forward one Teensy RTA frame (hex payload) to all websocket clients
 void broadcastRtaFrame(const char* hexData);
 
+// Forward one Teensy GRM (gain-reduction meter) frame to all clients
+void broadcastGrmFrame(const char* hexData);
+
 // Tracks client interest in RTA frames and relays it to the Teensy.
 // Call from loop().
 void websocketLoop();
