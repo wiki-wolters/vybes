@@ -10,6 +10,7 @@
 #include "OutputStream.h"
 #include "AudioFilterFIRFloat.h"
 #include "IntervalTimer.h"
+#include "RtaFFT4096.h"
 
 // V1 8-output architecture (docs/CHANNEL_ARCHITECTURE.md): a shared stereo
 // input stage (source mixing + input EQ) feeds eight identical output
@@ -100,11 +101,11 @@ AudioAmplifier           outputAmp[NUM_OUTPUTS];
 AudioOutputSPDIF3        L_R_Spdif_Out;
 AudioOutputI2SOct        Analog_Out;
 
-// RTA spectrum tap: the L+R source mix (pre-DSP) feeds an FFT whose
-// 1/3-octave band levels stream to the web UI over the ESP link. The FFT
-// input is disconnected while idle so it costs no CPU (see rtaLoop).
+// RTA spectrum tap: the L+R source mix (pre-DSP) feeds a 4096-point FFT
+// whose 1/12-octave band levels stream to the web UI over the ESP link.
+// The FFT input is disconnected while idle so it costs no CPU (see rtaLoop).
 AudioMixer4              RTA_mixer;
-AudioAnalyzeFFT1024      RTA_fft;
+RtaFFT4096               RTA_fft;
 
 // Connections (input stage - fixed, so wired at construction)
 
@@ -151,16 +152,16 @@ bool firFilesPending = false;
 // --- RTA (real-time analyzer) state ---
 // The ESP refreshes the enable flag every couple of seconds while a web
 // client is listening ("setRta 1" keepalives); streaming stops on its own
-// when the keepalives stop. Band centers are the standard 31 1/3-octave
-// bands and must match RTA_BAND_CENTERS in WebUI/src/rta.js.
-#define RTA_NUM_BANDS 31
+// when the keepalives stop. Bands are 1/12-octave in the base-10 sense
+// (centers 10^(k/40)), 20Hz-20kHz. The web UI (WebUI/src/rta.js) uses the
+// same definition and infers the resolution from the frame's band count,
+// so older 31-band firmware and this 121-band version both decode.
+#define RTA_NUM_BANDS 121
+#define RTA_BANDS_PER_DECADE 40
+#define RTA_K_LO 52 // 10^(52/40) = 20Hz
 #define RTA_FRAME_INTERVAL_MS 100
 #define RTA_KEEPALIVE_TIMEOUT_MS 7000
-static const float RTA_BAND_CENTERS[RTA_NUM_BANDS] = {
-  20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500,
-  630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000,
-  10000, 12500, 16000, 20000
-};
+static float RTA_BAND_CENTERS[RTA_NUM_BANDS]; // filled in setup()
 bool rtaEnabled = false;
 unsigned long rtaLastKeepaliveAt = 0;
 unsigned long rtaLastFrameAt = 0;
@@ -289,10 +290,12 @@ void setup() {
   Tone_generator.begin(0.0, 1000, WAVEFORM_SINE);
   pink1.amplitude(0.0);
 
-  // RTA tap: equal L+R mix, Hanning window, idle until the UI asks for it
+  // RTA tap: equal L+R mix, idle until the UI asks for it
   RTA_mixer.gain(0, 0.5);
   RTA_mixer.gain(1, 0.5);
-  RTA_fft.windowFunction(AudioWindowHanning1024);
+  for (int b = 0; b < RTA_NUM_BANDS; b++) {
+    RTA_BAND_CENTERS[b] = powf(10.0f, (float)(RTA_K_LO + b) / RTA_BANDS_PER_DECADE);
+  }
   patchCord_RTAMixerToFFT.disconnect();
 
   // Apply the (neutral) boot state
@@ -325,6 +328,12 @@ void setup() {
   // called here on Serial1 rather than inside the generic router.)
   static uint8_t espRxBuffer[512];
   Serial1.addMemoryForRead(espRxBuffer, sizeof(espRxBuffer));
+
+  // Extra TX buffering: an RTA frame is 247 bytes, and the core's default
+  // TX buffer (64 bytes) can't even hold one - rtaLoop would skip every
+  // frame waiting for room that never appears.
+  static uint8_t espTxBuffer[512];
+  Serial1.addMemoryForWrite(espTxBuffer, sizeof(espTxBuffer));
 
   // Tell the ESP we (re)booted so it pushes the full DSP state
   router.sendEvent("boot");
@@ -374,27 +383,27 @@ void setRtaEnabled(bool enabled) {
 }
 
 // Sum FFT power over [lo,hi) Hz. Edge bins contribute proportionally to
-// their overlap with the band, so bands narrower than one 43Hz bin still
+// their overlap with the band, so bands narrower than one ~10.8Hz bin still
 // get a sensible share instead of double-counting or reading zero.
 static float rtaBandPower(float lo, float hi) {
-  const float binWidth = AUDIO_SAMPLE_RATE_EXACT / 1024.0f;
+  const float binWidth = RtaFFT4096::binWidthHz();
   int first = (int)roundf(lo / binWidth);
   int last = (int)roundf(hi / binWidth);
   if (first < 1) first = 1; // skip the DC bin
-  if (last > 511) last = 511;
+  if (last > RtaFFT4096::NUM_BINS - 1) last = RtaFFT4096::NUM_BINS - 1;
   float power = 0.0f;
   for (int i = first; i <= last; i++) {
     float overlap = min(hi, (i + 0.5f) * binWidth) - max(lo, (i - 0.5f) * binWidth);
     if (overlap <= 0.0f) continue;
-    float mag = RTA_fft.read(i);
-    power += mag * mag * (overlap / binWidth);
+    power += RTA_fft.readPower(i) * (overlap / binWidth);
   }
   return power;
 }
 
-// While enabled, send "RTA <62 hex chars>\n" frames at ~10Hz: one byte per
-// band, value = (dB + 100) * 2, i.e. -100dB..+27.5dB in 0.5dB steps. Kept
-// compact so a frame fits well inside the ESP's 160-byte RX line buffer.
+// While enabled, send "RTA <242 hex chars>\n" frames at ~10Hz: one byte per
+// band, value = (dB + 100) * 2, i.e. -100dB..+27.5dB in 0.5dB steps. A frame
+// is 247 bytes - the ESP's RX line buffer (RX_LINE_MAX in teensy_comm.cpp)
+// and the Serial1 TX buffer (espTxBuffer in setup) are both sized for it.
 void rtaLoop() {
   if (!rtaEnabled) return;
   if (millis() - rtaLastKeepaliveAt > RTA_KEEPALIVE_TIMEOUT_MS) {
@@ -403,15 +412,16 @@ void rtaLoop() {
   }
   if (millis() - rtaLastFrameAt < RTA_FRAME_INTERVAL_MS) return;
   if (!RTA_fft.available()) return;
+  RTA_fft.analyze();
 
   static const char HEX_DIGITS[] = "0123456789abcdef";
   char frame[4 + RTA_NUM_BANDS * 2 + 1];
   memcpy(frame, "RTA ", 4);
   size_t pos = 4;
-  // Band edges are a third of an octave apart: center * 10^(+/-0.05)
+  // Band edges are a twelfth of an octave apart: center * 10^(+/-1/80)
   for (int b = 0; b < RTA_NUM_BANDS; b++) {
-    float power = rtaBandPower(RTA_BAND_CENTERS[b] * 0.89125f,
-                               RTA_BAND_CENTERS[b] * 1.12202f);
+    float power = rtaBandPower(RTA_BAND_CENTERS[b] * 0.971628f,
+                               RTA_BAND_CENTERS[b] * 1.029200f);
     float dB = (power > 1e-10f) ? 10.0f * log10f(power) : -100.0f;
     int v = (int)roundf((dB + 100.0f) * 2.0f);
     if (v < 0) v = 0;

@@ -1,45 +1,71 @@
 /*
- * Shared RTA (real-time analyzer) math: band definitions, frame decoding,
- * FFT-to-band aggregation for the microphone path, and mic calibration
- * file parsing.
+ * Shared RTA (real-time analyzer) math: band grids, frame decoding,
+ * FFT-to-band aggregation for the microphone path, grid-to-grid
+ * aggregation, and mic calibration file parsing.
+ *
+ * Bands are 1/N-octave in the base-10 sense (a 1/3-octave step is
+ * 10^(1/10)), centers 10^(k/perDecade) covering 20Hz-20kHz. The device
+ * (Teensy/fir_filters.ino) uses the same definition; the UI infers a
+ * frame's resolution from its band count.
  */
 
-// The standard 31 1/3-octave band centers, 20Hz-20kHz. Must match
-// RTA_BAND_CENTERS in Teensy/fir_filters/fir_filters.ino.
-export const RTA_BAND_CENTERS = [
-  20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500,
-  630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000,
-  10000, 12500, 16000, 20000
-];
+// Supported resolutions: bands-per-octave -> total band count 20Hz-20kHz
+export const RTA_RESOLUTIONS = { 3: 31, 6: 61, 12: 121 };
 
-export const RTA_NUM_BANDS = RTA_BAND_CENTERS.length;
+const GRID_CACHE = new Map();
 
-// 1/3-octave band edges: center * 10^(+/-0.05)
-const EDGE_LO = 0.89125;
-const EDGE_HI = 1.12202;
+// Band grid for a 1/N-octave resolution (N = 3, 6 or 12).
+// centers[i] = 10^((kLo + i) / perDecade); edges at center * 10^(±1/(2*perDecade)).
+export function makeBandGrid(bandsPerOctave) {
+  const cached = GRID_CACHE.get(bandsPerOctave);
+  if (cached) return cached;
+  const perDecade = (10 * bandsPerOctave) / 3; // 10, 20 or 40
+  const kLo = Math.round(perDecade * Math.log10(20));
+  const kHi = Math.round(perDecade * Math.log10(20000));
+  const centers = [];
+  for (let k = kLo; k <= kHi; k++) centers.push(Math.pow(10, k / perDecade));
+  const grid = {
+    bandsPerOctave,
+    perDecade,
+    kLo,
+    centers,
+    edgeLo: Math.pow(10, -1 / (2 * perDecade)),
+    edgeHi: Math.pow(10, 1 / (2 * perDecade)),
+  };
+  GRID_CACHE.set(bandsPerOctave, grid);
+  return grid;
+}
+
+// Frame band count -> bands per octave. Only these counts are valid frames.
+const BPO_BY_BAND_COUNT = { 31: 3, 61: 6, 121: 12 };
 
 // Decode a device RTA frame: two hex chars per band, value = (dB + 100) * 2.
-// Returns per-band dB, or null if the frame is malformed.
+// The band count (and thus the resolution) is inferred from the length.
+// Returns { values, grid }, or null if the frame is malformed.
 export function decodeRtaFrame(hex) {
-  if (typeof hex !== 'string' || hex.length < RTA_NUM_BANDS * 2) return null;
-  const out = new Float32Array(RTA_NUM_BANDS);
-  for (let i = 0; i < RTA_NUM_BANDS; i++) {
+  if (typeof hex !== 'string') return null;
+  const bandCount = hex.length / 2;
+  const bpo = BPO_BY_BAND_COUNT[bandCount];
+  if (!bpo) return null;
+  const values = new Float32Array(bandCount);
+  for (let i = 0; i < bandCount; i++) {
     const v = parseInt(hex.substr(i * 2, 2), 16);
     if (Number.isNaN(v)) return null;
-    out[i] = v / 2 - 100;
+    values[i] = v / 2 - 100;
   }
-  return out;
+  return { values, grid: makeBandGrid(bpo) };
 }
 
 // Aggregate AnalyserNode.getFloatFrequencyData output (dB per linear FFT
-// bin) into the 31 bands. Edge bins contribute proportionally to their
+// bin) into the grid's bands. Edge bins contribute proportionally to their
 // overlap with the band - the same scheme the Teensy uses, so the two
 // spectra are directly comparable. Returns per-band dB.
-export function bandsFromFFT(freqData, binWidth) {
-  const out = new Float32Array(RTA_NUM_BANDS);
-  for (let b = 0; b < RTA_NUM_BANDS; b++) {
-    const lo = RTA_BAND_CENTERS[b] * EDGE_LO;
-    const hi = RTA_BAND_CENTERS[b] * EDGE_HI;
+export function bandsFromFFT(freqData, binWidth, grid) {
+  const n = grid.centers.length;
+  const out = new Float32Array(n);
+  for (let b = 0; b < n; b++) {
+    const lo = grid.centers[b] * grid.edgeLo;
+    const hi = grid.centers[b] * grid.edgeHi;
     const first = Math.max(1, Math.round(lo / binWidth));
     const last = Math.min(freqData.length - 1, Math.round(hi / binWidth));
     let power = 0;
@@ -53,10 +79,35 @@ export function bandsFromFFT(freqData, binWidth) {
   return out;
 }
 
+// Re-bin per-band dB values from a fine grid onto a coarser one. Band powers
+// add; a fine band straddling a coarse band edge contributes to each side in
+// proportion to its (log-frequency) overlap. Values at the -120 floor are
+// treated as silence. Returns per-band dB on the target grid.
+export function aggregateBands(valuesDb, fromGrid, toGrid) {
+  if (fromGrid === toGrid) return valuesDb;
+  const halfFrom = 1 / (2 * fromGrid.perDecade);
+  const halfTo = 1 / (2 * toGrid.perDecade);
+  const out = new Float32Array(toGrid.centers.length);
+  for (let b = 0; b < toGrid.centers.length; b++) {
+    const cTo = Math.log10(toGrid.centers[b]);
+    const lo = cTo - halfTo;
+    const hi = cTo + halfTo;
+    let power = 0;
+    for (let i = 0; i < fromGrid.centers.length; i++) {
+      const c = (fromGrid.kLo + i) / fromGrid.perDecade;
+      const overlap = Math.min(hi, c + halfFrom) - Math.max(lo, c - halfFrom);
+      if (overlap <= 0 || valuesDb[i] <= -119) continue;
+      power += Math.pow(10, valuesDb[i] / 10) * (overlap / (2 * halfFrom));
+    }
+    out[b] = power > 1e-12 ? 10 * Math.log10(power) : -120;
+  }
+  return out;
+}
+
 // Parse a mic calibration file (REW-style text: "frequency gain" per line,
 // whitespace or comma separated; lines starting with * # ; or " are
-// comments). Returns the correction in dB at each band center - subtract
-// it from the measured mic level - or null if nothing parseable.
+// comments). Returns sorted [frequency, gain] points, or null if nothing
+// parseable. Interpolate onto a grid with calCurveForGrid.
 export function parseCalibrationFile(text) {
   const points = [];
   for (const raw of text.split(/\r?\n/)) {
@@ -69,7 +120,13 @@ export function parseCalibrationFile(text) {
   }
   if (points.length < 2) return null;
   points.sort((a, b) => a[0] - b[0]);
-  return RTA_BAND_CENTERS.map((fc) => interpolateLogFreq(points, fc));
+  return points;
+}
+
+// Correction in dB at each of the grid's band centers - subtract it from
+// the measured mic level.
+export function calCurveForGrid(points, grid) {
+  return grid.centers.map((fc) => interpolateLogFreq(points, fc));
 }
 
 // Linear interpolation in log-frequency; clamps outside the file's range.
@@ -89,12 +146,12 @@ function interpolateLogFreq(points, freq) {
 }
 
 // Median of (a[i] - b[i]) over the bands whose center lies in [loHz, hiHz].
-// Used to auto-align the mic trace level with the source trace.
-export function medianOffset(a, b, loHz = 200, hiHz = 5000) {
+// Used to auto-align the mic trace level with the source trace. a, b and
+// centers must share one grid.
+export function medianOffset(a, b, centers, loHz = 200, hiHz = 5000) {
   const diffs = [];
-  for (let i = 0; i < RTA_NUM_BANDS; i++) {
-    const fc = RTA_BAND_CENTERS[i];
-    if (fc >= loHz && fc <= hiHz && a[i] > -95 && b[i] > -95) {
+  for (let i = 0; i < centers.length; i++) {
+    if (centers[i] >= loHz && centers[i] <= hiHz && a[i] > -95 && b[i] > -95) {
       diffs.push(a[i] - b[i]);
     }
   }

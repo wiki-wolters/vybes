@@ -177,15 +177,13 @@ wss.on('connection', (ws) => {
 });
 
 // --- Mock RTA streaming ---
-// Streams synthesized 31-band spectrum frames in the same format as the
-// real device ("{type:'rta', d:'<62 hex chars>'}") while a client's
-// rta:keepalive is fresh. Shape: pink-ish tilt, a slowly wandering bump,
-// and some per-band wobble so the UI visibly animates.
-const RTA_BAND_CENTERS = [
-  20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500,
-  630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000,
-  10000, 12500, 16000, 20000
-];
+// Streams synthesized 121-band 1/12-octave spectrum frames in the same
+// format as the real device ("{type:'rta', d:'<242 hex chars>'}") while a
+// client's rta:keepalive is fresh. Shape: pink-ish tilt, a slowly wandering
+// bump, a narrow notch (visible only at fine resolutions), and some
+// per-band wobble so the UI visibly animates.
+// Centers are 10^(k/40) for k = 52..172 (20Hz-20kHz), matching the firmware.
+const RTA_BAND_CENTERS = Array.from({ length: 121 }, (_, i) => 10 ** ((52 + i) / 40));
 let rtaLastKeepaliveAt = 0;
 
 function mockRtaFrameHex(t) {
@@ -196,6 +194,7 @@ function mockRtaFrameHex(t) {
     const dB = -28
       - 7 * Math.log10(fc / 20)
       + 8 * Math.exp(-((Math.log10(fc) - bumpCenter) ** 2) / 0.06)
+      - 12 * Math.exp(-((Math.log10(fc) - Math.log10(315)) ** 2) / 0.0008)
       + 2.5 * Math.sin(t / 600 + i * 1.7);
     const v = Math.max(0, Math.min(255, Math.round((dB + 100) * 2)));
     hex += v.toString(16).padStart(2, '0');

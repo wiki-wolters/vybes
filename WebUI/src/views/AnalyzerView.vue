@@ -32,7 +32,7 @@
             <span class="inline-block w-3 h-0.5 rounded bg-vybes-live"></span>
             <span class="text-vybes-text-secondary">Microphone</span>
             <span :class="micActive ? 'text-vybes-live' : 'text-vybes-text-secondary'">
-              {{ micActive ? (calCurve ? 'on (calibrated)' : 'on') : 'off' }}
+              {{ micActive ? (calPoints ? 'on (calibrated)' : 'on') : 'off' }}
             </span>
           </span>
           <span v-if="micActive && sourceLive" class="text-vybes-text-secondary tabular-nums">
@@ -42,7 +42,15 @@
 
         <!-- Overlay chart -->
         <div ref="chartContainer" class="w-full rounded bg-black/30 overflow-hidden">
-          <svg :width="width" :height="chartHeight" class="block">
+          <svg
+            :width="width"
+            :height="chartHeight"
+            class="block cursor-crosshair"
+            style="touch-action: pan-y"
+            @pointermove="onSpectrumHover"
+            @pointerdown="onSpectrumHover"
+            @pointerleave="onSpectrumLeave"
+          >
             <!-- dB gridlines -->
             <g v-for="line in dbGridLines" :key="'db' + line.db">
               <line class="grid-line" :x1="padLeft" :y1="line.y" :x2="width" :y2="line.y" />
@@ -55,6 +63,15 @@
             </g>
             <path v-if="sourcePath" class="trace-source" :d="sourcePath" fill="none" stroke-width="2" opacity="0.9" />
             <path v-if="micPath" class="trace-mic" :d="micPath" fill="none" stroke-width="2" opacity="0.9" />
+            <!-- Crosshair: nearest band under the pointer/finger -->
+            <g v-if="spectrumHover" pointer-events="none">
+              <line :x1="spectrumHover.x" :y1="0" :x2="spectrumHover.x" :y2="chartHeight - 14" stroke="#fff" stroke-width="1" opacity="0.5" />
+              <circle v-if="spectrumHover.sourceY !== null" :cx="spectrumHover.x" :cy="spectrumHover.sourceY" r="3" class="dot-source" />
+              <circle v-if="spectrumHover.micY !== null" :cx="spectrumHover.x" :cy="spectrumHover.micY" r="3" class="dot-mic" />
+              <rect class="hover-label-box" :x="spectrumHover.labelX - spectrumHover.boxW / 2" y="4" :width="spectrumHover.boxW" height="28" rx="4" />
+              <text class="hover-label-freq" :x="spectrumHover.labelX" y="16" font-size="10" font-weight="600" text-anchor="middle">{{ spectrumHover.freqLabel }}</text>
+              <text class="hover-label-value" :x="spectrumHover.labelX" y="27" font-size="9" text-anchor="middle">{{ spectrumHover.valueLabel }}</text>
+            </g>
           </svg>
         </div>
 
@@ -274,6 +291,25 @@
               Longer averaging smooths the traces and cancels out the small timing difference
               between the device tap and the microphone.
             </p>
+
+            <div class="mt-4">
+              <SelectGroup v-model="resolution" label="Resolution">
+                <option :value="3">1/3 octave (31 bands)</option>
+                <option :value="6">1/6 octave (61 bands)</option>
+                <option :value="12">1/12 octave (121 bands)</option>
+              </SelectGroup>
+              <p class="mt-1 text-xs text-vybes-text-secondary">
+                <template v-if="sourceLive && sourceNativeBpo < Number(resolution)">
+                  The device streams 1/{{ sourceNativeBpo }}-octave bands, so the source trace,
+                  deviation and EQ math stay at that resolution; the microphone trace uses the
+                  full selection.
+                </template>
+                <template v-else>
+                  Finer resolutions pinpoint peaks and dips more precisely but look busier and
+                  average more slowly.
+                </template>
+              </p>
+            </div>
           </div>
         </div>
 
@@ -284,7 +320,7 @@
               Import cal file
               <input type="file" accept=".txt,.cal,.frd,.csv" class="hidden" @change="onCalFileSelected" />
             </label>
-            <template v-if="calCurve">
+            <template v-if="calPoints">
               <span class="text-xs text-vybes-live">{{ calName }}</span>
               <button class="text-xs text-vybes-text-secondary underline" @click="clearCal">remove</button>
             </template>
@@ -314,7 +350,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue';
 import apiClient from '../api-client.js';
 import { useGeneratorStore } from '../stores/generator.js';
 import CardSection from '../components/shared/CardSection.vue';
@@ -323,15 +359,17 @@ import RangeSlider from '../components/shared/RangeSlider.vue';
 import ModalDialog from '../components/shared/ModalDialog.vue';
 import { peqSumDb, fitPeqPoints } from '../eq-math.js';
 import {
-  RTA_BAND_CENTERS,
-  RTA_NUM_BANDS,
+  makeBandGrid,
   decodeRtaFrame,
   bandsFromFFT,
+  aggregateBands,
   parseCalibrationFile,
+  calCurveForGrid,
   medianOffset,
 } from '../rta.js';
 
 const CAL_STORAGE_KEY = 'vybes-rta-mic-cal';
+const RESOLUTION_STORAGE_KEY = 'vybes-rta-resolution';
 const KEEPALIVE_INTERVAL_MS = 2000;
 const MIC_POLL_INTERVAL_MS = 100;
 const SOURCE_STALE_MS = 2500;
@@ -346,9 +384,25 @@ const deltaHeight = 160;
 const padLeft = 28;
 const DELTA_RANGE_DB = 20;
 
+// --- Band grids ---
+// The display resolution is a user setting; the mic trace always renders at
+// it (the browser FFT has ~6Hz bins, plenty for 1/12 octave). The device
+// streams at its own native resolution, inferred from frame length - the
+// source trace, deviation and EQ math run on the coarser of the two grids.
+const storedResolution = Number(localStorage.getItem(RESOLUTION_STORAGE_KEY));
+const resolution = ref([3, 6, 12].includes(storedResolution) ? storedResolution : 3);
+const sourceNativeBpo = ref(3); // bands/octave of the last device frame
+
+const displayGrid = computed(() => makeBandGrid(Number(resolution.value)));
+// Common grid for source trace, delta and EQ: device native, capped at the
+// display selection.
+const compareGrid = computed(() =>
+  makeBandGrid(Math.min(sourceNativeBpo.value, Number(resolution.value)))
+);
+
 // --- Live state ---
-const sourceDb = ref(null); // Float32Array of averaged dB, or null
-const micDb = ref(null);
+const sourceDb = ref(null); // Float32Array on the device's native grid, or null
+const micDb = ref(null); // Float32Array on displayGrid, or null
 const nowTick = ref(Date.now()); // refreshed by the poll timer for staleness checks
 const lastSourceFrameAt = ref(0);
 const micActive = ref(false);
@@ -357,7 +411,7 @@ const frozen = ref(false);
 const averagingSeconds = ref(2);
 const offset = ref(0);
 
-const calCurve = ref(null);
+const calPoints = ref(null); // [[freq, gain], ...] from the cal file
 const calName = ref('');
 const calError = ref('');
 
@@ -388,15 +442,15 @@ const sourceLive = computed(
 function emaUpdate(avgPower, newDb, dtMs) {
   // SelectGroup emits strings, hence the Number()
   const alpha = Math.min(1, dtMs / 1000 / Number(averagingSeconds.value));
-  for (let i = 0; i < RTA_NUM_BANDS; i++) {
+  for (let i = 0; i < newDb.length; i++) {
     const p = Math.pow(10, newDb[i] / 10);
     avgPower[i] = avgPower[i] <= 0 ? p : avgPower[i] + alpha * (p - avgPower[i]);
   }
 }
 
 function powerToDb(avgPower) {
-  const out = new Float32Array(RTA_NUM_BANDS);
-  for (let i = 0; i < RTA_NUM_BANDS; i++) {
+  const out = new Float32Array(avgPower.length);
+  for (let i = 0; i < avgPower.length; i++) {
     out[i] = avgPower[i] > 1e-12 ? 10 * Math.log10(avgPower[i]) : -120;
   }
   return out;
@@ -405,7 +459,7 @@ function powerToDb(avgPower) {
 // --- Source (device) spectrum over the live-updates websocket ---
 let unsubscribeLive = null;
 let keepaliveTimer = null;
-let sourceAvgPower = new Float32Array(RTA_NUM_BANDS);
+let sourceAvgPower = new Float32Array(makeBandGrid(3).centers.length);
 let lastSourceEmaAt = 0;
 
 function onLiveMessage(data) {
@@ -415,15 +469,36 @@ function onLiveMessage(data) {
     return;
   }
   if (data.type !== 'rta' || typeof data.d !== 'string') return;
-  const frame = decodeRtaFrame(data.d);
-  if (!frame) return;
+  const decoded = decodeRtaFrame(data.d);
+  if (!decoded) return;
   const now = Date.now();
   lastSourceFrameAt.value = now;
+  // Firmware resolution changed (or first frame after an upgrade): restart
+  // the averaging on the new grid.
+  if (decoded.grid.bandsPerOctave !== sourceNativeBpo.value) {
+    sourceNativeBpo.value = decoded.grid.bandsPerOctave;
+    sourceAvgPower = new Float32Array(decoded.grid.centers.length);
+    lastSourceEmaAt = 0;
+    sourceDb.value = null;
+  }
   if (frozen.value) return;
-  emaUpdate(sourceAvgPower, frame, lastSourceEmaAt ? now - lastSourceEmaAt : 1000);
+  emaUpdate(sourceAvgPower, decoded.values, lastSourceEmaAt ? now - lastSourceEmaAt : 1000);
   lastSourceEmaAt = now;
   sourceDb.value = powerToDb(sourceAvgPower);
 }
+
+// Source trace on the common grid (aggregated down when the display
+// selection is coarser than the device's native resolution).
+const sourceCompareDb = computed(() =>
+  sourceDb.value
+    ? aggregateBands(sourceDb.value, makeBandGrid(sourceNativeBpo.value), compareGrid.value)
+    : null
+);
+
+// Mic re-binned onto the common grid for delta/offset math.
+const micCompareDb = computed(() =>
+  micDb.value ? aggregateBands(micDb.value, displayGrid.value, compareGrid.value) : null
+);
 
 // --- Microphone spectrum via Web Audio ---
 let micStream = null;
@@ -431,7 +506,7 @@ let audioContext = null;
 let analyser = null;
 let micPollTimer = null;
 let micFreqData = null;
-let micAvgPower = new Float32Array(RTA_NUM_BANDS);
+let micAvgPower = new Float32Array(displayGrid.value.centers.length);
 let lastMicEmaAt = 0;
 
 async function startMic() {
@@ -462,7 +537,7 @@ async function startMic() {
   analyser.smoothingTimeConstant = 0; // we do our own time averaging
   audioContext.createMediaStreamSource(micStream).connect(analyser);
   micFreqData = new Float32Array(analyser.frequencyBinCount);
-  micAvgPower = new Float32Array(RTA_NUM_BANDS);
+  micAvgPower = new Float32Array(displayGrid.value.centers.length);
   lastMicEmaAt = 0;
   micActive.value = true;
 }
@@ -486,6 +561,11 @@ function toggleMic() {
   else startMic();
 }
 
+// Mic calibration interpolated onto the display grid.
+const calGridCurve = computed(() =>
+  calPoints.value ? calCurveForGrid(calPoints.value, displayGrid.value) : null
+);
+
 // Poll timer: sample the mic FFT, refresh staleness, recompute alignment
 function pollTick() {
   nowTick.value = Date.now();
@@ -493,9 +573,9 @@ function pollTick() {
 
   analyser.getFloatFrequencyData(micFreqData);
   const binWidth = audioContext.sampleRate / analyser.fftSize;
-  const bands = bandsFromFFT(micFreqData, binWidth);
-  if (calCurve.value) {
-    for (let i = 0; i < RTA_NUM_BANDS; i++) bands[i] -= calCurve.value[i];
+  const bands = bandsFromFFT(micFreqData, binWidth, displayGrid.value);
+  if (calGridCurve.value) {
+    for (let i = 0; i < bands.length; i++) bands[i] -= calGridCurve.value[i];
   }
   const now = Date.now();
   emaUpdate(micAvgPower, bands, lastMicEmaAt ? now - lastMicEmaAt : 1000);
@@ -504,10 +584,25 @@ function pollTick() {
 
   // Level alignment: mic and source have unrelated absolute scales, so
   // shift the mic trace by the median mid-band difference before comparing.
-  if (sourceDb.value && sourceLive.value) {
-    offset.value = medianOffset(micDb.value, sourceDb.value);
+  if (sourceCompareDb.value && sourceLive.value && micCompareDb.value) {
+    offset.value = medianOffset(
+      micCompareDb.value,
+      sourceCompareDb.value,
+      compareGrid.value.centers
+    );
   }
 }
+
+// Changing resolution reshapes the mic averaging buffer, so restart it (the
+// trace re-converges within the averaging window). Unfreeze - a frozen
+// deviation from another grid no longer matches the new one.
+watch(resolution, (v) => {
+  localStorage.setItem(RESOLUTION_STORAGE_KEY, String(Number(v)));
+  frozen.value = false;
+  micAvgPower = new Float32Array(displayGrid.value.centers.length);
+  lastMicEmaAt = 0;
+  micDb.value = null;
+});
 
 // --- Calibration file handling ---
 function onCalFileSelected(event) {
@@ -517,33 +612,46 @@ function onCalFileSelected(event) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = () => {
-    const curve = parseCalibrationFile(String(reader.result));
-    if (!curve) {
+    const points = parseCalibrationFile(String(reader.result));
+    if (!points) {
       calError.value = 'No “frequency gain” pairs found in that file.';
       return;
     }
-    calCurve.value = curve;
+    calPoints.value = points;
     calName.value = file.name;
     try {
-      localStorage.setItem(CAL_STORAGE_KEY, JSON.stringify({ name: file.name, curve }));
+      localStorage.setItem(CAL_STORAGE_KEY, JSON.stringify({ name: file.name, points }));
     } catch (e) { /* storage full or blocked - cal still applies this session */ }
   };
   reader.readAsText(file);
 }
 
 function clearCal() {
-  calCurve.value = null;
+  calPoints.value = null;
   calName.value = '';
   localStorage.removeItem(CAL_STORAGE_KEY);
 }
 
 // --- Chart geometry ---
-const bandX = (i) => padLeft + ((i + 0.5) * (width.value - padLeft)) / RTA_NUM_BANDS;
+// Log-frequency x axis with a fixed span (the outer edges of the 1/3-octave
+// 20Hz-20kHz range), so traces of different resolutions share the chart and
+// the axis doesn't shift when the resolution changes.
+const LOG_X_LO = 1.25; // log10(20) - half a 1/3-octave band
+const LOG_X_HI = 4.35; // log10(20000) + half a 1/3-octave band
+
+const xForFreq = (f) =>
+  padLeft + ((Math.log10(f) - LOG_X_LO) / (LOG_X_HI - LOG_X_LO)) * (width.value - padLeft);
+const freqAtX = (x) =>
+  Math.pow(10, LOG_X_LO + ((x - padLeft) / (width.value - padLeft)) * (LOG_X_HI - LOG_X_LO));
+
+// Pixel width of one band on a grid (bands are equal-width in log frequency)
+const bandPixelWidth = (grid) =>
+  (width.value - padLeft) / ((LOG_X_HI - LOG_X_LO) * grid.perDecade);
 
 // Y scale of the overlay chart: 70dB window that tracks the loudest band.
 const topDb = computed(() => {
   let max = -60;
-  if (sourceDb.value) for (const v of sourceDb.value) max = Math.max(max, v);
+  if (sourceCompareDb.value) for (const v of sourceCompareDb.value) max = Math.max(max, v);
   if (micDb.value && sourceLive.value) {
     for (const v of micDb.value) max = Math.max(max, v - offset.value);
   }
@@ -561,27 +669,34 @@ const dbGridLines = computed(() => {
   return lines;
 });
 
-const freqGridLines = computed(() => {
-  const marks = { 31.5: '31', 63: '63', 125: '125', 250: '250', 500: '500', 1000: '1k', 2000: '2k', 4000: '4k', 8000: '8k', 16000: '16k' };
-  return RTA_BAND_CENTERS.filter((fc) => marks[fc]).map((fc) => ({
-    label: marks[fc],
-    x: bandX(RTA_BAND_CENTERS.indexOf(fc)),
-  }));
-});
+const FREQ_MARKS = [
+  [31.5, '31'], [63, '63'], [125, '125'], [250, '250'], [500, '500'],
+  [1000, '1k'], [2000, '2k'], [4000, '4k'], [8000, '8k'], [16000, '16k'],
+];
 
-function tracePath(values, shift = 0) {
+const freqGridLines = computed(() =>
+  FREQ_MARKS.map(([f, label]) => ({ label, x: xForFreq(f) }))
+);
+
+function tracePath(values, grid, shift = 0) {
   const points = [];
-  for (let i = 0; i < RTA_NUM_BANDS; i++) {
+  for (let i = 0; i < values.length; i++) {
     const db = values[i] - shift;
     if (db <= -110) continue; // don't draw the floor
-    points.push(`${bandX(i).toFixed(1)},${Math.min(chartHeight - 14, Math.max(0, dbToY(db))).toFixed(1)}`);
+    points.push(
+      `${xForFreq(grid.centers[i]).toFixed(1)},${Math.min(chartHeight - 14, Math.max(0, dbToY(db))).toFixed(1)}`
+    );
   }
   return points.length > 1 ? `M ${points.join(' L ')}` : '';
 }
 
-const sourcePath = computed(() => (sourceDb.value ? tracePath(sourceDb.value) : ''));
+const sourcePath = computed(() =>
+  sourceCompareDb.value ? tracePath(sourceCompareDb.value, compareGrid.value) : ''
+);
 // The mic trace is drawn pre-shifted onto the source's scale
-const micPath = computed(() => (micDb.value ? tracePath(micDb.value, sourceLive.value ? offset.value : 0) : ''));
+const micPath = computed(() =>
+  micDb.value ? tracePath(micDb.value, displayGrid.value, sourceLive.value ? offset.value : 0) : ''
+);
 
 // --- Delta chart ---
 const deltaZeroY = deltaHeight / 2;
@@ -591,16 +706,17 @@ const deltaGridLines = computed(() =>
   [-20, -10, 10, 20].map((db) => ({ db, y: deltaDbToY(db) }))
 );
 
-// Per-band deviation (mic − source, level-aligned), NaN where the source has
-// effectively no content - the delta there is just noise-floor arithmetic,
-// not room response.
+// Per-band deviation (mic − source, level-aligned) on the common grid, NaN
+// where the source has effectively no content - the delta there is just
+// noise-floor arithmetic, not room response.
 const deltaValues = computed(() => {
-  if (!micDb.value || !sourceDb.value || !sourceLive.value) return null;
-  const out = new Array(RTA_NUM_BANDS);
-  for (let i = 0; i < RTA_NUM_BANDS; i++) {
-    out[i] = sourceDb.value[i] <= -85 || micDb.value[i] <= -110
+  if (!micCompareDb.value || !sourceCompareDb.value || !sourceLive.value) return null;
+  const n = compareGrid.value.centers.length;
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    out[i] = sourceCompareDb.value[i] <= -85 || micCompareDb.value[i] <= -110
       ? NaN
-      : micDb.value[i] - offset.value - sourceDb.value[i];
+      : micCompareDb.value[i] - offset.value - sourceCompareDb.value[i];
   }
   return out;
 });
@@ -614,15 +730,16 @@ const DELTA_LOSS_COLOR = '#38bdf8';
 
 const deltaBars = computed(() => {
   if (!deltaValues.value) return [];
+  const grid = compareGrid.value;
   const bars = [];
-  const bw = ((width.value - padLeft) / RTA_NUM_BANDS) * 0.66;
-  for (let i = 0; i < RTA_NUM_BANDS; i++) {
+  const bw = bandPixelWidth(grid) * 0.66;
+  for (let i = 0; i < grid.centers.length; i++) {
     if (!Number.isFinite(deltaValues.value[i])) continue;
     const d = clampDelta(deltaValues.value[i]);
     const y0 = deltaDbToY(Math.max(0, d));
     bars.push({
       index: i,
-      x: bandX(i) - bw / 2,
+      x: xForFreq(grid.centers[i]) - bw / 2,
       y: y0,
       w: bw,
       h: Math.max(1, Math.abs(deltaDbToY(d) - deltaZeroY)),
@@ -633,27 +750,85 @@ const deltaBars = computed(() => {
   return bars;
 });
 
-// --- Delta chart crosshair ---
-const fmtHz = (f) => (f >= 1000 ? `${f / 1000} kHz` : `${f} Hz`);
+// --- Chart crosshairs ---
+const fmtHz = (f) => {
+  const r = Number(f.toPrecision(3));
+  return r >= 1000 ? `${Number((r / 1000).toPrecision(3))} kHz` : `${r} Hz`;
+};
+
+// Nearest band of a grid for a pointer event on either chart
+function pointerBandIndex(event, grid) {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const f = freqAtX(event.clientX - rect.left);
+  const k = Math.round(grid.perDecade * Math.log10(f)) - grid.kLo;
+  return Math.min(grid.centers.length - 1, Math.max(0, k));
+}
+
+// Nearest index of `grid` for a frequency (used to read the source value
+// under a display-grid crosshair when the grids differ).
+function gridIndexForFreq(grid, freq) {
+  const k = Math.round(grid.perDecade * Math.log10(freq)) - grid.kLo;
+  return Math.min(grid.centers.length - 1, Math.max(0, k));
+}
+
+// A finger lifting fires pointerleave too; keep the touch crosshair
+// sticky so the reading survives to be acted on.
+const spectrumHoverIndex = ref(null);
+
+function onSpectrumHover(event) {
+  spectrumHoverIndex.value = pointerBandIndex(event, displayGrid.value);
+}
+
+function onSpectrumLeave(event) {
+  if (event.pointerType === 'mouse') spectrumHoverIndex.value = null;
+}
+
+const spectrumHover = computed(() => {
+  if (spectrumHoverIndex.value === null) return null;
+  const grid = displayGrid.value;
+  const i = Math.min(grid.centers.length - 1, spectrumHoverIndex.value);
+  const freq = grid.centers[i];
+  const x = xForFreq(freq);
+  const clampY = (db) => Math.min(chartHeight - 14, Math.max(0, dbToY(db)));
+  // Source is drawn on the common grid; read the band under the cursor
+  const src = sourceCompareDb.value
+    ? sourceCompareDb.value[gridIndexForFreq(compareGrid.value, freq)]
+    : NaN;
+  // Read the mic on the same shifted scale it's drawn at
+  const mic = micDb.value ? micDb.value[i] - (sourceLive.value ? offset.value : 0) : NaN;
+  const hasSrc = Number.isFinite(src) && src > -110;
+  const hasMic = Number.isFinite(mic) && mic > -110;
+  const parts = [];
+  if (hasSrc) parts.push(`src ${src.toFixed(1)}`);
+  if (hasMic) parts.push(`mic ${mic.toFixed(1)}`);
+  const valueLabel = parts.length ? `${parts.join(' · ')} dB` : 'no signal';
+  const boxW = Math.max(72, 14 + valueLabel.length * 4.8);
+  return {
+    x,
+    sourceY: hasSrc ? clampY(src) : null,
+    micY: hasMic ? clampY(mic) : null,
+    labelX: Math.min(width.value - boxW / 2 - 4, Math.max(padLeft + boxW / 2 + 4, x)),
+    boxW,
+    freqLabel: fmtHz(freq),
+    valueLabel,
+  };
+});
+
 const hoverBandIndex = ref(null);
 
 function onDeltaHover(event) {
-  const rect = event.currentTarget.getBoundingClientRect();
-  const bw = (width.value - padLeft) / RTA_NUM_BANDS;
-  const i = Math.round((event.clientX - rect.left - padLeft) / bw - 0.5);
-  hoverBandIndex.value = Math.min(RTA_NUM_BANDS - 1, Math.max(0, i));
+  hoverBandIndex.value = pointerBandIndex(event, compareGrid.value);
 }
 
 function onDeltaLeave(event) {
-  // A finger lifting fires pointerleave too; keep the touch crosshair
-  // sticky so the reading survives to be acted on.
   if (event.pointerType === 'mouse') hoverBandIndex.value = null;
 }
 
 const deltaHover = computed(() => {
   if (hoverBandIndex.value === null) return null;
-  const i = hoverBandIndex.value;
-  const x = bandX(i);
+  const grid = compareGrid.value;
+  const i = Math.min(grid.centers.length - 1, hoverBandIndex.value);
+  const x = xForFreq(grid.centers[i]);
   const d = deltaValues.value ? deltaValues.value[i] : NaN;
   const hasValue = Number.isFinite(d);
   return {
@@ -661,7 +836,7 @@ const deltaHover = computed(() => {
     y: hasValue ? deltaDbToY(clampDelta(d)) : deltaZeroY,
     hasValue,
     labelX: Math.min(width.value - 50, Math.max(padLeft + 50, x)),
-    freqLabel: fmtHz(RTA_BAND_CENTERS[i]),
+    freqLabel: fmtHz(grid.centers[i]),
     valueLabel: hasValue ? `${d >= 0 ? '+' : ''}${d.toFixed(1)} dB` : 'no signal',
   };
 });
@@ -685,7 +860,7 @@ const applyState = reactive({ busy: false, message: '', error: false });
 // scale by strength, clamp to the boost/cut limits. NaN = leave alone.
 const correctionTarget = computed(() => {
   if (!frozen.value || !deltaValues.value) return null;
-  return RTA_BAND_CENTERS.map((fc, i) => {
+  return compareGrid.value.centers.map((fc, i) => {
     const d = deltaValues.value[i];
     if (!Number.isFinite(d) || fc < eqGen.loHz || fc > eqGen.hiHz) return NaN;
     const target = eqGen.tilt * Math.log2(fc / 1000);
@@ -696,23 +871,16 @@ const correctionTarget = computed(() => {
 
 const generatedPoints = computed(() => {
   if (!correctionTarget.value) return [];
-  return fitPeqPoints(RTA_BAND_CENTERS, correctionTarget.value, {
+  return fitPeqPoints(compareGrid.value.centers, correctionTarget.value, {
     maxBands: Math.round(eqGen.maxBands),
   });
 });
-
-// The delta chart's x axis is linear in band index, and the band centers
-// are log-spaced (fc ≈ 10^(1.3 + i/10)), so x maps back to frequency.
-const xToBandFreq = (x) => {
-  const bw = (width.value - padLeft) / RTA_NUM_BANDS;
-  return Math.pow(10, 1.3 + ((x - padLeft) / bw - 0.5) / 10);
-};
 
 const correctionPath = computed(() => {
   if (!generatedPoints.value.length) return '';
   const seg = [];
   for (let x = padLeft; x <= width.value; x += 4) {
-    const db = clampDelta(peqSumDb(generatedPoints.value, xToBandFreq(x)));
+    const db = clampDelta(peqSumDb(generatedPoints.value, freqAtX(x)));
     seg.push(`${x.toFixed(1)},${deltaDbToY(db).toFixed(1)}`);
   }
   return `M ${seg.join(' L ')}`;
@@ -720,12 +888,13 @@ const correctionPath = computed(() => {
 
 const predictedPath = computed(() => {
   if (!generatedPoints.value.length || !deltaValues.value) return '';
+  const grid = compareGrid.value;
   const seg = [];
-  for (let i = 0; i < RTA_NUM_BANDS; i++) {
+  for (let i = 0; i < grid.centers.length; i++) {
     const d = deltaValues.value[i];
     if (!Number.isFinite(d)) continue;
-    const db = clampDelta(d + peqSumDb(generatedPoints.value, RTA_BAND_CENTERS[i]));
-    seg.push(`${bandX(i).toFixed(1)},${deltaDbToY(db).toFixed(1)}`);
+    const db = clampDelta(d + peqSumDb(generatedPoints.value, grid.centers[i]));
+    seg.push(`${xForFreq(grid.centers[i]).toFixed(1)},${deltaDbToY(db).toFixed(1)}`);
   }
   return seg.length > 1 ? `M ${seg.join(' L ')}` : '';
 });
@@ -755,8 +924,13 @@ onMounted(() => {
   // Stored calibration survives reloads
   try {
     const stored = JSON.parse(localStorage.getItem(CAL_STORAGE_KEY));
-    if (stored?.curve?.length === RTA_NUM_BANDS) {
-      calCurve.value = stored.curve;
+    if (stored?.points?.length >= 2) {
+      calPoints.value = stored.points;
+      calName.value = stored.name || 'stored calibration';
+    } else if (stored?.curve?.length === 31) {
+      // Pre-resolution storage format: per-band corrections on the
+      // 1/3-octave grid. Reconstruct points at those centers.
+      calPoints.value = makeBandGrid(3).centers.map((fc, i) => [fc, stored.curve[i]]);
       calName.value = stored.name || 'stored calibration';
     }
   } catch (e) { /* ignore corrupt storage */ }
@@ -834,6 +1008,14 @@ onUnmounted(() => {
 
 .legend-correction {
   color: #e879f9;
+}
+
+.dot-source {
+  fill: var(--vybes-primary);
+}
+
+.dot-mic {
+  fill: var(--vybes-live);
 }
 
 .hover-label-box {

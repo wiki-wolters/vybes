@@ -8,8 +8,9 @@
 // Outgoing queue. A full V1 preset sync is ~180 commands worst case
 // (8 outputs x up to 19 commands each, plus input EQ and globals).
 #define QUEUE_SIZE 200
-// Incoming line assembly
-#define RX_LINE_MAX 160
+// Incoming line assembly. Sized for the longest line the Teensy sends: a
+// 121-band RTA frame ("RTA " + 242 hex chars = 246 chars).
+#define RX_LINE_MAX 300
 // Cached SD file list (newline separated "name size" lines)
 #define FIR_CACHE_MAX 1024
 // Heartbeat: detects a Teensy reboot even if its boot event was missed

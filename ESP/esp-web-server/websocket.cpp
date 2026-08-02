@@ -120,8 +120,8 @@ void broadcastWebSocket(const char* message) {
 void broadcastRtaFrame(const char* hexData) {
     if (totalClients() == 0) return;
     size_t len = strlen(hexData);
-    if (len == 0 || len > 62) return; // 31 bands * 2 hex chars
-    char buf[96];
+    if (len == 0 || len > 242) return; // up to 121 bands * 2 hex chars
+    char buf[272];
     snprintf(buf, sizeof(buf), "{\"type\":\"rta\",\"d\":\"%s\"}", hexData);
     broadcastToAllListeners(buf);
 }
