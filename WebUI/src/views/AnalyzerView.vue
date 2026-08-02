@@ -50,6 +50,8 @@
             @pointermove="onSpectrumHover"
             @pointerdown="onSpectrumHover"
             @pointerleave="onSpectrumLeave"
+            @touchstart="onChartTouchStart"
+            @touchmove="onChartTouchMove"
           >
             <!-- dB gridlines -->
             <g v-for="line in dbGridLines" :key="'db' + line.db">
@@ -90,6 +92,8 @@
               @pointermove="onDeltaHover"
               @pointerdown="onDeltaHover"
               @pointerleave="onDeltaLeave"
+              @touchstart="onChartTouchStart"
+              @touchmove="onChartTouchMove"
             >
               <g v-for="line in deltaGridLines" :key="'d' + line.db">
                 <line class="grid-line" :x1="padLeft" :y1="line.y" :x2="width" :y2="line.y" />
@@ -751,6 +755,38 @@ const deltaBars = computed(() => {
 });
 
 // --- Chart crosshairs ---
+
+// touch-action: pan-y lets vertical swipes scroll the page, but the browser
+// may also claim a mostly-horizontal crosshair drag the moment it drifts
+// vertically - it fires pointercancel and the line freezes until a new
+// touch. Decide the gesture's intent from its first few pixels instead:
+// horizontal locks the whole gesture to the crosshair (preventDefault keeps
+// the scroller from taking over), vertical hands it to the browser.
+const DRAG_LOCK_THRESHOLD_PX = 6;
+let touchStartX = 0;
+let touchStartY = 0;
+let touchLock = null; // null = undecided, then 'drag' or 'scroll'
+
+function onChartTouchStart(event) {
+  const t = event.touches[0];
+  touchStartX = t.clientX;
+  touchStartY = t.clientY;
+  touchLock = null;
+}
+
+function onChartTouchMove(event) {
+  if (touchLock === null) {
+    const dx = Math.abs(event.touches[0].clientX - touchStartX);
+    const dy = Math.abs(event.touches[0].clientY - touchStartY);
+    if (Math.max(dx, dy) >= DRAG_LOCK_THRESHOLD_PX) {
+      touchLock = dx > dy ? 'drag' : 'scroll';
+    }
+  }
+  // Also prevented while undecided, so the page doesn't creep during the
+  // first few pixels of what turns out to be a crosshair drag.
+  if (touchLock !== 'scroll' && event.cancelable) event.preventDefault();
+}
+
 const fmtHz = (f) => {
   const r = Number(f.toPrecision(3));
   return r >= 1000 ? `${Number((r / 1000).toPrecision(3))} kHz` : `${r} Hz`;
