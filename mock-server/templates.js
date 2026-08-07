@@ -16,6 +16,19 @@ const MAX_INPUT_PEQ = 15;
 const MAX_DELAY_US = 20000;
 const CROSSOVER_TYPES = ['LR2', 'LR4', 'BW2'];
 
+// Auto delay alignment probe chirp/schedule contract - must match the
+// PROBE_* constants in ESP/esp-web-server/teensy_protocol.h.
+const PROBE_SCHEDULE = {
+  sampleRate: 44100,
+  preRollSamples: 65536,
+  spacingSamples: 49152,
+  chirpSamples: 16384,
+  tailSamples: 8192,
+  fadeSamples: 512,
+  f0: 60.0,
+  f1: 8000.0,
+};
+
 // A disabled, silent output slot
 function emptyOutput(index) {
   return {
@@ -207,6 +220,7 @@ module.exports = {
   MAX_INPUT_PEQ,
   MAX_DELAY_US,
   CROSSOVER_TYPES,
+  PROBE_SCHEDULE,
   DEFAULT_TEMPLATE,
   buildPresetConfig,
   defaultDynamics,

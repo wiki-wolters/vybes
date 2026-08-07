@@ -12,6 +12,7 @@
 #include "AudioFilterFIRFloat.h"
 #include "IntervalTimer.h"
 #include "RtaFFT4096.h"
+#include "ProbeSource.h"
 
 // V1 8-output architecture (docs/CHANNEL_ARCHITECTURE.md): a shared stereo
 // input stage (source mixing + input EQ) feeds eight identical output
@@ -56,6 +57,7 @@ SerialCommandRouter router(Serial1);
 // Audio generators
 AudioSynthWaveform       Tone_generator;
 AudioSynthNoisePink      pink1;
+ProbeSource              probeSource; // auto delay alignment chirps
 
 //Audio Inputs (Bluetooth, SPDIF, USB, analog)
 AudioInputI2S            Bluetooth_in;
@@ -117,6 +119,7 @@ RtaFFT4096               RTA_fft;
 // Generator connections
 AudioConnection          patchCord_GenToneToMixer(Tone_generator, 0, Generator_mixer, 0);
 AudioConnection          patchCord_PinkToMixer(pink1, 0, Generator_mixer, 1);
+AudioConnection          patchCord_ProbeToGenMixer(probeSource, 0, Generator_mixer, 2);
 AudioConnection          patchCord_GenMixerToLeftAux(Generator_mixer, 0, Left_Aux_mixer, 0);
 AudioConnection          patchCord_GenMixerToRightAux(Generator_mixer, 0, Right_Aux_mixer, 0);
 
@@ -227,6 +230,21 @@ struct State {
 
 State state;
 
+// --- Auto delay alignment probe state ---
+// The chirp schedule lives in probeSource (sample-clocked, ISR context);
+// everything here is loop()-context only: probeLoop() switches which output
+// is soloed between chirps, and outputTargetGain() consults probeSolo. The
+// solo rides the existing amp ramp, so switching is click-free. probeGain is
+// applied instead of the normal gain/mute/volume product so a muted device
+// or zero volume can't silence the measurement (invert is kept - the UI
+// correlates on magnitude).
+bool   probeActive = false;
+int    probeSolo = -1;               // output the current chirp leaves through
+float  probeGain = 0.0f;             // amp gain for the soloed output
+int8_t probeOrder[2 * NUM_OUTPUTS];  // masked outputs ascending, then reversed
+int    probeChirps = 0;
+int    probeLastSlot = -1;
+
 void setup() {
   Serial.begin(9600);
   Serial.println();
@@ -294,9 +312,15 @@ void setup() {
   spdifCords[0].connect(outputAmp[0], 0, L_R_Spdif_Out, 0);
   spdifCords[1].connect(outputAmp[1], 0, L_R_Spdif_Out, 1);
 
-  // Signal generators start silent
+  // Signal generators start silent. The generator mixer's probe input (2)
+  // must be zeroed explicitly - AudioMixer4 defaults every input to 1.0 and
+  // the probe path only opens while a delay probe runs.
   Tone_generator.begin(0.0, 1000, WAVEFORM_SINE);
   pink1.amplitude(0.0);
+  Generator_mixer.gain(0, 1.0f);
+  Generator_mixer.gain(1, 1.0f);
+  Generator_mixer.gain(2, 0.0f);
+  Generator_mixer.gain(3, 0.0f);
 
   // RTA tap: equal L+R mix, idle until the UI asks for it
   RTA_mixer.gain(0, 0.5);
@@ -362,6 +386,11 @@ void loop() {
   }
 
   if (firFilesPending) {
+    // A FIR load blocks loop() on SD reads and changes channel latencies -
+    // either would corrupt a running measurement, so abort the probe first.
+    if (probeActive) {
+      probeCleanup("PROBE ERR aborted firLoad\n");
+    }
     loadFirFiles();
     firFilesPending = false;
   }
@@ -377,6 +406,7 @@ void loop() {
   updateAudioVolume(); // Call this frequently to smooth gain changes
   rtaLoop();
   grmLoop();
+  probeLoop();
 }
 
 void setRtaEnabled(bool enabled) {
@@ -501,7 +531,14 @@ static bool slewToward(float& current, float target, float alpha) {
 // The gain an output's amp should settle at: output gain (dB) * master
 // volume, negated for invert, zero when muted. Smoothing rides the whole
 // product, so volume, gain, mute and invert changes are all click-free.
-static float outputTargetGain(const OutputState& o) {
+// While a delay probe runs, the soloed output gets the fixed probe level
+// instead (see the probe state block above) and every other output is
+// silenced; normal targets return through the same ramp when it ends.
+static float outputTargetGain(int ch, const OutputState& o) {
+  if (probeActive) {
+    if (ch != probeSolo) return 0.0f;
+    return o.invert ? -probeGain : probeGain;
+  }
   if (o.mute) return 0.0f;
   float gain = powf(10.0f, o.gainDb / 20.0f) * state.targetVolume;
   return o.invert ? -gain : gain;
@@ -523,7 +560,7 @@ void updateAudioVolume() {
 
   for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
     OutputState& o = state.outputs[ch];
-    if (slewToward(o.currentGain, outputTargetGain(o), alpha)) {
+    if (slewToward(o.currentGain, outputTargetGain(ch, o), alpha)) {
       outputAmp[ch].gain(o.currentGain);
     }
   }
@@ -600,6 +637,116 @@ void stopTone() {
 void setNoise(float volumePercent) {
   Serial.println("Set pink noise: " + String(volumePercent) + "%");
   pink1.amplitude(volumePercent / 100.0f);
+}
+
+// --- Auto delay alignment probe ---
+// Protocol and chirp contract: teensy_protocol.h. PROBE lines go straight
+// to the ESP link (Serial1), which relays them to the web UI as probeEvent
+// websocket messages.
+
+// Restore everything the probe touched and report why it ended. Idempotent;
+// the amp targets revert through the normal ramp, so ending is click-free.
+void probeCleanup(const char* message) {
+  AudioNoInterrupts();
+  probeSource.stop();
+  AudioInterrupts();
+  probeActive = false;
+  probeSolo = -1;
+  probeLastSlot = -1;
+  // Reopen the tone/noise paths, close the probe path, and restore every
+  // input-mixer gain from state (setInputGains also restores the generator
+  // aux gain the probe forced to 1.0).
+  Generator_mixer.gain(0, 1.0f);
+  Generator_mixer.gain(1, 1.0f);
+  Generator_mixer.gain(2, 0.0f);
+  setInputGains(state.gainBluetooth, state.gainOptical, state.gainUSB,
+                state.gainGenerator, state.gainAnalog);
+  if (message) Serial1.print(message);
+}
+
+void startDelayProbe(int mask, float levelPercent) {
+  // Masked outputs ascending, then the same list reversed: the UI averages
+  // each output's two arrivals to cancel linear phone-clock drift.
+  int forward[NUM_OUTPUTS];
+  int count = 0;
+  for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
+    if (mask & (1 << ch)) forward[count++] = ch;
+  }
+  if (count == 0) {
+    Serial1.print("PROBE ERR emptyMask\n");
+    return;
+  }
+  if (probeActive) probeCleanup(nullptr); // implicit clean restart
+
+  probeChirps = 2 * count;
+  for (int i = 0; i < count; i++) {
+    probeOrder[i] = (int8_t)forward[i];
+    probeOrder[probeChirps - 1 - i] = (int8_t)forward[i];
+  }
+
+  // Silence the external inputs and the tone/noise generators for the
+  // duration (direct mixer writes; state is untouched and restored by
+  // probeCleanup), and open the probe path at unity regardless of the
+  // user's generator input gain.
+  Left_mixer.gain(0, 0.0f);
+  Right_mixer.gain(0, 0.0f);
+  Left_mixer.gain(1, 0.0f);
+  Right_mixer.gain(1, 0.0f);
+  Left_mixer.gain(2, 0.0f);
+  Right_mixer.gain(2, 0.0f);
+  Left_Aux_mixer.gain(1, 0.0f);
+  Right_Aux_mixer.gain(1, 0.0f);
+  Generator_mixer.gain(0, 0.0f);
+  Generator_mixer.gain(1, 0.0f);
+  Generator_mixer.gain(2, 1.0f);
+  Left_Aux_mixer.gain(0, 1.0f);
+  Right_Aux_mixer.gain(0, 1.0f);
+
+  probeGain = constrain(levelPercent, 0.0f, 100.0f) / 100.0f;
+  probeSolo = probeOrder[0];
+  probeLastSlot = 0;
+  probeActive = true;
+
+  AudioNoInterrupts();
+  probeSource.start((uint8_t)probeChirps, 0.5f); // -6dBFS headroom pre-amp
+  AudioInterrupts();
+
+  // An output routed with zero source gains can't emit the chirp - the UI
+  // should expect a missing correlation peak rather than a probe failure.
+  for (int i = 0; i < count; i++) {
+    const OutputState& o = state.outputs[forward[i]];
+    if (o.sourceLeft == 0.0f && o.sourceRight == 0.0f) {
+      Serial1.printf("PROBE WARN unrouted %d\n", forward[i]);
+    }
+  }
+  Serial1.printf("PROBE START %d %d %lu %lu %lu\n", mask, probeChirps,
+                 (unsigned long)PROBE_PRE_ROLL_SAMPLES,
+                 (unsigned long)PROBE_SPACING_SAMPLES,
+                 (unsigned long)PROBE_CHIRP_SAMPLES);
+}
+
+// Track the chirp schedule from loop(): switch the soloed output at the
+// midpoint of each inter-chirp gap (557ms before the chirp - the ramp fully
+// settles in ~342ms, and the previous chirp ended 186ms earlier). Timing
+// here is deliberately non-critical; only the chirps themselves are
+// sample-exact, and they live in ProbeSource.
+void probeLoop() {
+  if (!probeActive) return;
+  if (probeSource.isFinished()) {
+    probeCleanup("PROBE DONE\n");
+    return;
+  }
+  uint32_t s = probeSource.samplesElapsed();
+  int slot = 0;
+  if (s + PROBE_SPACING_SAMPLES / 2 >= PROBE_PRE_ROLL_SAMPLES) {
+    slot = (int)((s + PROBE_SPACING_SAMPLES / 2 - PROBE_PRE_ROLL_SAMPLES) / PROBE_SPACING_SAMPLES);
+  }
+  if (slot >= probeChirps) slot = probeChirps - 1;
+  if (slot != probeLastSlot) {
+    probeLastSlot = slot;
+    probeSolo = probeOrder[slot];
+    Serial1.printf("PROBE CHIRP %d %d\n", slot, probeSolo);
+  }
 }
 
 // --- Shared input EQ ---
@@ -1018,6 +1165,19 @@ void handleStopTone(const String& command, String* args, int argCount, OutputStr
 void handleSetNoise(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 1) {
     setNoise(args[0].toFloat());
+  }
+}
+
+// "startDelayProbe <mask> <level>" - see teensy_protocol.h for the contract
+void handleStartDelayProbe(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 2) {
+    startDelayProbe(args[0].toInt() & 0xFF, args[1].toFloat());
+  }
+}
+
+void handleStopDelayProbe(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (probeActive) {
+    probeCleanup("PROBE STOP\n");
   }
 }
 

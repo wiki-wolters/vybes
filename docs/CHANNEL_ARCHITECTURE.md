@@ -241,6 +241,60 @@ sliders.
    groups.
 6. Later: stereo link groups, crossover/PEQ response overlay on the RTA.
 
+## Auto delay alignment (phone-mic probe)
+
+Per-output delays can be measured instead of guessed. The Teensy plays one
+log chirp per enabled output at exact sample offsets on its own audio clock;
+the phone records the whole sequence in one take and the web UI
+cross-correlates to recover each chirp's arrival. Because a single
+continuous recording is analyzed, network, Bluetooth and start-time latency
+are common to every chirp and cancel — only the deviations from the known
+spacing survive, and those are the relative acoustic flight times.
+
+**Chirp contract** (the `PROBE_*` constants in `teensy_protocol.h`, mirrored
+in `mock-server/templates.js` and echoed in the API response so the UI never
+hardcodes them): 44.1kHz, 60Hz–8kHz log sweep, 16384-sample chirp with
+512-sample raised-cosine fades, 49152-sample spacing, 65536-sample pre-roll,
+8192-sample tail. Chirp *k* starts at `preRoll + k * spacing`. The spacing
+leaves a ~743ms gap so the output amps' 60ms-tau solo ramp (~342ms to
+settle) finishes well before the next chirp.
+
+**Order** is the enabled outputs ascending, then the same list reversed.
+Averaging each output's two arrivals cancels linear phone-clock drift, since
+slot *k* and slot *2N−1−k* always straddle the same midpoint in time.
+
+**Protocol.** `startDelayProbe <mask> <level>` / `stopDelayProbe`; the Teensy
+replies with `PROBE START|CHIRP|WARN|DONE|STOP|ERR` lines, which the ESP
+relays to the websocket as `{"messageType":"probeEvent","line":"..."}`. The
+sequencer has to live on the Teensy: the ESP's command queue coalesces
+same-channel `setOutput*` messages and drains at loop rate, so driving the
+solo sequence from there would silently drop steps.
+
+**Level and routing.** During a probe the soloed output's amp gets a fixed
+probe gain (invert honored, mute/gainDb/master volume ignored — any of them
+could be zero and silence the measurement), every other output is silenced,
+and the external inputs plus the tone/noise generators are muted so nothing
+contaminates the recording. All of it is restored from `state` when the
+probe ends, through the normal ramp, so start and end are click-free.
+
+**Delay semantics.** The probe runs with the user delays *active* and the
+full chain (crossover, PEQ, FIR) in place, so it measures real acoustic
+arrivals. Corrections are therefore incremental: align to the latest
+arrival, re-normalize so the smallest delay is 0, clamp at `MAX_DELAY_US`.
+Re-running converges. FIR group-delay compensation is identical-latency
+padding across outputs, so it contributes nothing to the relative offsets
+and needs no adjustment.
+
+**Mutual exclusion is the UI's job**: no preset switches while a probe runs.
+The one guard on the Teensy is a FIR load, which blocks `loop()` on SD reads
+and changes channel latencies mid-measurement — that aborts the probe with
+`PROBE ERR aborted firLoad`.
+
+**Known limits.** A sub-only channel only reproduces the low end of the
+sweep, so its correlation peak is broad (~±1-2ms rather than ~±0.1ms); the
+UI reports per-output confidence. An output routed with both source gains at
+zero can't emit the chirp at all and is reported as `PROBE WARN unrouted`.
+
 ## Versioning
 
 `version: 1` for this schema. Keep the load-time version check and a

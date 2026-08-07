@@ -41,6 +41,8 @@
   X(setCompStrength, handleSetCompStrength) \
   X(setCompVoicePriority, handleSetCompVoicePriority) \
   X(setGrm, handleSetGrm) \
+  X(startDelayProbe, handleStartDelayProbe) \
+  X(stopDelayProbe, handleStopDelayProbe) \
   X(setMute, handleSetMute) \
   X(setMutePercent, handleSetMutePercent) \
   X(ping, handlePing)

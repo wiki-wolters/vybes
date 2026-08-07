@@ -152,6 +152,28 @@ class VybesAPI {
     return this.request('PUT', `/noise?level=${volume}`);
   }
 
+  // ===== AUTO DELAY ALIGNMENT PROBE =====
+
+  /**
+   * Start a delay probe: the device chirps every enabled output of the
+   * active preset in sequence. Resolves with the chirp schedule
+   * (sampleRate, preRollSamples, spacingSamples, chirpSamples, tailSamples,
+   * fadeSamples, f0, f1, order) that delay-align.js correlates against.
+   * Progress arrives as probeEvent live-update messages.
+   * @param {number} level - Probe loudness 0-100 (independent of volume)
+   */
+  async startDelayProbe(level = 50) {
+    if (level < 0 || level > 100) {
+      throw new Error('Level must be between 0 and 100');
+    }
+    return this.request('PUT', `/probe/delay/start?level=${level}`);
+  }
+
+  /** Cancel a running delay probe */
+  async stopDelayProbe() {
+    return this.request('PUT', '/probe/delay/stop');
+  }
+
   // ===== PRESET MANAGEMENT =====
 
   /**
@@ -436,9 +458,10 @@ class VybesAPI {
   _openSocket() {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
     // In dev the page is served by vite, not the device, so the live socket
-    // goes to the mock server's standalone websocket port instead.
+    // goes to the mock server's standalone websocket port instead
+    // (VITE_WS_URL overrides it, mirroring VITE_API_BASE_URL).
     const wsUrl = import.meta.env.DEV
-      ? 'ws://localhost:8080'
+      ? (import.meta.env.VITE_WS_URL || 'ws://localhost:8080')
       : `${wsProtocol}${window.location.host}/live-updates`;
     this.socket = new WebSocket(wsUrl);
     this._setConnectionState('connecting');

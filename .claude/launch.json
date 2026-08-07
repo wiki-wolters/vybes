@@ -43,6 +43,31 @@
         "5399"
       ],
       "port": 5399
+    },
+    {
+      "name": "mock-server-c",
+      "runtimeExecutable": "/usr/bin/env",
+      "runtimeArgs": [
+        "PORT=3298",
+        "WS_PORT=3299",
+        "/Users/lancewolters/.nvm/versions/node/v20.19.6/bin/node",
+        "mock-server/server.js"
+      ],
+      "port": 3298
+    },
+    {
+      "name": "webui-dev-c",
+      "runtimeExecutable": "/usr/bin/env",
+      "runtimeArgs": [
+        "VITE_API_BASE_URL=http://localhost:3298",
+        "VITE_WS_URL=ws://localhost:3299",
+        "/Users/lancewolters/.nvm/versions/node/v20.19.6/bin/node",
+        "WebUI/node_modules/vite/bin/vite.js",
+        "WebUI",
+        "--port",
+        "5499"
+      ],
+      "port": 5499
     }
   ]
 }

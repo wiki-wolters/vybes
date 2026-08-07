@@ -4,6 +4,7 @@
 #include "file_system.h"
 #include "api_system.h"
 #include "api_signal_generator.h"
+#include "api_probe.h"
 #include "api_gains.h"
 #include "api_fir.h"
 #include "api_presets.h"
@@ -184,6 +185,10 @@ static void registerRoutes(PsychicHttpServer &s, PsychicWebSocketHandler *ws) {
     s.on("/generate/tone/stop", HTTP_PUT, handlePutToneStop);
     s.on("/generate/tone", HTTP_PUT, handlePutTone);
     s.on("/noise", HTTP_PUT, handlePutNoise);
+
+    // API Routes - Auto delay alignment probe
+    s.on("/probe/delay/start", HTTP_PUT, handlePutProbeDelayStart);
+    s.on("/probe/delay/stop", HTTP_PUT, handlePutProbeDelayStop);
 
     s.on("/preset/active", HTTP_PUT, handlePutActivePreset);
 

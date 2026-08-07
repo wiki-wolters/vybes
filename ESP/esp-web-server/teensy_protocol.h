@@ -85,6 +85,40 @@
 // setRta. The Teensy replies with "GRM <6 hex>" frames.
 #define CMD_SET_GRM "setGrm"
 
+// Auto delay alignment probe.
+//   startDelayProbe <mask> <level>   mask = decimal 8-bit bitmap, bit n =
+//                                    output n (the ESP sets only enabled
+//                                    outputs); level = 0-100 (%)
+//   stopDelayProbe
+// The Teensy plays one log chirp per masked output - outputs ascending,
+// then the same list reversed (the UI averages the two passes to cancel
+// phone-clock drift) - at exact sample offsets PROBE_PRE_ROLL_SAMPLES +
+// k * PROBE_SPACING_SAMPLES on its own audio clock, soloing one output per
+// chirp. The UI owns mutual exclusion: no preset switches or FIR loads
+// while a probe runs. Reply lines (relayed to the web UI as probeEvent):
+//   PROBE START <mask> <nChirps> <preRoll> <spacing> <chirpLen>
+//   PROBE CHIRP <slot> <ch>
+//   PROBE WARN unrouted <ch>
+//   PROBE DONE               (sequence complete, state restored)
+//   PROBE STOP               (stopped by command)
+//   PROBE ERR emptyMask | PROBE ERR aborted firLoad
+#define CMD_START_DELAY_PROBE "startDelayProbe"
+#define CMD_STOP_DELAY_PROBE "stopDelayProbe"
+
+// Probe chirp/schedule contract, shared by ProbeSource (Teensy), the
+// /probe/delay API (ESP) and delay-align.js (web UI reference generator).
+// Chirp k starts at sample PROBE_PRE_ROLL_SAMPLES + k * PROBE_SPACING_SAMPLES.
+// The spacing leaves a ~743ms gap so the output amps' 60ms-tau solo ramp
+// (~342ms to fully settle) finishes well before the next chirp.
+#define PROBE_SAMPLE_RATE 44100
+#define PROBE_PRE_ROLL_SAMPLES 65536  /* 1486ms before the first chirp */
+#define PROBE_SPACING_SAMPLES 49152   /* 1114.6ms chirp-start to chirp-start */
+#define PROBE_CHIRP_SAMPLES 16384     /* 371.5ms log sweep */
+#define PROBE_TAIL_SAMPLES 8192       /* silence after the last chirp */
+#define PROBE_FADE_SAMPLES 512        /* raised-cosine fade each end */
+#define PROBE_F0_HZ 60.0
+#define PROBE_F1_HZ 8000.0
+
 // System Commands
 #define CMD_SET_MUTE "setMute"
 #define CMD_SET_MUTE_PERCENT "setMutePercent"

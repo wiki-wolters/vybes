@@ -24,6 +24,10 @@ void broadcastRtaFrame(const char* hexData);
 // Forward one Teensy GRM (gain-reduction meter) frame to all clients
 void broadcastGrmFrame(const char* hexData);
 
+// Forward one Teensy delay-probe line (payload after "PROBE ") to all
+// clients as a probeEvent message
+void broadcastProbeEvent(const char* line);
+
 // Tracks client interest in RTA frames and relays it to the Teensy.
 // Call from loop().
 void websocketLoop();

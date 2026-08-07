@@ -135,6 +135,17 @@ void broadcastRtaFrame(const char* hexData) {
     broadcastToAllListeners(buf);
 }
 
+// Forward one delay-probe line (the payload after "PROBE ") to all clients
+// as a probeEvent message, e.g. {"messageType":"probeEvent","line":"CHIRP 3 2"}.
+void broadcastProbeEvent(const char* line) {
+    if (totalClients() == 0) return;
+    size_t len = strlen(line);
+    if (len == 0 || len > 80) return;
+    char buf[128];
+    snprintf(buf, sizeof(buf), "{\"messageType\":\"probeEvent\",\"line\":\"%s\"}", line);
+    broadcastWebSocket(buf);
+}
+
 // Forward one GRM frame (the hex payload after "GRM ") to all clients.
 // Called from teensyCommLoop at ~10Hz while meters are streaming.
 void broadcastGrmFrame(const char* hexData) {

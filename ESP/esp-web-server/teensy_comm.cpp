@@ -266,6 +266,14 @@ static void handleTeensyLine(const char* line) {
         return;
     }
 
+    // Delay-probe progress lines ("PROBE START ...", "PROBE CHIRP ...",
+    // "PROBE DONE", ...) - relay to the web UI, which drives its alignment
+    // wizard off them.
+    if (strncmp(line, "PROBE ", 6) == 0) {
+        broadcastProbeEvent(line + 6);
+        return;
+    }
+
     if (collectingFiles) {
         if (strcmp(line, "EOT") == 0) {
             xSemaphoreTake(firCacheMutex, portMAX_DELAY);

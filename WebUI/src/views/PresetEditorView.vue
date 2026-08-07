@@ -120,6 +120,16 @@
                   @update:modelValue="store.setOutputDelay(output.index, $event)"
                 />
               </div>
+              <!-- The probe chirps the live outputs, so it only makes sense
+                   on the preset that is actually playing -->
+              <div v-if="store.preset.isCurrent" class="mt-4">
+                <button class="btn-secondary" @click="delayWizardOpen = true">
+                  Auto-align with phone mic…
+                </button>
+              </div>
+              <p v-else class="mt-4 text-sm text-vybes-text-secondary">
+                Activate this preset to auto-align delays with your phone's microphone.
+              </p>
             </CollapsibleSection>
 
             <CollapsibleSection title="Output Levels" :toggleable="false" :animate="animationsEnabled">
@@ -197,6 +207,8 @@
         <TemplateSelect v-if="modalState.type === 'create'" v-model="modalState.templateId" class="mb-4" />
       </template>
     </ModalDialog>
+
+    <DelayAlignWizard v-model="delayWizardOpen" />
   </div>
 </template>
 
@@ -211,6 +223,7 @@ import ChannelStrip from '../components/shared/ChannelStrip.vue';
 import FirPoolBar from '../components/shared/FirPoolBar.vue';
 import TemplateSelect from '../components/shared/TemplateSelect.vue';
 import SpeakerDelayInput from '../components/shared/SpeakerDelayInput.vue';
+import DelayAlignWizard from '../components/DelayAlignWizard.vue';
 import EQSection from '../components/shared/EQSection.vue';
 import CollapsibleSection from '../components/shared/CollapsibleSection.vue';
 import Loading from '../components/shared/Loading.vue';
@@ -254,6 +267,7 @@ const TABS = [
   { id: 'channels', label: 'Channels' },
 ];
 const activeTab = ref('tuning');
+const delayWizardOpen = ref(false);
 
 // Channel accordion: all collapsed to start. Desktop can keep several open
 // side by side; on phones the strips stack, so one at a time is enough.

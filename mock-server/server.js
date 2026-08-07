@@ -10,6 +10,7 @@ const {
   MAX_INPUT_PEQ,
   MAX_DELAY_US,
   CROSSOVER_TYPES,
+  PROBE_SCHEDULE,
   DEFAULT_TEMPLATE,
   buildPresetConfig,
   defaultDynamics,
@@ -594,6 +595,69 @@ app.put('/noise', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// ===== Auto delay alignment probe - api_probe.cpp =====
+// The mock can't make sound, but it replays the real device's event
+// sequence over the websocket ({messageType:'probeEvent', line:'...'}) on
+// the real schedule, so the wizard's whole flow is testable without
+// hardware (the analysis then finds no chirps, exercising that path).
+let probeTimers = [];
+
+function clearProbeTimers() {
+  probeTimers.forEach(clearTimeout);
+  probeTimers = [];
+}
+
+app.put('/probe/delay/start', wrap(async (req, res) => {
+  let level = 50;
+  if (req.query.level !== undefined) {
+    level = Number(req.query.level);
+    if (!Number.isInteger(level) || level < 0 || level > 100) {
+      return res.status(400).json({ error: 'Level must be an integer 0-100' });
+    }
+  }
+
+  const row = await dbGet("SELECT name, config FROM presets WHERE is_current = 1");
+  const config = JSON.parse(row.config);
+  const forward = [];
+  let mask = 0;
+  config.outputs.forEach((output, ch) => {
+    if (output.enabled) {
+      forward.push(ch);
+      mask |= 1 << ch;
+    }
+  });
+  if (forward.length === 0) {
+    return res.status(400).json({ error: 'Active preset has no enabled outputs' });
+  }
+  const order = [...forward, ...forward.slice().reverse()];
+
+  const { sampleRate, preRollSamples, spacingSamples, chirpSamples, tailSamples } = PROBE_SCHEDULE;
+  const msPerSample = 1000 / sampleRate;
+
+  clearProbeTimers();
+  const probeEvent = (line) => broadcast({ messageType: 'probeEvent', line });
+  probeEvent(`START ${mask} ${order.length} ${preRollSamples} ${spacingSamples} ${chirpSamples}`);
+  order.forEach((ch, slot) => {
+    // The firmware announces each solo switch at the gap midpoint before the
+    // chirp; slot 0 is announced by START, so mirror the firmware and skip it
+    if (slot === 0) return;
+    const atMs = (preRollSamples + slot * spacingSamples - spacingSamples / 2) * msPerSample;
+    probeTimers.push(setTimeout(() => probeEvent(`CHIRP ${slot} ${ch}`), atMs));
+  });
+  const doneMs = (preRollSamples + (order.length - 1) * spacingSamples + chirpSamples + tailSamples) * msPerSample;
+  probeTimers.push(setTimeout(() => probeEvent('DONE'), doneMs));
+
+  res.json({ status: 'ok', ...PROBE_SCHEDULE, level, order });
+}));
+
+app.put('/probe/delay/stop', wrap(async (req, res) => {
+  if (probeTimers.length > 0) {
+    clearProbeTimers();
+    broadcast({ messageType: 'probeEvent', line: 'STOP' });
+  }
+  res.json({ status: 'ok' });
+}));
 
 // Speaker & Input gains - api_gains.cpp handlePutSpeakerGain: query params
 // speaker + value, 0-100 percent (the ESP stores value/100 internally)

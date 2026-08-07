@@ -307,6 +307,56 @@ describe('signal generator', () => {
   })
 })
 
+// ===== Auto delay alignment probe =====
+// Real-device politeness: the chirp sequence only starts after a ~1.5s
+// pre-roll, so starting and immediately stopping stays silent.
+
+describe('delay alignment probe', () => {
+  it('PUT /probe/delay/start returns the chirp schedule with a forward+reverse order', async () => {
+    const res = await PUT('/probe/delay/start?level=40')
+    try {
+      expect(res.status).toBe(200)
+      const s = res.json
+      expect(s.status).toBe('ok')
+      expect(s.sampleRate).toBe(44100)
+      for (const field of ['preRollSamples', 'spacingSamples', 'chirpSamples', 'tailSamples', 'fadeSamples']) {
+        expect(s[field], field).toBeGreaterThan(0)
+      }
+      expect(s.f0).toBeGreaterThan(0)
+      expect(s.f1).toBeGreaterThan(s.f0)
+      expect(s.level).toBe(40)
+      // One chirp per enabled output, ascending, then the same list reversed
+      expect(Array.isArray(s.order)).toBe(true)
+      expect(s.order.length % 2).toBe(0)
+      expect(s.order.length).toBeGreaterThanOrEqual(2)
+      const n = s.order.length / 2
+      const forward = s.order.slice(0, n)
+      expect([...forward].sort((a, b) => a - b)).toEqual(forward)
+      expect(s.order.slice(n)).toEqual([...forward].reverse())
+    } finally {
+      await PUT('/probe/delay/stop')
+    }
+  })
+
+  it('PUT /probe/delay/start defaults the level and rejects bad ones with 400', async () => {
+    expect((await PUT('/probe/delay/start?level=101')).status).toBe(400)
+    expect((await PUT('/probe/delay/start?level=-1')).status).toBe(400)
+    const res = await PUT('/probe/delay/start')
+    try {
+      expect(res.status).toBe(200)
+      expect(res.json.level).toBe(50)
+    } finally {
+      await PUT('/probe/delay/stop')
+    }
+  })
+
+  it('PUT /probe/delay/stop succeeds even when no probe is running', async () => {
+    const res = await PUT('/probe/delay/stop')
+    expect(res.status).toBe(200)
+    expect(res.json).toEqual({ status: 'ok' })
+  })
+})
+
 // ===== Preset CRUD =====
 
 describe('preset CRUD', () => {
@@ -1070,6 +1120,18 @@ describe('websocket broadcasts', () => {
     const wait = ws.expect((m) => m.messageType === 'crossoverChanged' && m.presetName === P)
     await PUT(`/preset/crossover?preset_name=${enc(P)}&id=sub_xo&frequency=95`)
     expect(await wait).toEqual({ messageType: 'crossoverChanged', presetName: P, status: 'ok', id: 'sub_xo', crossoverFreq: 95 })
+  })
+
+  it('probeEvent START on probe start, STOP on cancel', async () => {
+    const waitStart = ws.expect((m) => m.messageType === 'probeEvent' && m.line.startsWith('START'))
+    await PUT('/probe/delay/start?level=30')
+    const started = await waitStart
+    // "START <mask> <nChirps> <preRoll> <spacing> <chirpLen>"
+    expect(started.line.split(' ')).toHaveLength(6)
+
+    const waitStop = ws.expect((m) => m.messageType === 'probeEvent' && m.line === 'STOP')
+    await PUT('/probe/delay/stop')
+    await waitStop
   })
 
   it('crossoverEnabledChanged', async () => {
