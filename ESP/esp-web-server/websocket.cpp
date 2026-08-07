@@ -2,6 +2,7 @@
 #include "websocket.h"
 #include "web_server.h"
 #include "teensy_comm.h"
+#include "config.h" // NUM_OUTPUTS, for solo channel validation
 #include <atomic>
 
 // One handler per listener. esp-idf's httpd runs everything for a server -
@@ -43,6 +44,14 @@ static bool rtaActive = false;
 static unsigned long grmLastClientKeepaliveAt = 0;
 static bool grmActive = false;
 
+// Output solo subscription: the analyzer sends "solo:<ch>" every couple of
+// seconds while it measures one output. Same keepalive scheme; "solo:-1"
+// (or any out-of-range channel) drops the interest so the loop clears the
+// Teensy's solo immediately instead of waiting for the timeout.
+static unsigned long soloLastClientKeepaliveAt = 0;
+static int soloChannel = -1;
+static bool soloActive = false;
+
 static void setupHandler(PsychicWebSocketHandler &handler, std::atomic<int> &clientCount) {
     handler.onOpen([&clientCount](PsychicWebSocketClient *client) {
         clientCount.fetch_add(1);
@@ -61,6 +70,19 @@ static void setupHandler(PsychicWebSocketHandler &handler, std::atomic<int> &cli
             }
             if (frame->len == 13 && strncmp((const char*)frame->payload, "grm:keepalive", 13) == 0) {
                 grmLastClientKeepaliveAt = millis();
+                return ESP_OK;
+            }
+            if (frame->len >= 6 && frame->len <= 8 &&
+                strncmp((const char*)frame->payload, "solo:", 5) == 0) {
+                char num[4] = {0};
+                memcpy(num, frame->payload + 5, frame->len - 5);
+                int ch = atoi(num);
+                if (ch >= 0 && ch < NUM_OUTPUTS) {
+                    soloChannel = ch;
+                    soloLastClientKeepaliveAt = millis();
+                } else {
+                    soloLastClientKeepaliveAt = 0; // explicit clear
+                }
                 return ESP_OK;
             }
             DebugSerial.printf("WebSocket received: %.*s\n", (int)frame->len, (const char*)frame->payload);
@@ -189,5 +211,27 @@ void websocketLoop() {
     } else if (grmActive) {
         grmActive = false;
         sendToTeensy(CMD_SET_GRM, "0");
+    }
+
+    bool wantSolo = soloLastClientKeepaliveAt != 0 &&
+                    now - soloLastClientKeepaliveAt < RTA_CLIENT_TIMEOUT_MS &&
+                    totalClients() > 0;
+    static unsigned long lastSoloRefreshAt = 0;
+    static int lastSentSoloChannel = -1;
+    if (wantSolo) {
+        soloActive = true;
+        // A channel change goes out immediately; otherwise refresh like RTA
+        if (soloChannel != lastSentSoloChannel ||
+            now - lastSoloRefreshAt >= RTA_TEENSY_REFRESH_MS) {
+            lastSoloRefreshAt = now;
+            lastSentSoloChannel = soloChannel;
+            char chStr[4];
+            snprintf(chStr, sizeof(chStr), "%d", soloChannel);
+            sendToTeensy(CMD_SOLO_OUTPUT, chStr);
+        }
+    } else if (soloActive) {
+        soloActive = false;
+        lastSentSoloChannel = -1;
+        sendToTeensy(CMD_SOLO_OUTPUT, "-1");
     }
 }

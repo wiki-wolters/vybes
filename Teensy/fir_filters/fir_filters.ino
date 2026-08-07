@@ -245,6 +245,16 @@ int8_t probeOrder[2 * NUM_OUTPUTS];  // masked outputs ascending, then reversed
 int    probeChirps = 0;
 int    probeLastSlot = -1;
 
+// --- Output solo (per-output EQ measurement) ---
+// Keepalive-driven like the RTA: the ESP refreshes "soloOutput <ch>" every
+// couple of seconds while the analyzer measures one output, so a dropped
+// connection can't leave the system stuck on one speaker. Rides the amp
+// ramp via outputTargetGain (click-free) and changes nothing in the preset
+// state; the soloed output keeps its normal gain/volume/mute product.
+#define OUTPUT_SOLO_KEEPALIVE_TIMEOUT_MS 7000
+int outputSolo = -1;
+unsigned long outputSoloLastKeepaliveAt = 0;
+
 void setup() {
   Serial.begin(9600);
   Serial.println();
@@ -407,6 +417,16 @@ void loop() {
   rtaLoop();
   grmLoop();
   probeLoop();
+  outputSoloLoop();
+}
+
+// Clear a stale output solo once the ESP's keepalives stop arriving.
+void outputSoloLoop() {
+  if (outputSolo < 0) return;
+  if (millis() - outputSoloLastKeepaliveAt > OUTPUT_SOLO_KEEPALIVE_TIMEOUT_MS) {
+    outputSolo = -1;
+    Serial.println("Output solo timed out");
+  }
 }
 
 void setRtaEnabled(bool enabled) {
@@ -539,6 +559,9 @@ static float outputTargetGain(int ch, const OutputState& o) {
     if (ch != probeSolo) return 0.0f;
     return o.invert ? -probeGain : probeGain;
   }
+  // Per-output EQ measurement: everything but the soloed output is silenced;
+  // the soloed one keeps its normal product so the mic measures reality.
+  if (outputSolo >= 0 && ch != outputSolo) return 0.0f;
   if (o.mute) return 0.0f;
   float gain = powf(10.0f, o.gainDb / 20.0f) * state.targetVolume;
   return o.invert ? -gain : gain;
@@ -1186,6 +1209,19 @@ void handleStopDelayProbe(const String& command, String* args, int argCount, Out
 void handleSetRta(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 1) {
     setRtaEnabled(args[0].toInt() == 1);
+  }
+}
+
+// "soloOutput <ch>" silences every other output while its keepalives stay
+// fresh; -1 (or any out-of-range channel) clears the solo immediately.
+void handleSoloOutput(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount != 1) return;
+  int ch = args[0].toInt();
+  if (ch >= 0 && ch < NUM_OUTPUTS) {
+    outputSolo = ch;
+    outputSoloLastKeepaliveAt = millis();
+  } else {
+    outputSolo = -1;
   }
 }
 

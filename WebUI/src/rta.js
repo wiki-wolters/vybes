@@ -145,6 +145,52 @@ function interpolateLogFreq(points, freq) {
   return last[1];
 }
 
+// Power-domain average of several per-band dB arrays (deviation snapshots
+// from different mic positions). Per band, the mean is taken over the
+// arrays that have a finite value there; NaN when none does. All arrays
+// must share one grid.
+export function averageDbArrays(arrays) {
+  if (!arrays.length) return null;
+  const n = arrays[0].length;
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    let power = 0;
+    let count = 0;
+    for (const a of arrays) {
+      if (Number.isFinite(a[i])) {
+        power += Math.pow(10, a[i] / 10);
+        count++;
+      }
+    }
+    out[i] = count ? 10 * Math.log10(power / count) : NaN;
+  }
+  return out;
+}
+
+// --- Built-in mic profiles ---
+// Approximate deviation of a smartphone mic captured in the browser: the
+// MEMS capsule itself is nearly flat to 20 Hz, but the OS/browser capture
+// chain applies a high-pass (roughly 2nd-order around 55 Hz) that no
+// getUserMedia constraint can disable. The points are 20*log10|H| of that
+// filter, applied like any imported cal file. "Approximate" because the
+// corner varies by device and OS version.
+function hpfDeviationPoints(cornerHz) {
+  const freqs = [20, 25, 32, 40, 50, 63, 80, 100, 125, 160, 200, 315, 20000];
+  return freqs.map((f) => {
+    const r2 = (f / cornerHz) ** 2;
+    const db = 20 * Math.log10(r2 / Math.sqrt(1 + r2 * r2));
+    return [f, Math.round(db * 10) / 10];
+  });
+}
+
+export const BUILTIN_CAL_PRESETS = [
+  {
+    id: 'smartphone-hpf',
+    name: 'Generic smartphone (approx.)',
+    points: hpfDeviationPoints(55),
+  },
+];
+
 // Median of (a[i] - b[i]) over the bands whose center lies in [loHz, hiHz].
 // Used to auto-align the mic trace level with the source trace. a, b and
 // centers must share one grid.

@@ -167,13 +167,23 @@ wss.on('connection', (ws) => {
   console.log('WebSocket client connected');
 
   ws.on('message', (msg) => {
+    const text = msg.toString();
     // The analyzer page sends this while open; it keeps mock RTA frames flowing
-    if (msg.toString() === 'rta:keepalive') {
+    if (text === 'rta:keepalive') {
       rtaLastKeepaliveAt = Date.now();
     }
     // Any page showing the compressor meters sends this
-    if (msg.toString() === 'grm:keepalive') {
+    if (text === 'grm:keepalive') {
       grmLastKeepaliveAt = Date.now();
+    }
+    // Per-output EQ measurement: the analyzer holds one output soloed with
+    // "solo:<ch>" keepalives; "solo:-1" clears. The mock just logs it.
+    if (text.startsWith('solo:')) {
+      const ch = Number(text.slice(5));
+      if (ch !== mockOutputSolo) {
+        mockOutputSolo = ch;
+        console.log(`Output solo -> ${ch}`);
+      }
     }
   });
 
@@ -191,6 +201,7 @@ wss.on('connection', (ws) => {
 // Centers are 10^(k/40) for k = 52..172 (20Hz-20kHz), matching the firmware.
 const RTA_BAND_CENTERS = Array.from({ length: 121 }, (_, i) => 10 ** ((52 + i) / 40));
 let rtaLastKeepaliveAt = 0;
+let mockOutputSolo = -1;
 
 function mockRtaFrameHex(t) {
   let hex = '';

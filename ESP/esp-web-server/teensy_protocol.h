@@ -105,6 +105,14 @@
 #define CMD_START_DELAY_PROBE "startDelayProbe"
 #define CMD_STOP_DELAY_PROBE "stopDelayProbe"
 
+// Output solo for per-output EQ measurement: "soloOutput <ch>" silences
+// every other output; same keepalive scheme as setRta (the ESP refreshes it
+// while a web client holds a channel soloed, the Teensy times out on its
+// own). -1 or any out-of-range channel clears the solo immediately. The
+// soloed output keeps its normal gain/volume product - the web UI measures
+// the audible reality, so nothing is forced to a probe level.
+#define CMD_SOLO_OUTPUT "soloOutput"
+
 // Probe chirp/schedule contract, shared by ProbeSource (Teensy), the
 // /probe/delay API (ESP) and delay-align.js (web UI reference generator).
 // Chirp k starts at sample PROBE_PRE_ROLL_SAMPLES + k * PROBE_SPACING_SAMPLES.

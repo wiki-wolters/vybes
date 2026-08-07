@@ -78,7 +78,7 @@
         </div>
 
         <!-- Delta chart: mic minus source, level-aligned -->
-        <div v-if="micActive && sourceLive" class="mt-4">
+        <div v-if="(micActive && sourceLive) || captures.length" class="mt-4">
           <p class="text-xs text-vybes-text-secondary mb-2">
             Room + system deviation (mic − source). Bars above zero are frequencies the room/system
             boosts; below zero, frequencies it loses.
@@ -111,8 +111,10 @@
                 :opacity="bar.opacity"
                 rx="1"
               />
+              <!-- Average of the captured positions -->
+              <path v-if="averagePath" class="trace-average" :d="averagePath" fill="none" stroke-width="2" opacity="0.9" />
               <!-- Proposed EQ correction and the predicted result of applying it -->
-              <template v-if="frozen && generatedPoints.length">
+              <template v-if="analysisReady && generatedPoints.length">
                 <path class="trace-correction" :d="correctionPath" fill="none" stroke-width="2" opacity="0.9" />
                 <path class="trace-predicted" :d="predictedPath" fill="none" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.75" />
               </template>
@@ -126,9 +128,16 @@
               </g>
             </svg>
           </div>
-          <p v-if="frozen && generatedPoints.length" class="mt-2 text-xs text-vybes-text-secondary">
-            <span class="legend-correction">━</span> proposed EQ correction ·
-            <span class="text-vybes-text-primary">┄</span> predicted result after EQ
+          <p v-if="captures.length || (analysisReady && generatedPoints.length)" class="mt-2 text-xs text-vybes-text-secondary">
+            <template v-if="captures.length">
+              <span class="legend-average">━</span> average of {{ captures.length }}
+              position{{ captures.length === 1 ? '' : 's' }}
+            </template>
+            <template v-if="analysisReady && generatedPoints.length">
+              <template v-if="captures.length"> · </template>
+              <span class="legend-correction">━</span> proposed EQ correction ·
+              <span class="text-vybes-text-primary">┄</span> predicted result after EQ
+            </template>
           </p>
         </div>
         <p v-else class="mt-4 text-xs text-vybes-text-secondary">
@@ -138,17 +147,35 @@
         </p>
       </CardSection>
 
-      <CardSection v-if="frozen && deltaValues" title="EQ Correction">
+      <CardSection v-if="analysisReady" title="EQ Correction">
         <p class="text-xs text-vybes-text-secondary mb-4">
-          Fits parametric EQ bands that pull the frozen deviation toward the target curve.
+          Fits parametric EQ bands that pull the
+          {{ captures.length
+            ? `average of ${captures.length} captured position${captures.length === 1 ? '' : 's'}`
+            : 'frozen deviation' }}
+          toward the target curve.
           Tune the parameters below — the chart above previews the correction (magenta) and
           the predicted result (dashed) live.
+        </p>
+        <p v-if="scopeIsOutput" class="text-xs text-amber-300/90 -mt-2 mb-4">
+          Output EQ has no automatic headroom compensation — keep boosts small, or drop the
+          channel gain to make room for them.
         </p>
 
         <div class="grid sm:grid-cols-2 gap-x-6 gap-y-4">
           <div>
+            <SelectGroup v-model="eqTarget.mode" label="Target curve">
+              <option value="tilt">Downward tilt</option>
+              <option value="flat">Flat</option>
+              <option v-for="c in TARGET_CURVE_PRESETS" :key="c.id" :value="c.id">
+                {{ c.label }}
+              </option>
+              <option value="custom">Custom (imported)</option>
+            </SelectGroup>
             <RangeSlider
-              label="Target tilt"
+              v-if="eqTarget.mode === 'tilt'"
+              class="mt-3"
+              label="Tilt"
               :min="-2"
               :max="1"
               :step="0.1"
@@ -156,11 +183,15 @@
               :decimals="1"
               v-model="eqGen.tilt"
             />
-            <p class="mt-1 text-xs text-vybes-text-secondary">
-              0 reproduces the source exactly; negative tilts the target down toward the
-              treble (warmer). In-room responses corrected fully flat often sound bright —
-              −0.5 to −1 is a common preference.
-            </p>
+            <div v-if="eqTarget.mode === 'custom'" class="mt-3 flex flex-wrap items-center gap-3">
+              <label class="btn-secondary cursor-pointer">
+                Import target file
+                <input type="file" accept=".txt,.cal,.frd,.csv" class="hidden" @change="onTargetFileSelected" />
+              </label>
+              <span v-if="eqTarget.customName" class="text-xs text-vybes-live">{{ eqTarget.customName }}</span>
+            </div>
+            <p v-if="targetError" class="mt-2 text-xs text-red-400">{{ targetError }}</p>
+            <p class="mt-1 text-xs text-vybes-text-secondary">{{ targetModeHelp }}</p>
           </div>
           <RangeSlider
             label="Correction strength"
@@ -212,7 +243,7 @@
           <RangeSlider
             label="Max bands"
             :min="1"
-            :max="12"
+            :max="scopeIsOutput ? MAX_OUTPUT_EQ_BANDS : 12"
             :step="1"
             unit=""
             :decimals="0"
@@ -261,6 +292,22 @@
       </CardSection>
 
       <CardSection title="Controls">
+        <div class="mb-5">
+          <SelectGroup v-model="scope" label="Measure &amp; correct">
+            <option value="input">All outputs (input EQ)</option>
+            <option v-for="o in outputs" :key="o.index" :value="String(o.index)">
+              {{ o.label }} only (output EQ)
+            </option>
+          </SelectGroup>
+          <p v-if="scopeIsOutput" class="mt-1 text-xs text-amber-300">
+            Only “{{ scopeOutput?.label }}” plays while this is selected — the other outputs
+            are muted for the measurement and come back when you switch away.
+          </p>
+          <p v-else class="mt-1 text-xs text-vybes-text-secondary">
+            Correct the whole system with the shared input EQ, or pick one output to
+            measure and EQ that speaker alone.
+          </p>
+        </div>
         <div class="grid sm:grid-cols-2 gap-6">
           <div>
             <button
@@ -276,9 +323,48 @@
             <button class="w-full mt-3 btn-secondary" @click="frozen = !frozen">
               {{ frozen ? 'Resume' : 'Freeze' }}
             </button>
-            <p v-if="!frozen && micActive && sourceLive" class="mt-2 text-xs text-vybes-text-secondary">
-              Freeze to convert the deviation into parametric EQ bands.
+            <p v-if="!frozen && micActive && sourceLive && !captures.length" class="mt-2 text-xs text-vybes-text-secondary">
+              Freeze to convert the deviation into parametric EQ bands, or capture several
+              positions below for a steadier average.
             </p>
+
+            <div class="mt-4 pt-3 border-t border-vybes-border">
+              <button class="w-full btn-secondary" :disabled="!captureReady" @click="capturePosition">
+                Capture position {{ captures.length + 1 }}
+              </button>
+              <p class="mt-2 text-xs text-vybes-text-secondary">
+                <template v-if="captureSettling">
+                  Settling — hold the phone in place (or wave it slowly around the spot) for
+                  {{ Number(averagingSeconds) }} s before capturing.
+                </template>
+                <template v-else-if="captures.length">
+                  The EQ corrects the average of {{ captures.length }}
+                  position{{ captures.length === 1 ? '' : 's' }}. Move to another listening
+                  spot and capture again.
+                </template>
+                <template v-else>
+                  Capture the deviation at several listening spots — the EQ then corrects
+                  their average instead of a single point.
+                </template>
+              </p>
+              <div v-if="captures.length" class="flex flex-wrap items-center gap-2 mt-2">
+                <span
+                  v-for="(c, i) in captures"
+                  :key="c.id"
+                  class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-black/30 border border-vybes-border text-vybes-text-primary"
+                >
+                  Position {{ i + 1 }}
+                  <button
+                    class="text-vybes-text-secondary hover:text-vybes-text-primary"
+                    :aria-label="`Remove position ${i + 1}`"
+                    @click="removeCapture(c.id)"
+                  >✕</button>
+                </span>
+                <button class="text-xs text-vybes-text-secondary underline" @click="clearCaptures">
+                  clear all
+                </button>
+              </div>
+            </div>
           </div>
 
           <div>
@@ -319,20 +405,48 @@
 
         <div class="mt-6 pt-4 border-t border-vybes-border">
           <p class="text-sm font-medium mb-2">Microphone calibration</p>
-          <div class="flex flex-wrap items-center gap-3">
-            <label class="btn-secondary cursor-pointer">
-              Import cal file
-              <input type="file" accept=".txt,.cal,.frd,.csv" class="hidden" @change="onCalFileSelected" />
-            </label>
-            <template v-if="calPoints">
-              <span class="text-xs text-vybes-live">{{ calName }}</span>
-              <button class="text-xs text-vybes-text-secondary underline" @click="clearCal">remove</button>
-            </template>
-            <span v-else class="text-xs text-vybes-text-secondary">
-              REW-style text file (“frequency gain” per line). Applied to the mic trace.
-            </span>
+          <div class="grid sm:grid-cols-2 gap-x-6 gap-y-3">
+            <div>
+              <SelectGroup v-model="calSelection" label="Profile">
+                <option value="none">None</option>
+                <option v-for="p in BUILTIN_CAL_PRESETS" :key="p.id" :value="p.id">
+                  {{ p.name }}
+                </option>
+                <option value="file" :disabled="calSelection !== 'file'">Imported file</option>
+              </SelectGroup>
+              <p class="mt-1 text-xs text-vybes-text-secondary">
+                <template v-if="calSelection === 'smartphone-hpf'">
+                  Undoes the low-end roll-off the browser's capture chain applies (~2nd-order
+                  high-pass near 55 Hz). Approximate — an imported measurement of your phone
+                  is always better.
+                </template>
+                <template v-else>
+                  Corrects the mic trace for the microphone's own response, which matters
+                  mostly below 60 Hz.
+                </template>
+              </p>
+            </div>
+            <div>
+              <div class="flex flex-wrap items-center gap-3">
+                <label class="btn-secondary cursor-pointer">
+                  Import cal file
+                  <input type="file" accept=".txt,.cal,.frd,.csv" class="hidden" @change="onCalFileSelected" />
+                </label>
+                <template v-if="calSelection === 'file' && calPoints">
+                  <span class="text-xs text-vybes-live">{{ calName }}</span>
+                  <button class="text-xs text-vybes-text-secondary underline" @click="clearCal">remove</button>
+                </template>
+                <span v-else class="text-xs text-vybes-text-secondary">
+                  REW-style text file (“frequency gain” per line). Applied to the mic trace.
+                </span>
+              </div>
+              <p v-if="calError" class="mt-2 text-xs text-red-400">{{ calError }}</p>
+            </div>
           </div>
-          <p v-if="calError" class="mt-2 text-xs text-red-400">{{ calError }}</p>
+          <p v-if="noiseFloor" class="mt-3 text-xs text-vybes-text-secondary">
+            Mic noise floor sampled at startup — bands within {{ NOISE_FLOOR_MARGIN_DB }} dB of
+            it are excluded from the deviation so the EQ never chases noise.
+          </p>
         </div>
       </CardSection>
     </div>
@@ -343,7 +457,15 @@
       confirm-text="Apply &amp; save"
       @confirm="applyGeneratedEq"
     >
-      <p class="text-sm text-vybes-text-secondary">
+      <p v-if="scopeIsOutput" class="text-sm text-vybes-text-secondary">
+        This replaces the output EQ of
+        <span class="font-semibold text-vybes-text-primary">“{{ scopeOutput?.label }}”</span>
+        in preset
+        <span class="font-semibold text-vybes-text-primary">“{{ activePresetName }}”</span>
+        with the {{ generatedPoints.length }} generated band{{ generatedPoints.length === 1 ? '' : 's' }}
+        and saves it to the device. Any EQ bands currently on that output will be overwritten.
+      </p>
+      <p v-else class="text-sm text-vybes-text-secondary">
         This replaces the preference EQ of preset
         <span class="font-semibold text-vybes-text-primary">“{{ activePresetName }}”</span>
         with the {{ generatedPoints.length }} generated band{{ generatedPoints.length === 1 ? '' : 's' }}
@@ -370,9 +492,13 @@ import {
   parseCalibrationFile,
   calCurveForGrid,
   medianOffset,
+  averageDbArrays,
+  BUILTIN_CAL_PRESETS,
 } from '../rta.js';
+import { TARGET_CURVE_PRESETS, targetCurveForGrid } from '../target-curves.js';
 
 const CAL_STORAGE_KEY = 'vybes-rta-mic-cal';
+const TARGET_STORAGE_KEY = 'vybes-rta-eq-target';
 const RESOLUTION_STORAGE_KEY = 'vybes-rta-resolution';
 const KEEPALIVE_INTERVAL_MS = 2000;
 const MIC_POLL_INTERVAL_MS = 100;
@@ -415,9 +541,36 @@ const frozen = ref(false);
 const averagingSeconds = ref(2);
 const offset = ref(0);
 
-const calPoints = ref(null); // [[freq, gain], ...] from the cal file
+const calPoints = ref(null); // [[freq, gain], ...] from the cal file or preset
 const calName = ref('');
 const calError = ref('');
+const calSelection = ref('none'); // 'none' | builtin preset id | 'file'
+
+// --- Multi-position captures ---
+// Deviation snapshots taken at different listening positions; the EQ
+// generator corrects their power-domain average instead of a single spot.
+const captures = ref([]); // [{ id, delta: number[] on compareGrid }]
+let nextCaptureId = 1;
+// When the mic averaging last restarted (mic start, resolution change,
+// unfreeze, previous capture) - captures are blocked until a full
+// averaging window has passed since, so a half-converged trace can't be
+// snapshotted.
+const settleAnchor = ref(0);
+
+// --- Mic noise floor ---
+// Sampled in the first seconds after the mic starts, but only from frames
+// where the device itself is quiet, so playing music doesn't contaminate
+// it. Deviation bands within the margin of the floor are dropped - they
+// measure noise (mic self-noise + room ambience), not room response.
+const NOISE_FLOOR_MARGIN_DB = 8;
+const NOISE_FLOOR_WINDOW_MS = 3000;
+const NOISE_FLOOR_MIN_FRAMES = 3;
+const NOISE_FLOOR_SRC_QUIET_DB = -70; // device median below this = quiet
+const noiseFloor = ref(null); // { values: Float32Array (dB), grid } or null
+let floorSampling = false;
+let floorDeadline = 0;
+let floorPower = null;
+let floorFrames = 0;
 
 const averagingOptions = [
   { value: 0.5, label: '0.5 s (fast)' },
@@ -544,6 +697,13 @@ async function startMic() {
   micAvgPower = new Float32Array(displayGrid.value.centers.length);
   lastMicEmaAt = 0;
   micActive.value = true;
+  settleAnchor.value = Date.now();
+  // Fresh mic session: re-sample the noise floor
+  noiseFloor.value = null;
+  floorSampling = true;
+  floorDeadline = Date.now() + NOISE_FLOOR_WINDOW_MS;
+  floorPower = new Float32Array(displayGrid.value.centers.length);
+  floorFrames = 0;
 }
 
 function stopMic() {
@@ -558,6 +718,7 @@ function stopMic() {
   analyser = null;
   micActive.value = false;
   micDb.value = null;
+  floorSampling = false;
 }
 
 function toggleMic() {
@@ -581,6 +742,7 @@ function pollTick() {
   if (calGridCurve.value) {
     for (let i = 0; i < bands.length; i++) bands[i] -= calGridCurve.value[i];
   }
+  if (floorSampling) sampleNoiseFloor(bands);
   const now = Date.now();
   emaUpdate(micAvgPower, bands, lastMicEmaAt ? now - lastMicEmaAt : 1000);
   lastMicEmaAt = now;
@@ -597,18 +759,80 @@ function pollTick() {
   }
 }
 
+// Accumulate quiet frames into the floor estimate; a frame counts only when
+// the device itself is silent, so music playing during mic start doesn't
+// masquerade as the floor. Called from pollTick with cal-corrected bands.
+function sampleNoiseFloor(bands) {
+  const quiet =
+    !sourceLive.value ||
+    (sourceCompareDb.value && medianDb(sourceCompareDb.value) <= NOISE_FLOOR_SRC_QUIET_DB);
+  if (quiet) {
+    for (let i = 0; i < bands.length; i++) floorPower[i] += Math.pow(10, bands[i] / 10);
+    floorFrames++;
+  }
+  if (Date.now() < floorDeadline) return;
+  floorSampling = false;
+  if (floorFrames < NOISE_FLOOR_MIN_FRAMES) return; // never quiet - no gating
+  const values = new Float32Array(floorPower.length);
+  for (let i = 0; i < values.length; i++) {
+    values[i] = floorPower[i] > 1e-12 ? 10 * Math.log10(floorPower[i] / floorFrames) : -120;
+  }
+  noiseFloor.value = { values, grid: displayGrid.value };
+}
+
+function medianDb(values) {
+  const arr = Array.from(values).sort((a, b) => a - b);
+  const mid = Math.floor(arr.length / 2);
+  return arr.length % 2 ? arr[mid] : (arr[mid - 1] + arr[mid]) / 2;
+}
+
+const floorCompareDb = computed(() =>
+  noiseFloor.value
+    ? aggregateBands(noiseFloor.value.values, noiseFloor.value.grid, compareGrid.value)
+    : null
+);
+
 // Changing resolution reshapes the mic averaging buffer, so restart it (the
 // trace re-converges within the averaging window). Unfreeze - a frozen
-// deviation from another grid no longer matches the new one.
+// deviation from another grid no longer matches the new one. Abort any
+// in-flight floor sampling: its buffer is on the old grid.
 watch(resolution, (v) => {
   localStorage.setItem(RESOLUTION_STORAGE_KEY, String(Number(v)));
   frozen.value = false;
   micAvgPower = new Float32Array(displayGrid.value.centers.length);
   lastMicEmaAt = 0;
   micDb.value = null;
+  settleAnchor.value = Date.now();
+  floorSampling = false;
 });
 
-// --- Calibration file handling ---
+// Resuming from freeze snaps the EMA to a single instantaneous frame, so
+// require a fresh settle window before the next capture.
+watch(frozen, (f) => {
+  if (!f) settleAnchor.value = Date.now();
+});
+
+// --- Calibration handling (built-in profile or imported file) ---
+// 'file' is only entered via the import handler, which sets the points
+// itself; this watch covers 'none' and the built-in presets.
+watch(calSelection, (sel, prev) => {
+  if (sel === prev) return;
+  calError.value = '';
+  if (sel === 'none') {
+    calPoints.value = null;
+    calName.value = '';
+    localStorage.removeItem(CAL_STORAGE_KEY);
+    return;
+  }
+  const preset = BUILTIN_CAL_PRESETS.find((p) => p.id === sel);
+  if (!preset) return;
+  calPoints.value = preset.points;
+  calName.value = preset.name;
+  try {
+    localStorage.setItem(CAL_STORAGE_KEY, JSON.stringify({ presetId: preset.id }));
+  } catch (e) { /* storage full or blocked - cal still applies this session */ }
+});
+
 function onCalFileSelected(event) {
   calError.value = '';
   const file = event.target.files?.[0];
@@ -623,6 +847,7 @@ function onCalFileSelected(event) {
     }
     calPoints.value = points;
     calName.value = file.name;
+    calSelection.value = 'file';
     try {
       localStorage.setItem(CAL_STORAGE_KEY, JSON.stringify({ name: file.name, points }));
     } catch (e) { /* storage full or blocked - cal still applies this session */ }
@@ -631,9 +856,7 @@ function onCalFileSelected(event) {
 }
 
 function clearCal() {
-  calPoints.value = null;
-  calName.value = '';
-  localStorage.removeItem(CAL_STORAGE_KEY);
+  calSelection.value = 'none'; // the watch clears the points and storage
 }
 
 // --- Chart geometry ---
@@ -718,14 +941,61 @@ const deltaValues = computed(() => {
   const n = compareGrid.value.centers.length;
   const out = new Array(n);
   for (let i = 0; i < n; i++) {
-    out[i] = sourceCompareDb.value[i] <= -85 || micCompareDb.value[i] <= -110
-      ? NaN
-      : micCompareDb.value[i] - offset.value - sourceCompareDb.value[i];
+    const gated =
+      sourceCompareDb.value[i] <= -85 ||
+      micCompareDb.value[i] <= -110 ||
+      (floorCompareDb.value !== null &&
+        micCompareDb.value[i] < floorCompareDb.value[i] + NOISE_FLOOR_MARGIN_DB);
+    out[i] = gated ? NaN : micCompareDb.value[i] - offset.value - sourceCompareDb.value[i];
   }
   return out;
 });
 
 const clampDelta = (d) => Math.max(-DELTA_RANGE_DB, Math.min(DELTA_RANGE_DB, d));
+
+// --- Position captures ---
+const captureSettling = computed(
+  () =>
+    micActive.value && sourceLive.value && !frozen.value &&
+    nowTick.value - settleAnchor.value < Number(averagingSeconds.value) * 1000
+);
+const captureReady = computed(
+  () =>
+    micActive.value && sourceLive.value && !frozen.value &&
+    !!deltaValues.value && !captureSettling.value
+);
+
+function capturePosition() {
+  if (!captureReady.value) return;
+  captures.value = [...captures.value, { id: nextCaptureId++, delta: [...deltaValues.value] }];
+  // Force a fresh settle window - the user needs time to move anyway
+  settleAnchor.value = Date.now();
+}
+
+function removeCapture(id) {
+  captures.value = captures.value.filter((c) => c.id !== id);
+}
+
+function clearCaptures() {
+  captures.value = [];
+}
+
+const averagedDelta = computed(() =>
+  captures.value.length ? averageDbArrays(captures.value.map((c) => c.delta)) : null
+);
+
+// The deviation the EQ generator corrects: the position average when
+// captures exist, otherwise the live (frozen) trace.
+const analysisDelta = computed(() => averagedDelta.value ?? deltaValues.value);
+const analysisReady = computed(() =>
+  captures.value.length ? !!averagedDelta.value : frozen.value && !!deltaValues.value
+);
+
+// Captures live on the compare grid; a resolution or native-grid change
+// means their band layout no longer matches.
+watch(compareGrid, () => {
+  captures.value = [];
+});
 
 // Bar fills are bound per-bar, so they can't come from a stylesheet rule.
 // Kept in sync with the theme amber (--vybes-accent) by hand.
@@ -877,7 +1147,7 @@ const deltaHover = computed(() => {
   };
 });
 
-// --- Diff → parametric EQ conversion (available while frozen) ---
+// --- Diff → parametric EQ conversion (frozen trace or captured average) ---
 const eqGen = reactive({
   tilt: -0.5, // dB/octave, pivoted at 1kHz
   strength: 100, // % of the deviation to correct
@@ -888,18 +1158,150 @@ const eqGen = reactive({
   maxBands: 8,
 });
 
+// --- Target curve the correction aims for ---
+const eqTarget = reactive({
+  mode: 'tilt', // 'tilt' | 'flat' | preset id | 'custom'
+  customPoints: null, // [[freq, gain], ...] from an imported target file
+  customName: '',
+});
+const targetError = ref('');
+
+// Target level per band of the compare grid; null = use the tilt slider.
+const targetGridCurve = computed(() => {
+  if (eqTarget.mode === 'tilt') return null;
+  if (eqTarget.mode === 'flat') return compareGrid.value.centers.map(() => 0);
+  const points =
+    eqTarget.mode === 'custom'
+      ? eqTarget.customPoints
+      : TARGET_CURVE_PRESETS.find((c) => c.id === eqTarget.mode)?.points;
+  // Custom selected with nothing imported yet: behave as flat
+  if (!points) return compareGrid.value.centers.map(() => 0);
+  return targetCurveForGrid(points, compareGrid.value);
+});
+
+const targetModeHelp = computed(
+  () =>
+    ({
+      tilt: '0 reproduces the source exactly; negative tilts the target down toward the treble (warmer). In-room responses corrected fully flat often sound bright — −0.5 to −1 is a common preference.',
+      flat: 'Corrects the in-room response dead flat. Often sounds bright and thin — most listeners prefer a tilted or Harman-style target.',
+      harman: 'Bass shelf rising to +6.5 dB at 20 Hz, gently falling treble — the preferred in-room response from Harman’s listening research.',
+      bk: 'Flat through bass and mids, then −1 dB/octave above 400 Hz — B&K’s classic room recommendation.',
+      custom: eqTarget.customPoints
+        ? 'Imported target, interpolated onto the analyzer bands and re-centered around the mids.'
+        : 'Import a REW-style target file (“frequency gain” per line) to use it here.',
+    })[eqTarget.mode] ?? ''
+);
+
+function onTargetFileSelected(event) {
+  targetError.value = '';
+  const file = event.target.files?.[0];
+  event.target.value = '';
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const points = parseCalibrationFile(String(reader.result));
+    if (!points) {
+      targetError.value = 'No “frequency gain” pairs found in that file.';
+      return;
+    }
+    eqTarget.customPoints = points;
+    eqTarget.customName = file.name;
+  };
+  reader.readAsText(file);
+}
+
+watch(eqTarget, () => {
+  try {
+    localStorage.setItem(TARGET_STORAGE_KEY, JSON.stringify(eqTarget));
+  } catch (e) { /* storage full or blocked - selection still applies this session */ }
+});
+
 const activePresetName = ref('');
 const showApplyModal = ref(false);
 const applyState = reactive({ busy: false, message: '', error: false });
 
-// Desired EQ gain per band: negate the deviation from the tilted target,
+// --- Correction scope: the shared input EQ or one output channel ---
+// Picking an output solos it on the device (keepalive-driven, so a closed
+// tab can't leave one speaker stuck alone) and routes the generated bands
+// to that output's EQ instead of the input EQ.
+const MAX_OUTPUT_EQ_BANDS = 10; // MAX_OUTPUT_PEQ on the device
+const scope = ref('input'); // 'input' | output index as a string
+const outputs = ref([]); // enabled outputs of the active preset
+const scopeIsOutput = computed(() => scope.value !== 'input');
+const scopeOutput = computed(() =>
+  scopeIsOutput.value
+    ? outputs.value.find((o) => o.index === Number(scope.value)) ?? null
+    : null
+);
+
+async function loadOutputs(presetName) {
+  if (!presetName) return;
+  try {
+    const p = await apiClient.getPreset(presetName);
+    // hp/lp either carry their own frequency or link a shared crossover point
+    const freqOf = (f) => {
+      if (!f || f.mode === 'off') return null;
+      if (Number.isFinite(f.freq)) return f.freq;
+      const x = (p.crossovers || []).find((c) => c.id === f.xover);
+      return x ? x.freq : null;
+    };
+    outputs.value = (p.outputs || [])
+      .map((o, index) => ({
+        index,
+        label: o.label,
+        enabled: o.enabled,
+        hpHz: freqOf(o.hp),
+        lpHz: freqOf(o.lp),
+      }))
+      .filter((o) => o.enabled);
+  } catch (e) {
+    outputs.value = [];
+  }
+  if (scopeIsOutput.value && !outputs.value.some((o) => o.index === Number(scope.value))) {
+    scope.value = 'input';
+  }
+}
+
+// A preset switch changes the output list and invalidates any in-flight
+// per-output measurement.
+watch(activePresetName, (name) => {
+  scope.value = 'input';
+  loadOutputs(name);
+});
+
+// Switching scope changes what the mic hears (one speaker vs all), so
+// captures and freeze no longer apply. Solo interest goes out immediately;
+// the keepalive timer sustains it while the scope stays selected.
+watch(scope, (s, prev) => {
+  captures.value = [];
+  frozen.value = false;
+  settleAnchor.value = Date.now();
+  if (s !== 'input') {
+    apiClient.sendLiveMessage(`solo:${s}`);
+    const o = scopeOutput.value;
+    // Correct only inside the driver's passband - chasing the crossover
+    // slopes would burn the whole boost budget on rolloff.
+    eqGen.loHz = o?.hpHz ? Math.round(Math.min(500, Math.max(20, o.hpHz))) : 25;
+    eqGen.hiHz = o?.lpHz ? Math.round(Math.min(20000, Math.max(1000, o.lpHz))) : 10000;
+    // The output EQ path has no automatic headroom compensation
+    eqGen.maxBoost = Math.min(eqGen.maxBoost, 3);
+    eqGen.maxBands = Math.min(eqGen.maxBands, MAX_OUTPUT_EQ_BANDS);
+  } else if (prev !== 'input') {
+    apiClient.sendLiveMessage('solo:-1');
+    eqGen.loHz = 25;
+    eqGen.hiHz = 10000;
+  }
+});
+
+// Desired EQ gain per band: negate the deviation from the target curve,
 // scale by strength, clamp to the boost/cut limits. NaN = leave alone.
 const correctionTarget = computed(() => {
-  if (!frozen.value || !deltaValues.value) return null;
+  if (!analysisReady.value || !analysisDelta.value) return null;
+  const curve = targetGridCurve.value;
   return compareGrid.value.centers.map((fc, i) => {
-    const d = deltaValues.value[i];
+    const d = analysisDelta.value[i];
     if (!Number.isFinite(d) || fc < eqGen.loHz || fc > eqGen.hiHz) return NaN;
-    const target = eqGen.tilt * Math.log2(fc / 1000);
+    const target = curve ? curve[i] : eqGen.tilt * Math.log2(fc / 1000);
     const c = -(d - target) * (eqGen.strength / 100);
     return Math.min(eqGen.maxBoost, Math.max(-eqGen.maxCut, c));
   });
@@ -922,12 +1324,24 @@ const correctionPath = computed(() => {
   return `M ${seg.join(' L ')}`;
 });
 
-const predictedPath = computed(() => {
-  if (!generatedPoints.value.length || !deltaValues.value) return '';
+const averagePath = computed(() => {
+  if (!averagedDelta.value) return '';
   const grid = compareGrid.value;
   const seg = [];
   for (let i = 0; i < grid.centers.length; i++) {
-    const d = deltaValues.value[i];
+    const d = averagedDelta.value[i];
+    if (!Number.isFinite(d)) continue;
+    seg.push(`${xForFreq(grid.centers[i]).toFixed(1)},${deltaDbToY(clampDelta(d)).toFixed(1)}`);
+  }
+  return seg.length > 1 ? `M ${seg.join(' L ')}` : '';
+});
+
+const predictedPath = computed(() => {
+  if (!generatedPoints.value.length || !analysisDelta.value) return '';
+  const grid = compareGrid.value;
+  const seg = [];
+  for (let i = 0; i < grid.centers.length; i++) {
+    const d = analysisDelta.value[i];
     if (!Number.isFinite(d)) continue;
     const db = clampDelta(d + peqSumDb(generatedPoints.value, grid.centers[i]));
     seg.push(`${xForFreq(grid.centers[i]).toFixed(1)},${deltaDbToY(db).toFixed(1)}`);
@@ -942,9 +1356,15 @@ async function applyGeneratedEq() {
   applyState.message = '';
   const points = generatedPoints.value.map((p, id) => ({ id, freq: p.freq, gain: p.gain, q: p.q }));
   try {
-    await apiClient.savePrefEqSet(activePresetName.value, points);
-    applyState.error = false;
-    applyState.message = `Saved ${points.length} band${points.length === 1 ? '' : 's'} to “${activePresetName.value}”.`;
+    if (scopeIsOutput.value) {
+      await apiClient.saveOutputEq(activePresetName.value, Number(scope.value), points);
+      applyState.error = false;
+      applyState.message = `Saved ${points.length} band${points.length === 1 ? '' : 's'} to the “${scopeOutput.value?.label}” output EQ.`;
+    } else {
+      await apiClient.savePrefEqSet(activePresetName.value, points);
+      applyState.error = false;
+      applyState.message = `Saved ${points.length} band${points.length === 1 ? '' : 's'} to “${activePresetName.value}”.`;
+    }
   } catch (err) {
     applyState.error = true;
     applyState.message = `Failed to apply EQ: ${err.message}`;
@@ -960,14 +1380,38 @@ onMounted(() => {
   // Stored calibration survives reloads
   try {
     const stored = JSON.parse(localStorage.getItem(CAL_STORAGE_KEY));
-    if (stored?.points?.length >= 2) {
+    const preset = stored?.presetId
+      ? BUILTIN_CAL_PRESETS.find((p) => p.id === stored.presetId)
+      : null;
+    if (preset) {
+      calPoints.value = preset.points;
+      calName.value = preset.name;
+      calSelection.value = preset.id;
+    } else if (stored?.points?.length >= 2) {
       calPoints.value = stored.points;
       calName.value = stored.name || 'stored calibration';
+      calSelection.value = 'file';
     } else if (stored?.curve?.length === 31) {
       // Pre-resolution storage format: per-band corrections on the
       // 1/3-octave grid. Reconstruct points at those centers.
       calPoints.value = makeBandGrid(3).centers.map((fc, i) => [fc, stored.curve[i]]);
       calName.value = stored.name || 'stored calibration';
+      calSelection.value = 'file';
+    }
+  } catch (e) { /* ignore corrupt storage */ }
+
+  // Stored EQ target selection
+  try {
+    const t = JSON.parse(localStorage.getItem(TARGET_STORAGE_KEY));
+    if (t && typeof t.mode === 'string') {
+      if (Array.isArray(t.customPoints) && t.customPoints.length >= 2) {
+        eqTarget.customPoints = t.customPoints;
+        eqTarget.customName = typeof t.customName === 'string' ? t.customName : 'stored target';
+      }
+      const valid = ['tilt', 'flat', 'custom', ...TARGET_CURVE_PRESETS.map((c) => c.id)];
+      if (valid.includes(t.mode) && (t.mode !== 'custom' || eqTarget.customPoints)) {
+        eqTarget.mode = t.mode;
+      }
     }
   } catch (e) { /* ignore corrupt storage */ }
 
@@ -982,12 +1426,13 @@ onMounted(() => {
     })
     .catch(() => { /* device offline - the apply button stays disabled */ });
 
-  // Keepalive: tells the device to stream RTA frames while this page is open
+  // Keepalive: tells the device to stream RTA frames while this page is
+  // open, and sustains the output solo while one is being measured.
   apiClient.sendLiveMessage('rta:keepalive');
-  keepaliveTimer = setInterval(
-    () => apiClient.sendLiveMessage('rta:keepalive'),
-    KEEPALIVE_INTERVAL_MS
-  );
+  keepaliveTimer = setInterval(() => {
+    apiClient.sendLiveMessage('rta:keepalive');
+    if (scope.value !== 'input') apiClient.sendLiveMessage(`solo:${scope.value}`);
+  }, KEEPALIVE_INTERVAL_MS);
 
   micPollTimer = setInterval(pollTick, MIC_POLL_INTERVAL_MS);
 
@@ -1002,6 +1447,9 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  // Leaving the page ends any per-output measurement right away rather than
+  // waiting out the device's keepalive timeout.
+  if (scope.value !== 'input') apiClient.sendLiveMessage('solo:-1');
   if (unsubscribeLive) unsubscribeLive();
   clearInterval(keepaliveTimer);
   clearInterval(micPollTimer);
@@ -1036,6 +1484,14 @@ onUnmounted(() => {
 
 .trace-correction {
   stroke: #e879f9; /* magenta: proposed correction, distinct from both traces */
+}
+
+.trace-average {
+  stroke: #a78bfa; /* violet: average of the captured positions */
+}
+
+.legend-average {
+  color: #a78bfa;
 }
 
 .trace-predicted {
