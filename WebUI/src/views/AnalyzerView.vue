@@ -479,6 +479,7 @@
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue';
 import apiClient from '../api-client.js';
 import { useGeneratorStore } from '../stores/generator.js';
+import { usePresetStore } from '../stores/preset.js';
 import CardSection from '../components/shared/CardSection.vue';
 import SelectGroup from '../components/shared/SelectGroup.vue';
 import RangeSlider from '../components/shared/RangeSlider.vue';
@@ -584,6 +585,9 @@ const micSupported = typeof navigator !== 'undefined' && !!navigator.mediaDevice
 
 // "pink noise" in the helper text opens the generator dock ready to start
 const generator = useGeneratorStore();
+// Applying EQ writes around the preset store, whose cached copy would
+// otherwise stay stale until a full page reload
+const presetStore = usePresetStore();
 function openNoiseGenerator() {
   generator.setSource('noise');
   generator.expanded = true;
@@ -1311,6 +1315,9 @@ const generatedPoints = computed(() => {
   if (!correctionTarget.value) return [];
   return fitPeqPoints(compareGrid.value.centers, correctionTarget.value, {
     maxBands: Math.round(eqGen.maxBands),
+    boostLimit: eqGen.maxBoost,
+    cutLimit: eqGen.maxCut,
+    bandsPerOctave: compareGrid.value.bandsPerOctave,
   });
 });
 
@@ -1364,6 +1371,11 @@ async function applyGeneratedEq() {
       await apiClient.savePrefEqSet(activePresetName.value, points);
       applyState.error = false;
       applyState.message = `Saved ${points.length} band${points.length === 1 ? '' : 's'} to “${activePresetName.value}”.`;
+    }
+    // The preset editor trusts the store's cached copy; resync it or the
+    // applied bands stay invisible there until a full page reload.
+    if (presetStore.presetName === activePresetName.value) {
+      await presetStore.refresh();
     }
   } catch (err) {
     applyState.error = true;

@@ -197,6 +197,59 @@ describe('fitPeqPoints', () => {
     }
   })
 
+  it('never places two bands within 1/3 octave of each other', () => {
+    // A sharp notch flanked by boosts: the shape that used to make the
+    // greedy loop chase its own subtraction artifacts and stack duplicate
+    // bands at one center.
+    const correction = freqs.map((f) => {
+      if (f > 300 && f < 380) return -12
+      if (f > 200 && f < 500) return 6
+      return 0
+    })
+    const points = fitPeqPoints(freqs, correction)
+    for (let i = 0; i < points.length; i++) {
+      for (let j = i + 1; j < points.length; j++) {
+        const spacing = Math.abs(Math.log2(points[i].freq / points[j].freq))
+        expect(spacing, `${points[i].freq} Hz vs ${points[j].freq} Hz`)
+          .toBeGreaterThanOrEqual(1 / 3 - 0.01)
+      }
+    }
+  })
+
+  it('bounds each individual band by boostLimit/cutLimit', () => {
+    // Alternating-sign correction at adjacent centers: strongly coupled
+    // neighbors that full-step refinement used to drive to opposite clamps.
+    const correction = freqs.map((f, i) =>
+      f > 100 && f < 2000 ? (i % 2 ? 6 : -12) : 0
+    )
+    const points = fitPeqPoints(freqs, correction, { boostLimit: 6, cutLimit: 12 })
+    expect(points.length).toBeGreaterThanOrEqual(1)
+    for (const p of points) {
+      expect(p.gain).toBeLessThanOrEqual(6)
+      expect(p.gain).toBeGreaterThanOrEqual(-12)
+    }
+  })
+
+  it('scales the width estimate with the grid resolution', () => {
+    // The same one-octave bell sampled on a 1/12-octave grid: with the
+    // grid resolution passed in, the fitted Q must stay near the true Q
+    // instead of coming out ~4x too wide.
+    const fine = Array.from({ length: 121 }, (_, i) => 20 * Math.pow(2, i / 12))
+    const target = { freq: 1000, gain: 6, q: octavesToQ(1) }
+    const correction = fine.map((f) => peakingBellDb(f, target.freq, target.gain, target.q))
+
+    const points = fitPeqPoints(fine, correction, { bandsPerOctave: 12 })
+    expect(points.length).toBeGreaterThanOrEqual(1)
+    const main = points.reduce((a, b) => (Math.abs(b.gain) > Math.abs(a.gain) ? b : a))
+    expect(main.q).toBeGreaterThan(target.q / 2)
+    expect(main.q).toBeLessThan(target.q * 2)
+
+    for (let i = 0; i < fine.length; i++) {
+      const fitted = peqSumDb(points, fine[i])
+      expect(Math.abs(fitted - correction[i]), `at ${fine[i].toFixed(0)} Hz`).toBeLessThan(1.5)
+    }
+  })
+
   it('returns points sorted by frequency with rounded values', () => {
     const correction = freqs.map(
       (f) => peakingBellDb(f, 100, 8, 1.5) + peakingBellDb(f, 5000, -7, 1.5)
