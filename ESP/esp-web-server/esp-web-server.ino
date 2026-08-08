@@ -57,6 +57,20 @@ void setup() {
 
     bool standalone = setupWiFi();
 
+    // Modem power-save drops multicast while the radio sleeps, so mDNS
+    // queries can go unanswered until the resolver retries. Mains-powered
+    // device: trade the idle current for a radio that hears every query.
+    WiFi.setSleep(false);
+
+    // macOS/iOS resolvers query A and AAAA together and wait a full 5s for
+    // the AAAA answer this responder otherwise never sends (no NSEC denial
+    // either) - every vybes.local lookup stalled 5s and Safari surfaced
+    // "Load failed". A link-local IPv6 address gives mDNS a real AAAA
+    // record to answer with.
+    if (!standalone) {
+        WiFi.enableIpV6();
+    }
+
     startMdns(); // "<deviceName>.local", see utilities.cpp
 
     setupWebSocket();

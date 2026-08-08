@@ -140,6 +140,12 @@ static void broadcastToAllListeners(const char *message) {
 #endif
 }
 
+// Do NOT send WS ping frames from the server: the browser's automatic pong
+// is dispatched to PsychicHttp's frame handler (esp-idf only intercepts
+// inbound PING/CLOSE itself), whose httpd_ws_recv_frame call errors on
+// control frames, and the non-OK return makes esp-idf close the socket.
+// Verified against PsychicHttp 1.2.1: every ping killed the connection.
+
 void broadcastWebSocket(const char* message) {
     broadcastToAllListeners(message);
     DebugSerial.print("WebSocket broadcast: ");

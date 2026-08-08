@@ -273,6 +273,12 @@ static void registerRoutes(PsychicHttpServer &s, PsychicWebSocketHandler *ws) {
 void setupWebServer() {
     // ~35 routes per listener (esp-idf's default cap is 8)
     server.config.max_uri_handlers = 60;
+    // Evict the least-recently-active connection instead of refusing new
+    // ones - browsers park idle keep-alive sockets that would otherwise
+    // starve the listener. An idle live-updates websocket can be the
+    // eviction victim during a fetch burst; the client auto-reconnects
+    // within ~1s, which beats hard-refusing the burst.
+    server.config.lru_purge_enable = true;
     server.listen(80);
     registerRoutes(server, &wsHttp);
     DebugSerial.println("HTTP server started on port 80");
@@ -280,8 +286,13 @@ void setupWebServer() {
 #ifdef CONFIG_IDF_TARGET_ESP32S3
     if (loadCertificates()) {
         serverHttps.ssl_config.httpd.max_uri_handlers = 60;
-        // Each TLS connection costs ~45KB of heap - keep the count low
-        serverHttps.ssl_config.httpd.max_open_sockets = 3;
+        // Each TLS connection costs ~45KB of heap - keep the count low.
+        // 4 = the websocket plus a browser's realistic keep-alive pool;
+        // 3 left parallel page-load fetches refused outright.
+        serverHttps.ssl_config.httpd.max_open_sockets = 4;
+        // Same LRU eviction as the HTTP listener - vital here, where the
+        // socket budget is this tight.
+        serverHttps.ssl_config.httpd.lru_purge_enable = true;
         // Every esp-idf httpd instance needs its own control socket; the
         // default (32768) is already taken by the HTTP listener above
         serverHttps.ssl_config.httpd.ctrl_port = 32769;
