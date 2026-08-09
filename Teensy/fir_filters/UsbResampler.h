@@ -43,6 +43,29 @@
 #include <Arduino.h>     // github.com/PaulStoffregen/cores/blob/master/teensy4/Arduino.h
 //#define DEBUG_RESAMPLER  //activates debug output
 
+// Vybes: on the native test host the Arduino.h shim doesn't provide the
+// type-generic min/max/abs macros or TWO_PI this code relies on (Teensy's
+// real Arduino.h does). Include the system math headers first so the
+// function-style macros can't poison their declarations. abs must stay the
+// type-generic macro - <cstdlib>'s int abs() would silently truncate the
+// double step ratios in addToSampleDiff.
+#ifdef VYBES_NATIVE
+#include <math.h>
+#include <stdlib.h>
+#ifndef TWO_PI
+#define TWO_PI 6.283185307179586476925286766559
+#endif
+#ifndef min
+#define min(a, b) ((a) < (b) ? (a) : (b))
+#endif
+#ifndef max
+#define max(a, b) ((a) > (b) ? (a) : (b))
+#endif
+#ifndef abs
+#define abs(x) ((x) > 0 ? (x) : -(x))
+#endif
+#endif // VYBES_NATIVE
+
 #define USB_RESAMPLER_MAX_FILTER_SAMPLES 10242 //=512*20 + 2: fits oversampling 512 at the min half filter length of 20
 #define USB_RESAMPLER_NO_EXACT_KAISER_SAMPLES 1025
 #define USB_RESAMPLER_MAX_HALF_FILTER_LENGTH 80

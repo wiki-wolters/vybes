@@ -28,6 +28,7 @@
  */
 
 #include "UsbResampler.h"
+
 #include <math.h>
 
 UsbResampler::UsbResampler(float attenuation, int32_t minHalfFilterLength, int32_t maxHalfFilterLength, StepAdaptionParameters settings): _targetAttenuation(attenuation)
@@ -197,6 +198,14 @@ void UsbResampler::configure(float fs, float newFs){
         else{
             kaiserBeta=0.;
         }
+    }
+    // Vybes: this oversampling clamp was inside the else branch above, where
+    // upstream (MAX_FILTER_SAMPLES 40961) never needs it for the fs<=newFs
+    // path since minHalfFilterLength*1024+1 = 20481 always fit. With the
+    // shrunken table it must guard BOTH branches or setFilter overflows the
+    // filter array by ~41KB (20481 floats into 10242) - which is exactly what
+    // happened: heap corruption at boot and permanent silence.
+    {
         int32_t noSamples=_halfFilterLength*_overSamplingFactor+1;
         if (noSamples > USB_RESAMPLER_MAX_FILTER_SAMPLES){
             int32_t f = (noSamples-1)/(USB_RESAMPLER_MAX_FILTER_SAMPLES-1)+1;
