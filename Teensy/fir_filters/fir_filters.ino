@@ -436,6 +436,12 @@ extern volatile uint32_t usb_audio_overrun_count;
 extern volatile uint8_t usb_audio_rx_queue_count;
 
 void loop() {
+#if USB_INPUT_ASYNC
+  // Rebuild the USB resampler here (not in the audio interrupt) if its
+  // kill switch tripped; no-op otherwise. Prints a diagnostic when it runs.
+  USB_in.healPending();
+#endif
+
   // Optional: Print some diagnostics every 20 seconds
   static unsigned long lastPrint = 0;
 

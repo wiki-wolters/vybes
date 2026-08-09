@@ -42,6 +42,11 @@ public:
     uint32_t starves() const { return starveCount; }              // blocks padded with silence mid-stream
     uint32_t recoveries() const { return recoveryCount; }         // resampler kill-switch self-heals
 
+    // Call from loop(): runs the expensive resampler rebuild after a
+    // kill-switch trip outside the audio interrupt (update() outputs
+    // silence meanwhile). No-op when nothing needs healing.
+    void healPending();
+
     // Called by the core fork's usb_audio_rx_hook (USB interrupt context).
     // Returns nonzero when the packet was consumed.
     static int rxHook(const int16_t* lr, unsigned int frames);
@@ -61,6 +66,9 @@ private:
     double maxLatencyS;
     uint32_t starveCount;
     uint32_t recoveryCount;
+    volatile bool healNeeded;
+    float stepAtKillPpm;
+    uint32_t updatesSinceFix;
 };
 
 #endif // ASYNC_AUDIO_INPUT_USB_H

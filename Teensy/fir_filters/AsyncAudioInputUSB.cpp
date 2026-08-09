@@ -57,7 +57,10 @@ AsyncAudioInputUSB::AsyncAudioInputUSB(bool dither, bool noiseshaping,
       targetLatencyS(TARGET_LATENCY_S),
       maxLatencyS(MAX_LATENCY_S),
       starveCount(0),
-      recoveryCount(0)
+      recoveryCount(0),
+      healNeeded(false),
+      stepAtKillPpm(0.0f),
+      updatesSinceFix(0)
 {
     ring = new UsbRxRing(PREFILL_SAMPLES, STOP_GAP_US);
     resampler = new UsbResampler(attenuation, minHalfFilterLength, maxHalfFilterLength);
@@ -77,6 +80,26 @@ AsyncAudioInputUSB::~AsyncAudioInputUSB()
     delete quantizer[1];
     delete resampler;
     delete ring;
+}
+
+// Called from loop(): performs the expensive resampler heal outside the
+// audio interrupt. While healNeeded is set, update() skips the resampler
+// (initialized() is false), so configure() can rebuild the tables with
+// interrupts enabled; only the final resync runs atomically.
+void AsyncAudioInputUSB::healPending()
+{
+    if (!healNeeded || ring == nullptr || resampler == nullptr) return;
+    Serial.print("USB in: resampler heal (step was ");
+    Serial.print(stepAtKillPpm, 1);
+    Serial.print(" ppm, buffered ");
+    Serial.print(bufferedMs(), 1);
+    Serial.println(" ms)");
+    resampler->configure(USB_NOMINAL_HZ, AUDIO_SAMPLE_RATE_EXACT);
+    __disable_irq();
+    resyncToTarget();
+    recoveryCount++;
+    healNeeded = false;
+    __enable_irq();
 }
 
 float AsyncAudioInputUSB::bufferedMs() const
@@ -157,12 +180,14 @@ void AsyncAudioInputUSB::update(void)
     }
     if (!resampler->initialized()) {
         // The step PID's kill switch fired (addToSampleDiff deactivates on
-        // >1% step requests). Self-heal like AsyncAudioInputSPDIF3's
-        // configure(): rebuild the filter and restart from the target fill.
-        // One expensive update (~ms), silence until the next block.
-        resampler->configure(USB_NOMINAL_HZ, AUDIO_SAMPLE_RATE_EXACT);
-        resyncToTarget();
-        recoveryCount++;
+        // >1% step requests). Healing means re-running configure(), a
+        // tens-of-ms Kaiser recomputation that would stall EVERY audio
+        // stream if done here - flag it for healPending() in loop() and
+        // output silence until it completes.
+        if (!healNeeded) {
+            healNeeded = true;
+            stepAtKillPpm = (float)((resampler->getStep() - 1.0) * 1e6);
+        }
         return;
     }
     if (ring->justStarted()) {
@@ -171,6 +196,15 @@ void AsyncAudioInputUSB::update(void)
         resyncToTarget();
     }
     servo();
+
+    // Anti-windup, the counterpart of AsyncAudioInputSPDIF3's settled
+    // fixStep(): with the error settled, periodically bake the adapted step
+    // in as the new baseline and clear the PID integrator, so slow integral
+    // windup can never creep toward the 1% kill switch.
+    if (++updatesSinceFix >= 4096) { // ~12s
+        updatesSinceFix = 0;
+        if (fabsf(diffFiltered) < 0.0005f) resampler->fixStep();
+    }
 
     audio_block_t* left = allocate();
     if (left == nullptr) return;

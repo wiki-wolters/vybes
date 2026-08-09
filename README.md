@@ -246,11 +246,12 @@ web UI assets, TLS certificates, plus presets saved at runtime).
    ./ESP/make-certs.sh
    ```
 
-3. Build the web UI and copy it into the ESP's filesystem staging directory
-   (`ESP/esp-web-server/data/dist`):
+3. Build the web UI - the ESP's filesystem staging directory
+   (`ESP/esp-web-server/data/dist`) is a symlink to `WebUI/dist`, so the
+   build lands there directly:
 
    ```sh
-   cd WebUI && npm run deploy && cd ..
+   cd WebUI && npm run build && cd ..
    ```
 
 4. Pack `ESP/esp-web-server/data` into a LittleFS image and flash it:
