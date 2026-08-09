@@ -13,6 +13,7 @@
 #include "IntervalTimer.h"
 #include "RtaFFT4096.h"
 #include "ProbeSource.h"
+#include "AsyncAudioInputUSB.h"
 
 // V1 8-output architecture (docs/CHANNEL_ARCHITECTURE.md): a shared stereo
 // input stage (source mixing + input EQ) feeds eight identical output
@@ -59,10 +60,20 @@ AudioSynthWaveform       Tone_generator;
 AudioSynthNoisePink      pink1;
 ProbeSource              probeSource; // auto delay alignment chirps
 
+// USB input engine: 1 = AsyncAudioInputUSB (ring buffer + resampler, immune
+// to host clock drift and packet burst jitter; needs the core_fork packet
+// hook), 0 = the stock AudioInputUSB running on the core_fork's deepened
+// receive queue. Both are stereo with identical patchcords.
+#define USB_INPUT_ASYNC 1
+
 //Audio Inputs (Bluetooth, SPDIF, USB, analog)
 AudioInputI2S            Bluetooth_in;
 AsyncAudioInputSPDIF3    Optical_in;
+#if USB_INPUT_ASYNC
+AsyncAudioInputUSB       USB_in;
+#else
 AudioInputUSB            USB_in;
+#endif
 // Stereo ADC (e.g. PCM1808) on I2S2: data pin 5, BCLK pin 4, LRCLK pin 3,
 // MCLK pin 33. The Teensy is clock master; the ADC runs as a slave.
 AudioInputI2S2           Analog_in;
@@ -413,14 +424,16 @@ void setup() {
   router.sendEvent("boot");
 }
 
-// USB audio input health, from the core's usb_audio.cpp. feedback_accumulator
-// is the sample rate the Teensy requests from the host via the isochronous
-// feedback endpoint, in samples-per-ms * 2^24 (nominal 44.1 * 2^24); it only
-// moves while the host is streaming. Each underrun/overrun is one dropped or
-// silent block - an audible glitch. The counters reset when USB reconfigures.
+// USB audio input health, from the core fork's usb_audio.cpp.
+// feedback_accumulator is the sample rate the Teensy requests from the host
+// via the isochronous feedback endpoint, in samples-per-ms * 2^24 (nominal
+// 44.1 * 2^24); the stock input steers it while streaming, the async input
+// leaves it nominal. Each underrun/overrun is one silent or dropped block -
+// an audible glitch. The counters reset when USB reconfigures.
 extern uint32_t feedback_accumulator;
 extern volatile uint32_t usb_audio_underrun_count;
 extern volatile uint32_t usb_audio_overrun_count;
+extern volatile uint8_t usb_audio_rx_queue_count;
 
 void loop() {
   // Optional: Print some diagnostics every 20 seconds
@@ -435,6 +448,20 @@ void loop() {
     Serial.println("%)");
     AudioProcessorUsageMaxReset();
 
+#if USB_INPUT_ASYNC
+    Serial.print("USB in (async): ");
+    Serial.print(USB_in.streaming() ? "streaming" : "idle");
+    Serial.print(", buffered ");
+    Serial.print(USB_in.bufferedMs(), 1);
+    Serial.print(" ms, step ");
+    Serial.print(USB_in.stepPpm(), 1);
+    Serial.print(" ppm, drops ");
+    Serial.print(USB_in.drops());
+    Serial.print(", starves ");
+    Serial.print(USB_in.starves());
+    Serial.print(", stops ");
+    Serial.println(USB_in.stops());
+#else
     static uint32_t lastUnderruns = 0, lastOverruns = 0;
     uint32_t underruns = usb_audio_underrun_count;
     uint32_t overruns = usb_audio_overrun_count;
@@ -443,7 +470,9 @@ void loop() {
     Serial.print(usbHz, 2);
     Serial.print(" Hz (");
     Serial.print((usbHz - AUDIO_SAMPLE_RATE_EXACT) * (1e6f / AUDIO_SAMPLE_RATE_EXACT), 1);
-    Serial.print(" ppm), underruns +");
+    Serial.print(" ppm), queue ");
+    Serial.print(usb_audio_rx_queue_count);
+    Serial.print(" blocks, underruns +");
     Serial.print(underruns - lastUnderruns);
     Serial.print(" (total ");
     Serial.print(underruns);
@@ -454,6 +483,7 @@ void loop() {
     Serial.println(")");
     lastUnderruns = underruns;
     lastOverruns = overruns;
+#endif
   }
 
   if (firFilesPending) {
