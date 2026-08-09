@@ -35,8 +35,10 @@ CERT_DIR="esp-web-server/data/certs"
 mkdir -p "$CERT_DIR"
 
 # 192.168.4.1 is the standalone-AP address; add any static LAN IP you use.
+# -ecdsa: P-256 keys handshake several times faster than RSA on the ESP32
+# and need less heap per connection - RSA certs make page loads crawl.
 mkcert -install
-mkcert -cert-file "$CERT_DIR/server.crt" -key-file "$CERT_DIR/server.key" \
+mkcert -ecdsa -cert-file "$CERT_DIR/server.crt" -key-file "$CERT_DIR/server.key" \
     "$CERT_HOSTNAME" 192.168.4.1
 
 echo

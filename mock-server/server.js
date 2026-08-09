@@ -534,7 +534,9 @@ app.get('/status', async (req, res) => {
       },
       currentPreset,
       deviceName: deviceName || 'vybes',
-      volume: volume ? parseInt(volume) : 50
+      volume: volume ? parseInt(volume) : 50,
+      // Mirrors the ESP's heap headroom report (bytes); fixed value here
+      freeHeap: 200000
     });
   } catch (error) {
     res.status(500).json({ error: error.message });

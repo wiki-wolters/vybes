@@ -287,9 +287,15 @@ void setupWebServer() {
 #ifdef CONFIG_IDF_TARGET_ESP32S3
     if (loadCertificates()) {
         serverHttps.ssl_config.httpd.max_uri_handlers = 60;
-        // Each TLS connection costs ~45KB of heap - keep the count low.
-        // 4 = the websocket plus a browser's realistic keep-alive pool;
-        // 3 left parallel page-load fetches refused outright.
+        // Each open TLS connection holds ~25-30KB of buffers, so this is a
+        // heap budget more than a concurrency limit: boot-time free heap is
+        // ~136KB, and a measured attempt at 6 sockets (2026-08-09) let a
+        // 6-fetch burst exhaust the heap and wedge lwIP until a hardware
+        // reset - the device stopped answering even ping. 4 keeps ~30KB of
+        // margin under a full burst. The page survives losing the race
+        // because the stylesheet is inlined into index.html (see
+        // WebUI/vite.config.js); only cosmetic fetches (icons/manifest) can
+        // fail. Check /status freeHeap before ever raising this.
         serverHttps.ssl_config.httpd.max_open_sockets = 4;
         // Same LRU eviction as the HTTP listener - vital here, where the
         // socket budget is this tight.

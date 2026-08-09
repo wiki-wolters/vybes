@@ -38,6 +38,10 @@ esp_err_t handleGetStatus(PsychicRequest *request) {
     // Add master volume
     doc["volume"] = current_config.volume; // Add this line
 
+    // Internal heap headroom - each open TLS socket costs ~40KB, so this is
+    // the number to watch when tuning the HTTPS max_open_sockets budget.
+    doc["freeHeap"] = ESP.getFreeHeap();
+
     String response;
     serializeJson(doc, response);
     return request->reply(200, "application/json", response.c_str());

@@ -162,7 +162,9 @@ the best of the three; promote it to the app-wide theme.
     Home, editor Tuning + Channels, Analyzer, Tools; modal open on a scrolled
     Channels page (regression check for #14); Dim pill; keyboard: Escape closes
     modal, sliders operable, value-edit commit/cancel.
-27. Do not run `npm run deploy` (that copies dist into the ESP data dir).
+27. Do not flash the device (`pio ... -t uploadfs`). Building is harmless:
+    `ESP/esp-web-server/data/dist` is just a symlink to `WebUI/dist` and
+    nothing reaches the device until a flash.
 
 ## Out of scope
 
