@@ -413,6 +413,15 @@ void setup() {
   router.sendEvent("boot");
 }
 
+// USB audio input health, from the core's usb_audio.cpp. feedback_accumulator
+// is the sample rate the Teensy requests from the host via the isochronous
+// feedback endpoint, in samples-per-ms * 2^24 (nominal 44.1 * 2^24); it only
+// moves while the host is streaming. Each underrun/overrun is one dropped or
+// silent block - an audible glitch. The counters reset when USB reconfigures.
+extern uint32_t feedback_accumulator;
+extern volatile uint32_t usb_audio_underrun_count;
+extern volatile uint32_t usb_audio_overrun_count;
+
 void loop() {
   // Optional: Print some diagnostics every 20 seconds
   static unsigned long lastPrint = 0;
@@ -425,6 +434,26 @@ void loop() {
     Serial.print(AudioProcessorUsageMax());
     Serial.println("%)");
     AudioProcessorUsageMaxReset();
+
+    static uint32_t lastUnderruns = 0, lastOverruns = 0;
+    uint32_t underruns = usb_audio_underrun_count;
+    uint32_t overruns = usb_audio_overrun_count;
+    float usbHz = feedback_accumulator * (1000.0f / 16777216.0f);
+    Serial.print("USB in: feedback ");
+    Serial.print(usbHz, 2);
+    Serial.print(" Hz (");
+    Serial.print((usbHz - AUDIO_SAMPLE_RATE_EXACT) * (1e6f / AUDIO_SAMPLE_RATE_EXACT), 1);
+    Serial.print(" ppm), underruns +");
+    Serial.print(underruns - lastUnderruns);
+    Serial.print(" (total ");
+    Serial.print(underruns);
+    Serial.print("), overruns +");
+    Serial.print(overruns - lastOverruns);
+    Serial.print(" (total ");
+    Serial.print(overruns);
+    Serial.println(")");
+    lastUnderruns = underruns;
+    lastOverruns = overruns;
   }
 
   if (firFilesPending) {
