@@ -767,6 +767,7 @@ describe('V1 preset shape', () => {
     // Every output carries the full field set
     for (const output of preset.outputs) {
       expect(Array.isArray(output.peq)).toBe(true)
+      expect(typeof output.eqEnabled).toBe('boolean')
       expect(typeof output.fir).toBe('string')
       expect(typeof output.delayUs).toBe('number')
       expect(typeof output.gainDb).toBe('number')
@@ -905,6 +906,18 @@ describe('output channel endpoints', () => {
     expect(preset.outputs[7].enabled).toBe(false)
 
     expect((await PUT(`/preset/output/mute?preset_name=${enc(P)}&output=2&state=maybe`)).status).toBe(400)
+  })
+
+  it('toggles the output EQ bypass, replying with the outputChanged shape', async () => {
+    const off = await PUT(`/preset/output/eq/enabled?preset_name=${enc(P)}&output=2&state=off`)
+    expect(off.status).toBe(200)
+    expect(off.json).toMatchObject({ messageType: 'outputChanged', output: 2, changes: { eqEnabled: false } })
+    expect((await getPreset(P)).outputs[2].eqEnabled).toBe(false)
+
+    await PUT(`/preset/output/eq/enabled?preset_name=${enc(P)}&output=2&state=on`)
+    expect((await getPreset(P)).outputs[2].eqEnabled).toBe(true)
+
+    expect((await PUT(`/preset/output/eq/enabled?preset_name=${enc(P)}&output=2&state=maybe`)).status).toBe(400)
   })
 
   it('sets the label and rejects empty/oversized ones', async () => {

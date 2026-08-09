@@ -193,6 +193,7 @@ struct OutputState {
   CrossoverType lpType = CROSSOVER_LR4;
 
   PEQBand peq[MAX_OUTPUT_PEQ];
+  bool eqEnabled = true;     // PEQ bypass (bands are kept; see setOutputEqEnabled)
 
   char firFile[MAX_FILENAME_LEN] = "";
   uint16_t firTaps = 0;      // taps currently loaded (0 = none)
@@ -254,6 +255,37 @@ int    probeLastSlot = -1;
 #define OUTPUT_SOLO_KEEPALIVE_TIMEOUT_MS 7000
 int outputSolo = -1;
 unsigned long outputSoloLastKeepaliveAt = 0;
+
+// --- Sweep mode (EQ tuning) ---
+// Keepalive-driven like the RTA. While active, the input pre-EQ pad and the
+// shared output pad are floored at SWEEP_RESERVE_DB, so dialing a boost into
+// any EQ and sweeping it never moves the baseline level: the swept band
+// rises above the rest of the mix (console-style) and still can't clip,
+// because the reserve is spent up front instead of tracking each edit.
+#define SWEEP_KEEPALIVE_TIMEOUT_MS 7000
+#define SWEEP_RESERVE_DB 12.0f
+bool sweepMode = false;
+unsigned long sweepLastKeepaliveAt = 0;
+
+// --- Comparison trim (A/B level matching) ---
+// The ESP computes a loudness delta between the states being A/B'd and
+// sends "setCompareTrim <centi-dB>" (always <= 0). The trim multiplies into
+// outputTargetGain so it rides the amp ramp, and it is keepalive-guarded so
+// a dropped connection can't leave the system quietly trimmed down.
+#define COMPARE_KEEPALIVE_TIMEOUT_MS 7000
+float compareTrimLin = 1.0f;
+unsigned long compareLastKeepaliveAt = 0;
+
+// --- Shared output headroom pad ---
+// The per-output chains have no per-channel compensation stage (a per-output
+// pad would skew the balance between drivers and wreck crossover summing),
+// so one shared pad - the largest active output-EQ boost across all
+// channels, floored at the sweep reserve while sweep mode is on - is folded
+// into every source mixer's gains. Recomputed once per loop() pass when
+// marked dirty, so a burst of EQ edits (the boot sync) costs one 8-channel
+// curve sweep, not eighty.
+float outputPadLin = 1.0f;
+bool outputPadDirty = false;
 
 void setup() {
   Serial.begin(9600);
@@ -418,6 +450,9 @@ void loop() {
   grmLoop();
   probeLoop();
   outputSoloLoop();
+  sweepLoop();
+  compareTrimLoop();
+  outputPadLoop();
 }
 
 // Clear a stale output solo once the ESP's keepalives stop arriving.
@@ -426,6 +461,24 @@ void outputSoloLoop() {
   if (millis() - outputSoloLastKeepaliveAt > OUTPUT_SOLO_KEEPALIVE_TIMEOUT_MS) {
     outputSolo = -1;
     Serial.println("Output solo timed out");
+  }
+}
+
+// Drop sweep mode once its keepalives stop arriving.
+void sweepLoop() {
+  if (!sweepMode) return;
+  if (millis() - sweepLastKeepaliveAt > SWEEP_KEEPALIVE_TIMEOUT_MS) {
+    Serial.println("Sweep mode timed out");
+    setSweepMode(false);
+  }
+}
+
+// Clear a stale comparison trim once its keepalives stop arriving.
+void compareTrimLoop() {
+  if (compareTrimLin == 1.0f) return;
+  if (millis() - compareLastKeepaliveAt > COMPARE_KEEPALIVE_TIMEOUT_MS) {
+    compareTrimLin = 1.0f; // picked up by the amp ramp
+    Serial.println("Compare trim timed out");
   }
 }
 
@@ -563,7 +616,7 @@ static float outputTargetGain(int ch, const OutputState& o) {
   // the soloed one keeps its normal product so the mic measures reality.
   if (outputSolo >= 0 && ch != outputSolo) return 0.0f;
   if (o.mute) return 0.0f;
-  float gain = powf(10.0f, o.gainDb / 20.0f) * state.targetVolume;
+  float gain = powf(10.0f, o.gainDb / 20.0f) * state.targetVolume * compareTrimLin;
   return o.invert ? -gain : gain;
 }
 
@@ -775,10 +828,17 @@ void probeLoop() {
 // --- Shared input EQ ---
 
 // Attenuate the pre-EQ amps to compensate for the maximum boost of the
-// current EQ curve, so boosted bands can't clip.
+// current EQ curve, so boosted bands can't clip. Unity while the EQ is
+// bypassed ("Pure Direct" - no wasted headroom). Sweep mode floors the pad
+// at the reserve instead, so EQ edits and toggles can't move the baseline
+// while a band is being swept.
 void applyPreEQGainCompensation() {
-  float maxBoost = peqLeft.calculateMaxEqBoost(state.inputEqBands, MAX_PEQ_BANDS);
-  peqLeft.applyPreEQGain(maxBoost, Left_Pre_EQ_amp, Right_Pre_EQ_amp);
+  float padDb = 0.0f;
+  if (state.inputEqEnabled) {
+    padDb = peqLeft.calculateMaxEqBoost(state.inputEqBands, MAX_PEQ_BANDS);
+  }
+  if (sweepMode && padDb < SWEEP_RESERVE_DB) padDb = SWEEP_RESERVE_DB;
+  peqLeft.applyPreEQGain(padDb, Left_Pre_EQ_amp, Right_Pre_EQ_amp);
 }
 
 // Apply all bands in state.inputEqBands to both PEQ processors. Disabled
@@ -799,9 +859,8 @@ void setInputEqEnabled(bool enabled) {
     // EQ is enabled, so apply the filters and the gain compensation
     applyInputEqFilters(EQ_MORPH_MS);
   } else {
-    // EQ is disabled, so set the pre-amp gain to 1.0
-    Left_Pre_EQ_amp.gain(1.0);
-    Right_Pre_EQ_amp.gain(1.0);
+    // Unity pad while off - unless sweep mode is holding the floor
+    applyPreEQGainCompensation();
   }
 }
 
@@ -818,11 +877,53 @@ void resetInputEqBands(int fromIndex) {
 
 // --- Per-output DSP ---
 
+// One source mixer's gains: the routing values scaled by the shared pad.
+void applySourceMixerGains(int ch) {
+  const OutputState& o = state.outputs[ch];
+  sourceMixer[ch].gain(0, o.sourceLeft * outputPadLin);
+  sourceMixer[ch].gain(1, o.sourceRight * outputPadLin);
+}
+
+// Recompute the shared output pad (see the declaration for the rationale)
+// and push it into every source mixer when it changed.
+void refreshOutputPad() {
+  outputPadDirty = false;
+  float padDb = sweepMode ? SWEEP_RESERVE_DB : 0.0f;
+  for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
+    if (!state.outputs[ch].eqEnabled) continue;
+    float boost = outputPeq[ch].calculateMaxEqBoost(state.outputs[ch].peq, MAX_OUTPUT_PEQ);
+    if (boost > padDb) padDb = boost;
+  }
+  float padLin = (padDb > 0.0f) ? 1.0f / powf(10.0f, padDb / 20.0f) : 1.0f;
+  if (padLin == outputPadLin) return;
+  outputPadLin = padLin;
+  for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
+    applySourceMixerGains(ch);
+  }
+  Serial.printf("Output pad: %.1f dB headroom\n", padDb);
+}
+
+void outputPadLoop() {
+  if (outputPadDirty) refreshOutputPad();
+}
+
+// Enter/leave sweep mode. Keepalive-refreshed by the ESP while a web client
+// holds the mode; sweepLoop() clears it when the refreshes stop.
+void setSweepMode(bool enabled) {
+  sweepLastKeepaliveAt = millis();
+  if (enabled == sweepMode) return;
+  sweepMode = enabled;
+  Serial.println(enabled ? "Sweep mode on" : "Sweep mode off");
+  applyPreEQGainCompensation();
+  refreshOutputPad();
+}
+
 // Morph the output's PEQ to the bands in state. animateToBands disables
-// every band past MAX_OUTPUT_PEQ. Unlike the input EQ there is no boost
-// compensation stage - output gain staging is explicit in the channel strip.
+// every band past MAX_OUTPUT_PEQ. Boost compensation is shared across all
+// outputs (see refreshOutputPad) so relative driver levels stay intact.
 void applyOutputEq(int ch) {
   outputPeq[ch].animateToBands(state.outputs[ch].peq, MAX_OUTPUT_PEQ, EQ_MORPH_MS);
+  outputPadDirty = true;
 }
 
 void setFIREnabled(bool enabled) {
@@ -874,6 +975,44 @@ void applyDelays() {
   }
 }
 
+// Pink-weighted gain of each loaded FIR filter in dB (0 = none): the mean
+// power of its response sampled log-uniformly 20Hz-20kHz, i.e. its loudness
+// effect on pink-ish program material. Computed once per load and reported
+// as "FIRGAIN <ch> <centi-dB>" lines so the ESP's comparison mode can
+// level-match FIR on/off states without ever reading the taps itself.
+float firPinkGainDb[NUM_OUTPUTS] = {0.0f};
+
+static float firPinkGain(const float* h, uint16_t n) {
+  if (h == nullptr || n == 0) return 0.0f;
+  const int SAMPLES = 100;
+  double powerSum = 0.0;
+  for (int i = 0; i < SAMPLES; i++) {
+    float freq = 20.0f * powf(1000.0f, (float)i / (SAMPLES - 1)); // 20Hz..20kHz
+    double w = 2.0 * M_PI * (double)freq / AUDIO_SAMPLE_RATE_EXACT;
+    // DTFT via phasor recurrence; double precision keeps the rotation
+    // stable over pool-sized tap counts.
+    double cr = cos(w), ci = -sin(w);
+    double pr = 1.0, pi = 0.0, re = 0.0, im = 0.0;
+    for (uint16_t k = 0; k < n; k++) {
+      re += h[k] * pr;
+      im += h[k] * pi;
+      double t = pr * cr - pi * ci;
+      pi = pr * ci + pi * cr;
+      pr = t;
+    }
+    powerSum += re * re + im * im;
+  }
+  double meanPower = powerSum / SAMPLES;
+  if (meanPower < 1e-20) return -100.0f;
+  return (float)(10.0 * log10(meanPower));
+}
+
+static void reportFirGains(Print& out) {
+  for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
+    out.printf("FIRGAIN %d %d\n", ch, (int)lroundf(firPinkGainDb[ch] * 100.0f));
+  }
+}
+
 void loadFirFiles() {
   // Note: incoming serial commands are buffered by the UART while we read
   // from the SD card, so no special handling is needed here.
@@ -883,8 +1022,10 @@ void loadFirFiles() {
     for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
       firFilter[ch].loadCoefficients(nullptr, 0);
       state.outputs[ch].firTaps = 0;
+      firPinkGainDb[ch] = 0.0f;
     }
     applyDelays();
+    reportFirGains(Serial1);
     return;
   }
 
@@ -897,6 +1038,7 @@ void loadFirFiles() {
     OutputState& o = state.outputs[ch];
     firFilter[ch].loadCoefficients(nullptr, 0);
     o.firTaps = 0;
+    firPinkGainDb[ch] = 0.0f;
     if (o.firFile[0] == '\0') continue;
 
     uint32_t remaining = FIR_TAP_POOL - poolUsed;
@@ -920,6 +1062,9 @@ void loadFirFiles() {
     }
 
     bool loaded = firFilter[ch].loadCoefficients(coeffs, actualTaps);
+    if (loaded) {
+      firPinkGainDb[ch] = firPinkGain(coeffs, actualTaps);
+    }
     delete[] coeffs;
     if (!loaded) {
       Serial1.printf("ERROR FIR load failed: out of memory for %s (output %d)\n", o.firFile, ch);
@@ -927,12 +1072,14 @@ void loadFirFiles() {
     }
     o.firTaps = actualTaps;
     poolUsed += actualTaps;
-    Serial.printf("Output %d FIR loaded: %s (%u taps, pool %lu/%u)\n",
-                  ch, o.firFile, actualTaps, (unsigned long)poolUsed, FIR_TAP_POOL);
+    Serial.printf("Output %d FIR loaded: %s (%u taps, pool %lu/%u, pink gain %.2f dB)\n",
+                  ch, o.firFile, actualTaps, (unsigned long)poolUsed, FIR_TAP_POOL,
+                  firPinkGainDb[ch]);
   }
 
   // FIR latencies may have changed - realign the channels
   applyDelays();
+  reportFirGains(Serial1);
 }
 
 /*
@@ -975,8 +1122,7 @@ void handleSetOutputSource(const String& command, String* args, int argCount, Ou
   OutputState& o = state.outputs[ch];
   o.sourceLeft = args[1].toFloat();
   o.sourceRight = args[2].toFloat();
-  sourceMixer[ch].gain(0, o.sourceLeft);
-  sourceMixer[ch].gain(1, o.sourceRight);
+  applySourceMixerGains(ch);
 }
 
 void handleSetOutputDelay(const String& command, String* args, int argCount, OutputStream& stream) {
@@ -1037,6 +1183,18 @@ void handleSetOutputEq(const String& command, String* args, int argCount, Output
   b.gain = gain;
 
   applyOutputEq(ch);
+}
+
+// "setOutputEqEnabled <ch> <0|1>": non-destructive bypass of one output's
+// PEQ. The stored bands stay; the shared pad recomputes so only live
+// boosts cost headroom.
+void handleSetOutputEqEnabled(const String& command, String* args, int argCount, OutputStream& stream) {
+  int ch;
+  if (argCount != 2 || !parseChannel(args[0], ch)) return;
+  bool enabled = args[1].toInt() == 1;
+  state.outputs[ch].eqEnabled = enabled;
+  outputPeq[ch].setBypass(!enabled);
+  outputPadDirty = true;
 }
 
 void handleResetOutputEq(const String& command, String* args, int argCount, OutputStream& stream) {
@@ -1223,6 +1381,31 @@ void handleSoloOutput(const String& command, String* args, int argCount, OutputS
   } else {
     outputSolo = -1;
   }
+}
+
+// "setSweepMode <0|1>": keepalive-refreshed while a web client holds the
+// EQ sweep/tuning mode; sweepLoop() drops it when the refreshes stop.
+void handleSetSweepMode(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 1) {
+    setSweepMode(args[0].toInt() == 1);
+  }
+}
+
+// "setCompareTrim <centi-dB>": A/B level-matching trim, <= 0 (0 clears).
+// Keepalive-refreshed by the ESP while comparison mode is active.
+void handleSetCompareTrim(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount != 1) return;
+  long centiDb = args[0].toInt();
+  if (centiDb > 0) centiDb = 0;
+  if (centiDb < -3000) centiDb = -3000;
+  compareTrimLin = powf(10.0f, (float)centiDb / 2000.0f);
+  compareLastKeepaliveAt = millis();
+}
+
+// "getFirGains": re-emit the FIRGAIN lines (e.g. after an ESP reboot, whose
+// cache of them is otherwise stale until the next FIR load).
+void handleGetFirGains(const String& command, String* args, int argCount, OutputStream& stream) {
+  reportFirGains(stream);
 }
 
 // --- Mixed-input multiband compressor ---

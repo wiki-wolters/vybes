@@ -107,6 +107,7 @@ struct Output {
     uint16_t hpFloor = 0; // Hz, 0 = none; see hp_floor_violation
     PEQPoint peq[MAX_OUTPUT_PEQ];
     int num_peq = 0;
+    bool eqEnabled = true; // PEQ bypass; the points above are kept either way
     char fir[FIR_FILENAME_LEN + 1] = ""; // filename on the Teensy SD, "" = none
     double delayUs = 0.0;
     double gainDb = 0.0;

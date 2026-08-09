@@ -4,6 +4,7 @@
 #include "api_fir.h"
 #include "config.h"
 #include "teensy_comm.h"
+#include "compare_mode.h"
 #include "websocket.h"
 #include <ArduinoJson.h>
 #include <stdlib.h>
@@ -146,6 +147,7 @@ esp_err_t handlePutOutputEnabled(PsychicRequest *request) {
         char ch[8];
         snprintf(ch, sizeof(ch), "%d", ctx.outputIndex);
         sendToTeensy(CMD_SET_OUTPUT_MUTE, ch, (ctx.output->mute || !enabled) ? "1" : "0");
+        compareOnStateChanged();
     }
 
     JsonDocument doc;
@@ -180,6 +182,7 @@ esp_err_t handlePutOutputSource(PsychicRequest *request, JsonVariant &json) {
         snprintf(l, sizeof(l), "%.4f", left);
         snprintf(r, sizeof(r), "%.4f", right);
         sendToTeensy(CMD_SET_OUTPUT_SOURCE, ch, l, r);
+        compareOnStateChanged();
     }
 
     JsonDocument doc;
@@ -211,6 +214,7 @@ esp_err_t handlePutOutputGain(PsychicRequest *request) {
         snprintf(ch, sizeof(ch), "%d", ctx.outputIndex);
         snprintf(db, sizeof(db), "%.2f", gainDb);
         sendToTeensy(CMD_SET_OUTPUT_GAIN, ch, db);
+        compareOnStateChanged();
     }
 
     JsonDocument doc;
@@ -239,6 +243,7 @@ esp_err_t handlePutOutputMute(PsychicRequest *request) {
         char ch[8];
         snprintf(ch, sizeof(ch), "%d", ctx.outputIndex);
         sendToTeensy(CMD_SET_OUTPUT_MUTE, ch, (mute || !ctx.output->enabled) ? "1" : "0");
+        compareOnStateChanged();
     }
 
     JsonDocument doc;
@@ -431,6 +436,7 @@ esp_err_t handlePutOutputEq(PsychicRequest *request, JsonVariant &json) {
         snprintf(ch, sizeof(ch), "%d", ctx.outputIndex);
         snprintf(from, sizeof(from), "%d", count);
         sendToTeensy(CMD_RESET_OUTPUT_EQ, ch, from);
+        compareOnStateChanged();
     }
 
     JsonDocument doc;
@@ -483,9 +489,43 @@ esp_err_t handlePutOutputEqPoint(PsychicRequest *request, JsonVariant &json) {
 
     if (isActivePreset(ctx)) {
         sendOutputEqPointToTeensy(ctx.outputIndex, id, ctx.output->peq[id]);
+        compareOnStateChanged();
     }
 
     return request->reply(204);
+}
+
+// Non-destructive per-output PEQ bypass: the stored points stay, only the
+// processing toggles. Loudness fairness during A/B is comparison mode's
+// job, so "off" is honestly raw (and the Teensy's shared headroom pad
+// releases whatever this output's boosts were costing).
+esp_err_t handlePutOutputEqEnabled(PsychicRequest *request) {
+    OutputRequest ctx;
+    esp_err_t result;
+    if (!getOutputRequest(request, ctx, result)) return result;
+
+    String state = request->hasParam("state") ? request->getParam("state")->value() : "";
+    if (state != "on" && state != "off") {
+        return request->reply(400, "text/plain", "Invalid state");
+    }
+    bool enabled = (state == "on");
+
+    {
+        ConfigLock lock;
+        ctx.output->eqEnabled = enabled;
+        scheduleConfigWrite();
+    }
+
+    if (isActivePreset(ctx)) {
+        char ch[8];
+        snprintf(ch, sizeof(ch), "%d", ctx.outputIndex);
+        sendToTeensy(CMD_SET_OUTPUT_EQ_ENABLED, ch, enabled ? "1" : "0");
+        compareOnStateChanged();
+    }
+
+    JsonDocument doc;
+    doc.createNestedObject("changes")["eqEnabled"] = enabled;
+    return replyOutputChanged(request, ctx, doc);
 }
 
 // --- Per-output FIR file ---
@@ -535,6 +575,7 @@ esp_err_t handlePutOutputFir(PsychicRequest *request) {
         // Bare "setFir <ch>" clears the filter
         sendToTeensy(CMD_SET_FIR, ch, file.length() > 0 ? file.c_str() : nullptr);
         loadFirFilters();
+        compareOnStateChanged(); // refined again when the FIRGAIN lines land
     }
 
     JsonDocument doc;

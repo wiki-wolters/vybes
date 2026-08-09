@@ -32,6 +32,11 @@
 #define CMD_SET_OUTPUT_EQ "setOutputEq"
 #define CMD_RESET_OUTPUT_EQ "resetOutputEq"
 
+// Per-output PEQ bypass: "setOutputEqEnabled <ch> <0|1>". Non-destructive -
+// the stored bands stay; the Teensy's shared output pad recomputes so only
+// live boosts cost headroom.
+#define CMD_SET_OUTPUT_EQ_ENABLED "setOutputEqEnabled"
+
 // Shared input EQ (L/R buses ahead of the routing matrix)
 //   setInputEq        <band> <freq> <q> <gain>
 //   resetInputEq      <fromBand>
@@ -112,6 +117,23 @@
 // soloed output keeps its normal gain/volume product - the web UI measures
 // the audible reality, so nothing is forced to a probe level.
 #define CMD_SOLO_OUTPUT "soloOutput"
+
+// EQ sweep/tuning mode: "setSweepMode <0|1>", same keepalive scheme as
+// setRta. While on, the Teensy floors its input and output headroom pads at
+// a fixed reserve so EQ edits can't move the baseline level - a boosted
+// band swept across the spectrum pokes out of an otherwise steady mix.
+#define CMD_SET_SWEEP_MODE "setSweepMode"
+
+// Comparison-mode level matching: "setCompareTrim <centi-dB>", <= 0, 0
+// clears. Same keepalive scheme as setRta; the trim rides the Teensy's
+// output amp ramp so A/B switches stay click-free.
+#define CMD_SET_COMPARE_TRIM "setCompareTrim"
+
+// Ask the Teensy to re-emit its "FIRGAIN <ch> <centi-dB>" lines (the
+// pink-weighted gain of each loaded FIR filter, also sent spontaneously
+// after every loadFirFiles). Comparison mode uses these to level-match FIR
+// on/off states without reading the taps.
+#define CMD_GET_FIR_GAINS "getFirGains"
 
 // Probe chirp/schedule contract, shared by ProbeSource (Teensy), the
 // /probe/delay API (ESP) and delay-align.js (web UI reference generator).

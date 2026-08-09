@@ -339,6 +339,12 @@ class VybesAPI {
     return this.request('PUT', this._outputEndpoint('/preset/output/eq', presetName, output), points);
   }
 
+  /** Non-destructive per-output PEQ bypass (the stored points stay) */
+  async setOutputEqEnabled(presetName, output, enabled) {
+    return this.request('PUT', this._outputEndpoint('/preset/output/eq/enabled', presetName, output,
+      `&state=${enabled ? 'on' : 'off'}`));
+  }
+
   /** Update/append a single output PEQ point (hot path while dragging) */
   async updateOutputEqPoint(presetName, output, point) {
     return this.request('PUT', this._outputEndpoint('/preset/output/eq/point', presetName, output), point);

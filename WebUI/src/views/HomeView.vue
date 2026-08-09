@@ -22,6 +22,30 @@
     <!-- Main Content -->
     <div v-if="!isLoading" class="max-w-5xl mx-auto lg:grid lg:grid-cols-2 lg:gap-4 lg:items-start">
       <div>
+        <!-- Comparison mode: level-matched A/B for the toggles and preset
+             switches below. Sits above the presets because preset A/B is
+             the headline use. -->
+        <CardSection title="Comparison mode">
+          <div class="flex items-center justify-between gap-4">
+            <div class="min-w-0">
+              <p class="text-sm text-vybes-text-secondary">
+                Level-match EQ/FIR toggles and preset switches so the louder
+                state can't win the A/B on loudness alone.
+              </p>
+              <p v-if="compare.enabled" class="mt-1 text-xs text-vybes-accent tabular-nums">
+                {{ compare.trimDb < -0.05
+                  ? `Current state trimmed ${compare.trimDb.toFixed(1)} dB to match`
+                  : 'Current state is the reference (no trim)' }}
+              </p>
+            </div>
+            <ToggleSwitch
+              :model-value="compare.enabled"
+              label=""
+              @update:modelValue="compare.setEnabled($event)"
+            />
+          </div>
+        </CardSection>
+
         <!-- Presets Section -->
         <CardSection title="Presets">
           <div class="flex flex-wrap gap-3">
@@ -205,10 +229,14 @@ import ToggleSwitch from '../components/shared/ToggleSwitch.vue';
 import TemplateSelect from '../components/shared/TemplateSelect.vue';
 import DynamicsCard from '../components/DynamicsCard.vue';
 import { useSystemStore } from '../stores/system.js';
+import { useCompareStore } from '../stores/compare.js';
 
 const router = useRouter();
 // Dim lives in the shared store so the top bar can show it from any page
 const system = useSystemStore();
+// Comparison mode lives in a store too: its keepalives must survive
+// navigating away, and the top bar shows the trim from any page
+const compare = useCompareStore();
 
 // State
 const isLoading = ref(true);

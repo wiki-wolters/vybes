@@ -17,6 +17,7 @@ esp_err_t handlePutOutputDelay(PsychicRequest *request);
 esp_err_t handlePutOutputFilter(PsychicRequest *request, JsonVariant &json);
 esp_err_t handlePutOutputEq(PsychicRequest *request, JsonVariant &json);
 esp_err_t handlePutOutputEqPoint(PsychicRequest *request, JsonVariant &json);
+esp_err_t handlePutOutputEqEnabled(PsychicRequest *request);
 esp_err_t handlePutOutputFir(PsychicRequest *request);
 
 #endif // API_OUTPUTS_H

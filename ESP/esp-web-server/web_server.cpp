@@ -219,6 +219,7 @@ static void registerRoutes(PsychicHttpServer &s, PsychicWebSocketHandler *ws) {
     s.on("/preset/output/filter", HTTP_PUT, (PsychicJsonRequestCallback)handlePutOutputFilter);
     s.on("/preset/output/eq", HTTP_PUT, (PsychicJsonRequestCallback)handlePutOutputEq);
     s.on("/preset/output/eq/point", HTTP_PUT, (PsychicJsonRequestCallback)handlePutOutputEqPoint);
+    s.on("/preset/output/eq/enabled", HTTP_PUT, handlePutOutputEqEnabled);
     s.on("/preset/output/fir", HTTP_PUT, handlePutOutputFir);
 
     // API Routes - Preset Management

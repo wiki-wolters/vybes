@@ -2,6 +2,7 @@
 #include "config.h"
 #include "templates.h"
 #include "teensy_comm.h"
+#include "compare_mode.h"
 #include "screen.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
@@ -146,6 +147,7 @@ void output_to_json(const Output& output, JsonObject obj) {
         point["gain"] = output.peq[i].gain;
         point["q"] = output.peq[i].q;
     }
+    obj["eqEnabled"] = output.eqEnabled;
     obj["fir"] = output.fir;
     obj["delayUs"] = output.delayUs;
     obj["gainDb"] = output.gainDb;
@@ -232,6 +234,7 @@ static void output_from_json(JsonObject obj, Output& output, int index) {
     filter_from_json(obj["lp"], output.lp);
     output.hpFloor = obj["hpFloor"] | 0;
     peq_points_from_json(obj["peq"], output.peq, MAX_OUTPUT_PEQ, output.num_peq);
+    output.eqEnabled = obj["eqEnabled"] | true; // absent in older configs
     strlcpy(output.fir, obj["fir"] | "", sizeof(output.fir));
     output.delayUs = obj["delayUs"] | 0.0;
     output.gainDb = obj["gainDb"] | 0.0;
@@ -645,6 +648,8 @@ void updateTeensyWithActivePresetParameters() {
         snprintf(b, sizeof(b), "%d", output.num_peq);
         sendToTeensy(CMD_RESET_OUTPUT_EQ, a, b);
 
+        sendToTeensy(CMD_SET_OUTPUT_EQ_ENABLED, a, output.eqEnabled ? "1" : "0");
+
         // Bare "setFir <ch>" clears the filter
         sendToTeensy(CMD_SET_FIR, a, output.fir[0] != '\0' ? output.fir : nullptr);
     }
@@ -692,6 +697,10 @@ void updateTeensyWithActivePresetParameters() {
     snprintf(d, sizeof(d), "%.2f", current_config.inputGains.tone);
     snprintf(e, sizeof(e), "%.2f", current_config.inputGains.analog);
     sendToTeensy(CMD_SET_INPUT_GAINS, a, b, c, d, e);
+
+    // Every full sync is a potential audible-state change (preset switches
+    // from the API, button, remote and Teensy reboots all land here)
+    compareOnStateChanged();
 }
 
 void loadFirFilters() {

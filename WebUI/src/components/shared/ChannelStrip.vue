@@ -113,12 +113,18 @@
 
       <!-- PEQ -->
       <CollapsibleSection
-        :title="`PEQ (${output.peq.length}/10)`"
+        :title="`PEQ (${output.peq.length}/10)${output.eqEnabled === false ? ' · bypassed' : ''}`"
         :toggleable="false"
         :animate="false"
         :start-expanded="false"
         class="!mb-0"
       >
+        <ToggleSwitch
+          :model-value="output.eqEnabled !== false"
+          label="EQ enabled"
+          class="mb-2"
+          @update:modelValue="store.setOutputEqEnabled(output.index, $event)"
+        />
         <ParametricEQ
           :peq-points="peqPoints"
           :preset-name="store.presetName"
@@ -177,7 +183,7 @@ const summary = computed(() => {
     formatValue(o.gainDb, 'dB', 1)];
   if (o.delayUs > 0) parts.push(formatValue(o.delayUs, 'µs', 0));
   if (o.fir) parts.push('FIR');
-  if (o.peq.length) parts.push(`${o.peq.length} PEQ`);
+  if (o.peq.length) parts.push(`${o.peq.length} PEQ${o.eqEnabled === false ? ' (byp)' : ''}`);
   if (o.mute) parts.push('muted');
   if (o.invert) parts.push('inverted');
   return parts.join(' · ');

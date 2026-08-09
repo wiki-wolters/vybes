@@ -15,6 +15,23 @@
           <span v-if="system.dimmed" class="dim-pill" title="Volume is dimmed">
             <span class="dim-dot"></span>Dimmed
           </span>
+
+          <!-- These modes silently change levels, so they stay visible from
+               every page: forgetting one on costs SNR without a symptom -->
+          <span
+            v-if="compare.enabled || compare.active"
+            class="dim-pill"
+            title="Comparison mode: A/B states are loudness-matched by trimming the louder one"
+          >
+            <span class="dim-dot"></span>Matched {{ compare.trimDb.toFixed(1) }} dB
+          </span>
+          <span
+            v-if="sweep.enabled"
+            class="dim-pill"
+            title="Sweep mode: headroom pads frozen at a 12 dB reserve for EQ tuning"
+          >
+            <span class="dim-dot"></span>Sweep
+          </span>
         </div>
 
         <div class="hidden sm:flex space-x-6 items-center">
@@ -100,11 +117,15 @@ import { useRoute } from 'vue-router';
 import apiClient from './api-client.js';
 import { useSystemStore } from './stores/system.js';
 import { useGeneratorStore } from './stores/generator.js';
+import { useCompareStore } from './stores/compare.js';
+import { useSweepStore } from './stores/sweep.js';
 import GeneratorDock from './components/GeneratorDock.vue';
 
 const route = useRoute();
 const system = useSystemStore();
 const generator = useGeneratorStore();
+const compare = useCompareStore();
+const sweep = useSweepStore();
 
 const tabs = [
   {

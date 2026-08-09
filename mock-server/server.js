@@ -160,6 +160,10 @@ function broadcast(data) {
       client.send(message);
     }
   });
+  // Emulate the ESP's comparison-mode trim reacting to audible changes
+  if (data.messageType !== 'compareMode') {
+    compareOnAudibleChange(data.messageType);
+  }
 }
 
 // WebSocket connection handler
@@ -184,6 +188,24 @@ wss.on('connection', (ws) => {
         mockOutputSolo = ch;
         console.log(`Output solo -> ${ch}`);
       }
+    }
+    // Sweep (EQ tuning) mode: the device just floors its headroom pads, so
+    // the mock only logs the transitions.
+    if (text === 'sweep:keepalive') {
+      if (Date.now() - sweepLastKeepaliveAt > 5000) console.log('Sweep mode on');
+      sweepLastKeepaliveAt = Date.now();
+    }
+    if (text === 'sweep:off') {
+      if (Date.now() - sweepLastKeepaliveAt <= 5000) console.log('Sweep mode off');
+      sweepLastKeepaliveAt = 0;
+    }
+    // Comparison mode: level-matched A/B. The mock emulates the ESP's trim
+    // engine with a canned trim cycle (see compareOnAudibleChange).
+    if (text === 'compare:keepalive') {
+      compareLastKeepaliveAt = Date.now();
+    }
+    if (text === 'compare:off') {
+      compareLastKeepaliveAt = 0;
     }
   });
 
@@ -243,6 +265,45 @@ setInterval(() => {
   if (Date.now() - grmLastKeepaliveAt > 5000) return;
   broadcast({ type: 'grm', d: mockGrmFrameHex(Date.now()) });
 }, 100);
+
+// --- Mock sweep + comparison modes ---
+// Sweep needs no feedback (the device just pads); comparison mode emulates
+// the ESP's trim engine: activation/expiry transitions broadcast the
+// compareMode shape, and every audible-state broadcast while active cycles
+// through a canned set of plausible trims so the UI's readout exercises.
+let sweepLastKeepaliveAt = 0;
+let compareLastKeepaliveAt = 0;
+let compareActive = false;
+let compareTrimDb = 0;
+const MOCK_TRIM_CYCLE = [0, -1.8, -3.2, -0.9];
+let mockTrimIndex = 0;
+
+function broadcastCompareMode() {
+  broadcast({ messageType: 'compareMode', active: compareActive, trimDb: compareTrimDb });
+}
+
+setInterval(() => {
+  const wantActive = Date.now() - compareLastKeepaliveAt <= 5000;
+  if (wantActive === compareActive) return;
+  compareActive = wantActive;
+  compareTrimDb = 0;
+  mockTrimIndex = 0;
+  console.log(compareActive ? 'Comparison mode on' : 'Comparison mode off');
+  broadcastCompareMode();
+}, 500);
+
+// Audible-state broadcasts advance the canned trim while comparing
+const AUDIBLE_MESSAGE_TYPES = new Set([
+  'outputChanged', 'outputEqChanged', 'eqPointsChanged', 'eqEnabledChanged',
+  'firEnabledChanged', 'activePresetChanged',
+]);
+
+function compareOnAudibleChange(messageType) {
+  if (!compareActive || !AUDIBLE_MESSAGE_TYPES.has(messageType)) return;
+  mockTrimIndex = (mockTrimIndex + 1) % MOCK_TRIM_CYCLE.length;
+  compareTrimDb = MOCK_TRIM_CYCLE[mockTrimIndex];
+  broadcastCompareMode();
+}
 
 // Helper functions
 function getSetting(key) {
@@ -1217,6 +1278,18 @@ app.put('/preset/output/eq/point', wrap(async (req, res) => {
   };
   await saveConfigPath(ctx.preset.name, `$.outputs[${ctx.outputIndex}].peq[${id}]`, stored);
   res.status(204).end();
+}));
+
+// Non-destructive per-output PEQ bypass: the stored points stay
+app.put('/preset/output/eq/enabled', wrap(async (req, res) => {
+  const ctx = await requirePresetOutput(req, res);
+  if (!ctx) return;
+  const enabled = parseOnOff(req.query.state);
+  if (enabled === null) {
+    return res.status(400).json({ error: 'Invalid state' });
+  }
+  await saveConfigPath(ctx.preset.name, `$.outputs[${ctx.outputIndex}].eqEnabled`, enabled);
+  res.json(broadcastOutputChanged(ctx.preset.name, ctx.outputIndex, { eqEnabled: enabled }));
 }));
 
 // FIR file per output. The shared tap pool is enforced here: a load that

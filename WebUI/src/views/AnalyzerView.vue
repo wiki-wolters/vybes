@@ -307,6 +307,17 @@
             Correct the whole system with the shared input EQ, or pick one output to
             measure and EQ that speaker alone.
           </p>
+          <!-- Anything already processing this scope's path: engaged EQs are
+               warned about (Apply replaces them with a residual-only fit),
+               kept processing (FIR, out-of-scope EQ) is just noted. -->
+          <p
+            v-for="note in scopeNotes"
+            :key="note.text"
+            class="mt-1.5 text-xs"
+            :class="note.warn ? 'text-amber-300' : 'text-vybes-text-secondary'"
+          >
+            {{ note.text }}
+          </p>
         </div>
         <div class="grid sm:grid-cols-2 gap-6">
           <div>
@@ -471,6 +482,10 @@
         with the {{ generatedPoints.length }} generated band{{ generatedPoints.length === 1 ? '' : 's' }}
         and saves it to the device. Any EQ bands currently in that preset will be overwritten.
       </p>
+      <p v-if="scopeEqBypassed" class="mt-2 text-sm text-amber-300/90">
+        This EQ is currently bypassed — applying re-enables it, matching what
+        was measured (the deviation above was captured without it).
+      </p>
     </ModalDialog>
   </div>
 </template>
@@ -623,10 +638,27 @@ let keepaliveTimer = null;
 let sourceAvgPower = new Float32Array(makeBandGrid(3).centers.length);
 let lastSourceEmaAt = 0;
 
+// EQ/FIR edits made anywhere (preset editor, another client, our own Apply)
+// change what the scope notes should say. Refetch on the broadcasts,
+// debounced: a bulk EQ apply is several broadcasts in quick succession.
+const SCOPE_REFRESH_TYPES = new Set([
+  'outputChanged', 'outputEqChanged', 'eqPointsChanged', 'eqEnabledChanged',
+  'firEnabledChanged',
+]);
+let outputsRefreshTimer = null;
+function scheduleOutputsRefresh() {
+  clearTimeout(outputsRefreshTimer);
+  outputsRefreshTimer = setTimeout(() => loadOutputs(activePresetName.value), 300);
+}
+
 function onLiveMessage(data) {
   if (!data) return;
   if (data.messageType === 'activePresetChanged' && data.activePresetName) {
     activePresetName.value = data.activePresetName;
+    return;
+  }
+  if (SCOPE_REFRESH_TYPES.has(data.messageType)) {
+    scheduleOutputsRefresh();
     return;
   }
   if (data.type !== 'rta' || typeof data.d !== 'string') return;
@@ -1231,12 +1263,66 @@ const applyState = reactive({ busy: false, message: '', error: false });
 const MAX_OUTPUT_EQ_BANDS = 10; // MAX_OUTPUT_PEQ on the device
 const scope = ref('input'); // 'input' | output index as a string
 const outputs = ref([]); // enabled outputs of the active preset
+const inputEqEnabled = ref(true); // the active preset's inputEq.enabled flag
+const inputEqActiveBands = ref(0); // non-flat input EQ bands (|gain| > 0.05)
+const presetFirEnabled = ref(false); // the preset's master FIR toggle
 const scopeIsOutput = computed(() => scope.value !== 'input');
 const scopeOutput = computed(() =>
   scopeIsOutput.value
     ? outputs.value.find((o) => o.index === Number(scope.value)) ?? null
     : null
 );
+// Whether the EQ the correction targets is currently bypassed. Applying
+// re-enables it (see applyGeneratedEq) - a correction saved into a bypassed
+// EQ would be inaudible, and the measurement was made without it anyway.
+const scopeEqBypassed = computed(() =>
+  scopeIsOutput.value ? scopeOutput.value?.eqEnabled === false : !inputEqEnabled.value
+);
+
+// What's already processing the selected scope's path. Engaged EQs are the
+// trap (measured in, then *replaced* by Apply - a fit of only the leftover
+// error, which largely undoes them); FIR and out-of-scope EQ are kept and
+// merely stacked on, so those notes are informational.
+const scopeNotes = computed(() => {
+  const notes = [];
+  const bandWord = (n) => `${n} active band${n === 1 ? '' : 's'}`;
+  if (scopeIsOutput.value) {
+    const o = scopeOutput.value;
+    if (!o) return notes;
+    if (o.eqEnabled && o.activePeqBands > 0) {
+      notes.push({ warn: true, text:
+        `“${o.label}” already has ${bandWord(o.activePeqBands)} of output EQ. They are ` +
+        'measured in, so the correction only fixes what remains — and applying replaces ' +
+        'them with that leftover-only fit, largely undoing their effect. Bypass or clear ' +
+        'that EQ before measuring for a full fresh correction.' });
+    }
+    if (presetFirEnabled.value && o.fir) {
+      notes.push({ warn: false, text:
+        `“${o.label}” runs FIR “${o.fir}”. It is measured in and kept — the correction stacks on top of it.` });
+    }
+    if (inputEqEnabled.value && inputEqActiveBands.value > 0) {
+      notes.push({ warn: false, text:
+        `The shared input EQ (${bandWord(inputEqActiveBands.value)}) is measured in and kept — ` +
+        'the correction stacks on top of it.' });
+    }
+  } else {
+    if (inputEqEnabled.value && inputEqActiveBands.value > 0) {
+      notes.push({ warn: true, text:
+        `This preset's input EQ already has ${bandWord(inputEqActiveBands.value)}. They are ` +
+        'measured in, so the correction only fixes what remains — and applying replaces ' +
+        'them with that leftover-only fit, largely undoing their effect. Toggle the input ' +
+        'EQ off or clear it before measuring for a full fresh correction.' });
+    }
+    const withFir = presetFirEnabled.value
+      ? outputs.value.filter((o) => o.fir)
+      : [];
+    if (withFir.length) {
+      notes.push({ warn: false, text:
+        `FIR filters are measured in and kept: ${withFir.map((o) => `${o.label} (“${o.fir}”)`).join(', ')}.` });
+    }
+  }
+  return notes;
+});
 
 async function loadOutputs(presetName) {
   if (!presetName) return;
@@ -1249,15 +1335,26 @@ async function loadOutputs(presetName) {
       const x = (p.crossovers || []).find((c) => c.id === f.xover);
       return x ? x.freq : null;
     };
+    // A band at 0 dB does nothing, so only non-flat bands count as "active"
+    // (fresh templates ship flat placeholder bands).
+    const activeBands = (points) =>
+      (points || []).filter((b) => Math.abs(b.gain) > 0.05).length;
     outputs.value = (p.outputs || [])
       .map((o, index) => ({
         index,
         label: o.label,
         enabled: o.enabled,
+        eqEnabled: o.eqEnabled !== false,
+        activePeqBands: activeBands(o.peq),
+        fir: o.fir || '',
         hpHz: freqOf(o.hp),
         lpHz: freqOf(o.lp),
       }))
       .filter((o) => o.enabled);
+    inputEqEnabled.value = Boolean(p.inputEq?.enabled);
+    const spl0 = (p.inputEq?.sets || []).find((s) => s.spl === 0);
+    inputEqActiveBands.value = activeBands(spl0?.points);
+    presetFirEnabled.value = Boolean(p.firEnabled);
   } catch (e) {
     outputs.value = [];
   }
@@ -1287,8 +1384,9 @@ watch(scope, (s, prev) => {
     // slopes would burn the whole boost budget on rolloff.
     eqGen.loHz = o?.hpHz ? Math.round(Math.min(500, Math.max(20, o.hpHz))) : 25;
     eqGen.hiHz = o?.lpHz ? Math.round(Math.min(20000, Math.max(1000, o.lpHz))) : 10000;
-    // The output EQ path has no automatic headroom compensation
-    eqGen.maxBoost = Math.min(eqGen.maxBoost, 3);
+    // Output EQ boosts are covered by the device's shared headroom pad
+    // (the largest active output-EQ boost pads all outputs equally), so
+    // the boost budget matches the input scope.
     eqGen.maxBands = Math.min(eqGen.maxBands, MAX_OUTPUT_EQ_BANDS);
   } else if (prev !== 'input') {
     apiClient.sendLiveMessage('solo:-1');
@@ -1363,20 +1461,37 @@ async function applyGeneratedEq() {
   applyState.message = '';
   const points = generatedPoints.value.map((p, id) => ({ id, freq: p.freq, gain: p.gain, q: p.q }));
   try {
+    // Re-enable a bypassed target EQ: the correction was fitted against
+    // what the mic heard (EQ bypassed = raw response), so enabling on apply
+    // is exactly what makes the prediction come true - and bands saved into
+    // a bypassed EQ would be inaudible.
+    const reEnabled = scopeEqBypassed.value;
     if (scopeIsOutput.value) {
       await apiClient.saveOutputEq(activePresetName.value, Number(scope.value), points);
+      if (reEnabled) {
+        await apiClient.setOutputEqEnabled(activePresetName.value, Number(scope.value), true);
+        const o = scopeOutput.value;
+        if (o) o.eqEnabled = true;
+      }
       applyState.error = false;
-      applyState.message = `Saved ${points.length} band${points.length === 1 ? '' : 's'} to the “${scopeOutput.value?.label}” output EQ.`;
+      applyState.message = `Saved ${points.length} band${points.length === 1 ? '' : 's'} to the “${scopeOutput.value?.label}” output EQ${reEnabled ? ' and re-enabled it' : ''}.`;
     } else {
       await apiClient.savePrefEqSet(activePresetName.value, points);
+      if (reEnabled) {
+        await apiClient.setEQEnabled(activePresetName.value, 'pref', true);
+        inputEqEnabled.value = true;
+      }
       applyState.error = false;
-      applyState.message = `Saved ${points.length} band${points.length === 1 ? '' : 's'} to “${activePresetName.value}”.`;
+      applyState.message = `Saved ${points.length} band${points.length === 1 ? '' : 's'} to “${activePresetName.value}”${reEnabled ? ' and enabled the EQ' : ''}.`;
     }
     // The preset editor trusts the store's cached copy; resync it or the
     // applied bands stay invisible there until a full page reload.
     if (presetStore.presetName === activePresetName.value) {
       await presetStore.refresh();
     }
+    // The scope notes read our local snapshot; the broadcasts also schedule
+    // this, but not over a dropped socket.
+    scheduleOutputsRefresh();
   } catch (err) {
     applyState.error = true;
     applyState.message = `Failed to apply EQ: ${err.message}`;
@@ -1465,6 +1580,7 @@ onUnmounted(() => {
   if (unsubscribeLive) unsubscribeLive();
   clearInterval(keepaliveTimer);
   clearInterval(micPollTimer);
+  clearTimeout(outputsRefreshTimer);
   if (resizeObserver) resizeObserver.disconnect();
   stopMic();
 });

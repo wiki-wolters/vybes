@@ -39,6 +39,7 @@ function emptyOutput(index) {
     lp: { mode: 'off' },
     hpFloor: 0,
     peq: [],
+    eqEnabled: true,
     fir: '',
     delayUs: 0,
     gainDb: 0,

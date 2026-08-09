@@ -213,6 +213,13 @@ export const usePresetStore = defineStore('preset', () => {
       'Failed to update output EQ');
   }
 
+  /** Non-destructive PEQ bypass: the stored points stay */
+  function setOutputEqEnabled(index, eqEnabled) {
+    setOutput(index, { eqEnabled });
+    return push(() => apiClient.setOutputEqEnabled(presetName.value, index, eqEnabled),
+      'Failed to update output EQ bypass');
+  }
+
   // ===== Crossover actions =====
 
   /**
@@ -337,7 +344,7 @@ export const usePresetStore = defineStore('preset', () => {
     loadPreset, refresh, loadFirFiles, loadTemplates, clearError,
     setOutputDelay, setOutputGain, setOutputFir, setOutputMute,
     setOutputInvert, setOutputEnabled, setOutputLabel, setOutputSource,
-    setOutputFilter, saveOutputEq,
+    setOutputFilter, saveOutputEq, setOutputEqEnabled,
     setCrossoverFreq, setCrossoverEnabled,
     setInputEqEnabled, saveInputEq, setDelaysEnabled, setFirEnabled,
     handleLiveMessage,

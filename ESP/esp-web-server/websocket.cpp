@@ -2,6 +2,7 @@
 #include "websocket.h"
 #include "web_server.h"
 #include "teensy_comm.h"
+#include "compare_mode.h"
 #include "config.h" // NUM_OUTPUTS, for solo channel validation
 #include <atomic>
 
@@ -52,6 +53,12 @@ static unsigned long soloLastClientKeepaliveAt = 0;
 static int soloChannel = -1;
 static bool soloActive = false;
 
+// Sweep-mode subscription ("sweep:keepalive"): identical scheme. While held,
+// the Teensy floors its headroom pads at a fixed reserve so EQ edits can't
+// move the baseline level (see CMD_SET_SWEEP_MODE in teensy_protocol.h).
+static unsigned long sweepLastClientKeepaliveAt = 0;
+static bool sweepActive = false;
+
 static void setupHandler(PsychicWebSocketHandler &handler, std::atomic<int> &clientCount) {
     handler.onOpen([&clientCount](PsychicWebSocketClient *client) {
         clientCount.fetch_add(1);
@@ -70,6 +77,22 @@ static void setupHandler(PsychicWebSocketHandler &handler, std::atomic<int> &cli
             }
             if (frame->len == 13 && strncmp((const char*)frame->payload, "grm:keepalive", 13) == 0) {
                 grmLastClientKeepaliveAt = millis();
+                return ESP_OK;
+            }
+            if (frame->len == 15 && strncmp((const char*)frame->payload, "sweep:keepalive", 15) == 0) {
+                sweepLastClientKeepaliveAt = millis();
+                return ESP_OK;
+            }
+            if (frame->len == 9 && strncmp((const char*)frame->payload, "sweep:off", 9) == 0) {
+                sweepLastClientKeepaliveAt = 0; // explicit clear, like "solo:-1"
+                return ESP_OK;
+            }
+            if (frame->len == 17 && strncmp((const char*)frame->payload, "compare:keepalive", 17) == 0) {
+                compareModeKeepalive();
+                return ESP_OK;
+            }
+            if (frame->len == 11 && strncmp((const char*)frame->payload, "compare:off", 11) == 0) {
+                compareModeRelease();
                 return ESP_OK;
             }
             if (frame->len >= 6 && frame->len <= 8 &&
@@ -217,6 +240,21 @@ void websocketLoop() {
     } else if (grmActive) {
         grmActive = false;
         sendToTeensy(CMD_SET_GRM, "0");
+    }
+
+    bool wantSweep = sweepLastClientKeepaliveAt != 0 &&
+                     now - sweepLastClientKeepaliveAt < RTA_CLIENT_TIMEOUT_MS &&
+                     totalClients() > 0;
+    static unsigned long lastSweepRefreshAt = 0;
+    if (wantSweep) {
+        sweepActive = true;
+        if (now - lastSweepRefreshAt >= RTA_TEENSY_REFRESH_MS) {
+            lastSweepRefreshAt = now;
+            sendToTeensy(CMD_SET_SWEEP_MODE, "1");
+        }
+    } else if (sweepActive) {
+        sweepActive = false;
+        sendToTeensy(CMD_SET_SWEEP_MODE, "0");
     }
 
     bool wantSolo = soloLastClientKeepaliveAt != 0 &&

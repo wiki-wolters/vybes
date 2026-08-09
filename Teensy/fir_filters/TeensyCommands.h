@@ -18,6 +18,7 @@
   X(setOutputLp, handleSetOutputLp) \
   X(setOutputEq, handleSetOutputEq) \
   X(resetOutputEq, handleResetOutputEq) \
+  X(setOutputEqEnabled, handleSetOutputEqEnabled) \
   X(setInputEq, handleSetInputEq) \
   X(resetInputEq, handleResetInputEq) \
   X(setInputEqEnabled, handleSetInputEqEnabled) \
@@ -44,6 +45,9 @@
   X(startDelayProbe, handleStartDelayProbe) \
   X(stopDelayProbe, handleStopDelayProbe) \
   X(soloOutput, handleSoloOutput) \
+  X(setSweepMode, handleSetSweepMode) \
+  X(setCompareTrim, handleSetCompareTrim) \
+  X(getFirGains, handleGetFirGains) \
   X(setMute, handleSetMute) \
   X(setMutePercent, handleSetMutePercent) \
   X(ping, handlePing)
