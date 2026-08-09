@@ -188,6 +188,12 @@ void AsyncAudioInputUSB::update(void)
             healNeeded = true;
             stepAtKillPpm = (float)((resampler->getStep() - 1.0) * 1e6);
         }
+        // Keep draining the ring to target meanwhile: loop() can be blocked
+        // for seconds (FIR loads from SD at boot), and without consumption
+        // the ring overflows and every packet drops until the heal runs.
+        const uint32_t target = (uint32_t)(targetLatencyS * USB_NOMINAL_HZ);
+        const uint32_t avail = ring->available();
+        if (avail > target) ring->consume(avail - target);
         return;
     }
     if (ring->justStarted()) {
