@@ -40,6 +40,7 @@ public:
     uint32_t drops() const { return ring ? ring->drops() : 0; }   // frames dropped, ring full
     uint32_t stops() const { return ring ? ring->stops() : 0; }   // stream stop/start transitions
     uint32_t starves() const { return starveCount; }              // blocks padded with silence mid-stream
+    uint32_t recoveries() const { return recoveryCount; }         // resampler kill-switch self-heals
 
     // Called by the core fork's usb_audio_rx_hook (USB interrupt context).
     // Returns nonzero when the packet was consumed.
@@ -47,6 +48,7 @@ public:
 
 private:
     void servo();
+    void resyncToTarget();
     int resampleBlock(int16_t* dstL, int16_t* dstR);
 
     static AsyncAudioInputUSB* instance;
@@ -58,6 +60,7 @@ private:
     double targetLatencyS;
     double maxLatencyS;
     uint32_t starveCount;
+    uint32_t recoveryCount;
 };
 
 #endif // ASYNC_AUDIO_INPUT_USB_H

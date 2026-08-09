@@ -65,7 +65,17 @@ public:
         if (!prefilled) {
             if (available() < prefill) return false;
             prefilled = true;
+            started = true;
         }
+        return true;
+    }
+
+    // True exactly once per stream (re)start, on the first ready cycle after
+    // the prefill gate opens - the consumer uses it to trim the ring down to
+    // its target latency (hosts often front-load tens of ms on stream open).
+    bool justStarted() {
+        if (!started) return false;
+        started = false;
         return true;
     }
 
@@ -96,6 +106,7 @@ private:
     volatile uint32_t lastRxMicros;
     volatile bool active;
     bool prefilled; // consumer-only
+    bool started = false; // consumer-only
     volatile uint32_t dropCount;
     uint32_t stopCount; // consumer-only
     const uint32_t prefill;

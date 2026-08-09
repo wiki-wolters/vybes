@@ -93,13 +93,19 @@ static void test_full_ring_drops_whole_packet() {
 static void test_prefill_gate() {
     UsbRxRing ring(PREFILL, STOP_GAP_US);
     TEST_ASSERT_FALSE(ring.consumerReady(0)); // nothing written yet
+    TEST_ASSERT_FALSE(ring.justStarted());
     uint32_t now = feed(ring, PREFILL - 44, 0);
     TEST_ASSERT_FALSE(ring.consumerReady(now)); // below prefill
+    TEST_ASSERT_FALSE(ring.justStarted());
     now = feed(ring, 44, now);
     TEST_ASSERT_TRUE(ring.consumerReady(now)); // reached prefill
+    // justStarted fires exactly once per stream start
+    TEST_ASSERT_TRUE(ring.justStarted());
+    TEST_ASSERT_FALSE(ring.justStarted());
     // Once open, the gate stays open below the prefill level
     ring.consume(PREFILL - 10);
     TEST_ASSERT_TRUE(ring.consumerReady(now));
+    TEST_ASSERT_FALSE(ring.justStarted());
 }
 
 static void test_stop_detection_drains_and_rearms() {
@@ -120,6 +126,7 @@ static void test_stop_detection_drains_and_rearms() {
     TEST_ASSERT_FALSE(ring.consumerReady(now));
     now = feed(ring, PREFILL, now);
     TEST_ASSERT_TRUE(ring.consumerReady(now));
+    TEST_ASSERT_TRUE(ring.justStarted()); // re-armed by the restart
     TEST_ASSERT_EQUAL_UINT32(1, ring.stops());
 }
 

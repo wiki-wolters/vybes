@@ -24,6 +24,15 @@ static const uint32_t STOP_GAP_US = 100000;
 // raw fill sawtooths by a packet (~1ms) depending on update/packet phase.
 static const float DIFF_LPF_ALPHA = 0.09f;
 
+// Hard bound on the latency error fed to the step PID. UsbResampler's
+// addToSampleDiff PERMANENTLY deactivates the resampler when the requested
+// step deviates >1% from configured (maxAdaption); with kp=0.6 a raw error
+// above ~16.6ms would reach that. Clamped at 4ms the worst-case correction
+// (kp + kd on the clamped slope + bounded integral) stays under ~0.7%, so
+// the kill switch is unreachable in normal operation - and update() heals
+// by reconfiguring if it ever fires anyway.
+static const float DIFF_CLAMP_S = 0.004f;
+
 AsyncAudioInputUSB* AsyncAudioInputUSB::instance = nullptr;
 
 extern "C" int usb_audio_rx_hook(const int16_t* lr, unsigned int frames)
@@ -47,7 +56,8 @@ AsyncAudioInputUSB::AsyncAudioInputUSB(bool dither, bool noiseshaping,
       diffFiltered(0.0f),
       targetLatencyS(TARGET_LATENCY_S),
       maxLatencyS(MAX_LATENCY_S),
-      starveCount(0)
+      starveCount(0),
+      recoveryCount(0)
 {
     ring = new UsbRxRing(PREFILL_SAMPLES, STOP_GAP_US);
     resampler = new UsbResampler(attenuation, minHalfFilterLength, maxHalfFilterLength);
@@ -79,24 +89,35 @@ double AsyncAudioInputUSB::stepPpm() const
     return resampler ? (resampler->getStep() - 1.0) * 1e6 : 0.0;
 }
 
+// Drop ring content down to the target latency and neutralize the servo
+// state (fixStep bakes the current adaption in as the new baseline and
+// clears the PID integrator).
+void AsyncAudioInputUSB::resyncToTarget()
+{
+    const uint32_t target = (uint32_t)(targetLatencyS * USB_NOMINAL_HZ);
+    const uint32_t avail = ring->available();
+    if (avail > target) ring->consume(avail - target);
+    diffFiltered = 0.0f;
+    resampler->fixStep();
+}
+
 // Latency servo, the counterpart of AsyncAudioInputSPDIF3's
-// monitorResampleBuffer(): low-pass the fill error and feed it to the
-// resampler's step PID; on gross overshoot, resync hard by dropping down to
-// the target.
+// monitorResampleBuffer(): on gross overshoot resync hard first (so the PID
+// never sees the excursion), otherwise low-pass and clamp the fill error
+// and feed it to the resampler's step PID.
 void AsyncAudioInputUSB::servo()
 {
     const double bufferedS = ring->available() / USB_NOMINAL_HZ;
+    if (bufferedS > maxLatencyS) {
+        resyncToTarget();
+        return;
+    }
     const double diff = bufferedS - targetLatencyS;
     diffFiltered += DIFF_LPF_ALPHA * ((float)diff - diffFiltered);
-    resampler->addToSampleDiff(diffFiltered);
-
-    if (bufferedS > maxLatencyS) {
-        const uint32_t target = (uint32_t)(targetLatencyS * USB_NOMINAL_HZ);
-        const uint32_t avail = ring->available();
-        if (avail > target) ring->consume(avail - target);
-        diffFiltered = 0.0f;
-        resampler->fixStep();
-    }
+    float fed = diffFiltered;
+    if (fed > DIFF_CLAMP_S) fed = DIFF_CLAMP_S;
+    if (fed < -DIFF_CLAMP_S) fed = -DIFF_CLAMP_S;
+    resampler->addToSampleDiff(fed);
 }
 
 // Fill one output block through the resampler, in up to two passes when the
@@ -133,6 +154,21 @@ void AsyncAudioInputUSB::update(void)
         // AudioInputUSB with no data) and keep the servo state neutral
         diffFiltered = 0.0f;
         return;
+    }
+    if (!resampler->initialized()) {
+        // The step PID's kill switch fired (addToSampleDiff deactivates on
+        // >1% step requests). Self-heal like AsyncAudioInputSPDIF3's
+        // configure(): rebuild the filter and restart from the target fill.
+        // One expensive update (~ms), silence until the next block.
+        resampler->configure(USB_NOMINAL_HZ, AUDIO_SAMPLE_RATE_EXACT);
+        resyncToTarget();
+        recoveryCount++;
+        return;
+    }
+    if (ring->justStarted()) {
+        // Stream (re)start: hosts front-load tens of ms on stream open;
+        // trim straight to the target so the servo starts from zero error.
+        resyncToTarget();
     }
     servo();
 

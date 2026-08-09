@@ -460,7 +460,9 @@ void loop() {
     Serial.print(", starves ");
     Serial.print(USB_in.starves());
     Serial.print(", stops ");
-    Serial.println(USB_in.stops());
+    Serial.print(USB_in.stops());
+    Serial.print(", recoveries ");
+    Serial.println(USB_in.recoveries());
 #else
     static uint32_t lastUnderruns = 0, lastOverruns = 0;
     uint32_t underruns = usb_audio_underrun_count;
