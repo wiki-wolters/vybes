@@ -32,11 +32,13 @@ bool isValidFirFilename(const String& filename) {
 }
 
 // --- Tap accounting for the shared FIR pool ---
-// Tap counts derive from the file sizes the Teensy reports with its SD
-// listing ("name size" lines):
-//   - .bin files are raw float32 taps: size / 4
-//   - text formats are one coefficient line per tap (~12 bytes each
-//     printed): estimated as size / 12
+// Tap counts come from the SD listing the Teensy reports:
+//   - WAV files carry an exact count as the line's third token ("name size
+//     taps", parsed from the WAV header by the Teensy) - used verbatim, so
+//     exact-fit pool configs are accepted
+//   - otherwise the count is estimated from the file size: .bin files are
+//     raw float32 taps (size / 4, exact); text formats are one coefficient
+//     line per tap (~12 bytes each printed): estimated as size / 12
 //   - files without a known size count as a flat default
 // This accounting is what the API enforces and the UI displays; the
 // Teensy's own load-time pool check remains the authoritative backstop.
@@ -47,6 +49,10 @@ bool isValidFirFilename(const String& filename) {
 uint32_t firFileTaps(const char* file) {
     if (file == nullptr || file[0] == '\0') {
         return 0;
+    }
+    long taps = getCachedFirFileTaps(file);
+    if (taps > 0) {
+        return (uint32_t)taps;
     }
     long size = getCachedFirFileSize(file);
     if (size < 0) {
@@ -84,8 +90,8 @@ esp_err_t handleGetFirFiles(PsychicRequest *request) {
         return request->reply(200, "application/json", "[]");
     }
 
-    // The cache is a newline-separated list of "name size" (or bare "name")
-    // lines; the API returns a plain array of names.
+    // The cache is a newline-separated list of "name size [taps]" (or bare
+    // "name") lines; the API returns a plain array of names.
     JsonDocument doc;
     JsonArray files = doc.to<JsonArray>();
 

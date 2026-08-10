@@ -1363,7 +1363,8 @@ void handleSetVolume(const String& command, String* args, int argCount, OutputSt
 
 // Replies with the SD file list, framed as:
 //   FILES
-//   <one "name size" line per file, size in bytes>
+//   <one "name size" line per file (size in bytes); WAV files carry the
+//    exact FIR tap count as a third token: "name size taps">
 //   EOT
 void handleGetFiles(const String& command, String* args, int argCount, OutputStream& stream) {
   stream.print("FILES\n");
@@ -1377,6 +1378,17 @@ void handleGetFiles(const String& command, String* args, int argCount, OutputStr
           stream.print(file.name());
           stream.print(" ");
           stream.print((unsigned long)file.size());
+          // A WAV's size can't be converted to taps by the ESP (the header
+          // size varies with metadata chunks), so report the exact count
+          // from the header - only header bytes are read, listing stays fast
+          String name = file.name();
+          if (name.endsWith(".wav") || name.endsWith(".WAV")) {
+            long taps = FIRLoader::countWavTaps(file);
+            if (taps > 0) {
+              stream.print(" ");
+              stream.print(taps);
+            }
+          }
           stream.print("\n");
         }
         file.close();

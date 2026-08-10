@@ -39,7 +39,86 @@ float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps, uint16
     file.close();
     return coeffs;
 }
+
+// SD wrapper for the core counter below; the caller keeps ownership of the
+// file (position is clobbered, the file is not closed).
+long FIRLoader::countWavTaps(File& file) {
+    FileCoeffSource src(file);
+    return countWavTaps(src, String(file.name()));
+}
 #endif // VYBES_NATIVE
+
+// See the header comment: exact frame count from the WAV header chunks only.
+long FIRLoader::countWavTaps(CoeffSource& src, const String& filename) {
+    if (src.size() < 44) {
+        return 0;
+    }
+
+    char riff_id[4];
+    char wave_id[4];
+    src.seek(0);
+    if (src.read(riff_id, 4) != 4) return 0;
+    src.seek(8);
+    if (src.read(wave_id, 4) != 4) return 0;
+    if (strncmp(riff_id, "RIFF", 4) != 0 || strncmp(wave_id, "WAVE", 4) != 0) {
+        logError("Not a valid WAV file (missing RIFF/WAVE): " + filename);
+        return 0;
+    }
+
+    src.seek(12); // Move past 'RIFF', size, and 'WAVE'
+    uint16_t bitsPerSample = 0;
+    uint16_t numChannels = 1;
+    bool fmtChunkFound = false;
+    uint32_t dataChunkSize = 0;
+    bool dataChunkFound = false;
+
+    while (src.available() && !(fmtChunkFound && dataChunkFound)) {
+        char chunk_id[4];
+        uint32_t chunk_size;
+        if (src.read(chunk_id, 4) != 4) break;
+        if (src.read(&chunk_size, 4) != 4) break;
+
+        if (strncmp(chunk_id, "fmt ", 4) == 0) {
+            uint64_t fmt_data_start = src.position();
+            // numChannels is at offset 2, bitsPerSample at offset 14
+            src.seek(fmt_data_start + 2);
+            src.read((uint8_t*)&numChannels, 2);
+            if (numChannels == 0) numChannels = 1; // Safety check
+            src.seek(fmt_data_start + 14);
+            src.read((uint8_t*)&bitsPerSample, 2);
+            fmtChunkFound = true;
+            src.seek(fmt_data_start + chunk_size);
+        } else {
+            if (strncmp(chunk_id, "data", 4) == 0) {
+                dataChunkSize = chunk_size;
+                dataChunkFound = true;
+            }
+            // Skip the chunk body ('data' included - only its size matters)
+            src.seek(src.position() + chunk_size);
+        }
+        // Handle odd-sized chunks (must be word-aligned)
+        if (chunk_size % 2 != 0) {
+            src.seek(src.position() + 1);
+        }
+    }
+
+    if (!dataChunkFound) {
+        logError("Could not find 'data' chunk to count taps in: " + filename);
+        return 0;
+    }
+
+    long count;
+    if (fmtChunkFound && bitsPerSample > 0) {
+        count = dataChunkSize / (bitsPerSample / 8);
+        if (numChannels > 0) {
+            count /= numChannels;
+        }
+    } else {
+        // Fallback for safety, assume 16-bit mono if fmt chunk is weird
+        count = dataChunkSize / 2;
+    }
+    return count;
+}
 
 // Core implementation: reads the entire source once to count the taps, then
 // rewinds and loads them. See the header comment on the SD wrapper above.
@@ -51,95 +130,9 @@ float* FIRLoader::loadCoefficients(CoeffSource& src, const String& filename,
     // Count the number of coefficients first
     int coeffCount = 0;
     if (filename.endsWith(".wav") || filename.endsWith(".WAV")) {
-        // For WAV files, we need to parse the header to find the 'data' chunk and its size.
-        // This is more robust than assuming a fixed header size.
-        src.seek(0);
-        if (src.size() >= 44) {
-            char riff_id[4];
-            char wave_id[4];
-            src.seek(0);
-            src.read(riff_id, 4);
-            src.seek(8);
-            src.read(wave_id, 4);
-
-            if (strncmp(riff_id, "RIFF", 4) == 0 && strncmp(wave_id, "WAVE", 4) == 0) {
-                src.seek(12); // Move past 'RIFF', size, and 'WAVE'
-                char chunk_id[4];
-                uint32_t chunk_size;
-                bool dataChunkFound = false;
-
-                while (src.available()) {
-                    if (src.read(chunk_id, 4) != 4) break;
-                    if (src.read(&chunk_size, 4) != 4) break;
-
-                    if (strncmp(chunk_id, "data", 4) == 0) {
-                        // Found the data chunk.
-                        // We need to determine the number of samples based on bit depth.
-                        // To do this, we need to read the 'fmt' chunk first.
-                        // This is getting complex for just counting.
-                        // Let's assume the most common case for a quick count,
-                        // and the loader will do the full validation.
-                        // A better approach might be to not pre-count for WAVs.
-                        // For now, we'll assume 32-bit float or 16-bit PCM for a rough estimate.
-                        // Let's re-read the fmt chunk to get bit depth.
-
-                        // Re-scan to find fmt chunk to get bits per sample and num channels
-                        src.seek(12);
-                        bool fmtChunkFound = false;
-                        uint16_t bitsPerSample = 0;
-                        uint16_t numChannels = 1;
-                        while(src.available()) {
-                            char inner_id[4];
-                            uint32_t inner_size;
-                            if (src.read(inner_id, 4) != 4) break;
-                            if (src.read(&inner_size, 4) != 4) break;
-
-                            if (strncmp(inner_id, "fmt ", 4) == 0) {
-                                long fmt_data_start = src.position();
-                                // Read numChannels (at offset 2)
-                                src.seek(fmt_data_start + 2);
-                                src.read((uint8_t*)&numChannels, 2);
-                                if (numChannels == 0) numChannels = 1; // Safety check
-
-                                // Read bitsPerSample (at offset 14)
-                                src.seek(fmt_data_start + 14);
-                                src.read((uint8_t*)&bitsPerSample, 2);
-
-                                fmtChunkFound = true;
-                                break; // Found fmt, exit inner loop
-                            }
-                            src.seek(src.position() + inner_size);
-                            if (inner_size % 2 != 0) src.seek(src.position() + 1);
-                        }
-
-                        if (fmtChunkFound && bitsPerSample > 0) {
-                            coeffCount = chunk_size / (bitsPerSample / 8);
-                            if (numChannels > 0) {
-                                coeffCount /= numChannels;
-                            }
-                        } else {
-                            // Fallback for safety, assume 16-bit mono if fmt chunk is weird
-                            coeffCount = chunk_size / 2;
-                        }
-
-                        dataChunkFound = true;
-                        break;
-                    } else {
-                        // Not the data chunk, skip it.
-                        src.seek(src.position() + chunk_size);
-                        // Handle odd-sized chunks
-                        if (chunk_size % 2 != 0) {
-                            src.seek(src.position() + 1);
-                        }
-                    }
-                }
-                if (!dataChunkFound) {
-                    logError("Could not find 'data' chunk to count taps in: " + filename);
-                }
-            } else {
-                logError("Not a valid WAV file (missing RIFF/WAVE): " + filename);
-            }
-        }
+        // Exact count from the WAV header chunks (the same counter the SD
+        // listing uses); the loader below does the full validation.
+        coeffCount = (int)countWavTaps(src, filename);
     } else if (filename.endsWith(".txt") || filename.endsWith(".TXT")) {
         // For text files, count the number of valid number entries
         src.seek(0);

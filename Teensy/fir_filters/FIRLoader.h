@@ -16,7 +16,19 @@ public:
     // Returns a pointer to the coefficients array and sets actualTaps to the number of taps found.
     static float* loadCoefficients(String filename, uint16_t& actualTaps, uint16_t maxTaps = 0,
                                    bool truncateToMax = true);
+
+    // Exact tap count of an open WAV file (0 if the header can't be parsed).
+    // Reads only the header chunks - the data chunk is never read - so it is
+    // cheap enough to call per file while building the SD listing.
+    static long countWavTaps(File& file);
 #endif
+
+    // Core WAV tap counter: parses the chunk list for 'fmt ' (bit depth,
+    // channels) and 'data' (size) and returns the exact number of frames.
+    // Metadata chunks (fact, LIST/INFO, ...) are skipped, so unlike any
+    // file-size heuristic this never over- or undercounts. Returns 0 if the
+    // header can't be parsed. 'filename' is only used for log messages.
+    static long countWavTaps(CoeffSource& src, const String& filename);
 
     // Core parse/load logic, operating on an abstract byte source so it can
     // be exercised host-side with in-memory fixtures. 'filename' is only

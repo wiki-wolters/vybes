@@ -12,7 +12,8 @@
 // Incoming line assembly. Sized for the longest line the Teensy sends: a
 // 121-band RTA frame ("RTA " + 242 hex chars = 246 chars).
 #define RX_LINE_MAX 300
-// Cached SD file list (newline separated "name size" lines)
+// Cached SD file list (newline separated "name size" lines; WAV lines from
+// newer Teensy firmware carry the exact tap count: "name size taps")
 #define FIR_CACHE_MAX 1024
 // Heartbeat: detects a Teensy reboot even if its boot event was missed
 #define PING_INTERVAL_MS 5000
@@ -217,21 +218,35 @@ size_t copyCachedFirFiles(char* dst, size_t dstSize) {
     return len;
 }
 
-long getCachedFirFileSize(const char* name) {
+// Look up a file's cache line and return the numeric field at fieldIndex
+// (0 = size, 1 = taps), or -1 if the file or the field is absent. A line is
+// "name" (old firmware), "name size", or "name size taps" (WAV lines from
+// newer firmware); filenames can't contain spaces (enforced on upload), so
+// the first token is always the name.
+static long getCachedFirFileField(const char* name, int fieldIndex) {
     size_t nameLen = strlen(name);
     if (nameLen == 0) return -1;
 
-    long size = -1;
+    long value = -1;
     xSemaphoreTake(firCacheMutex, portMAX_DELAY);
     const char* line = firFilesCache;
     while (*line != '\0') {
         const char* end = strchr(line, '\n');
         size_t lineLen = end ? (size_t)(end - line) : strlen(line);
-        // A line is "name" (old firmware) or "name size"; filenames can't
-        // contain spaces (enforced on upload), so the first token is the name
         if (lineLen > nameLen && strncmp(line, name, nameLen) == 0 && line[nameLen] == ' ') {
-            size = strtol(line + nameLen + 1, nullptr, 10);
-            if (size < 0) size = -1;
+            // Walk to the requested field (strtol stops at the next space,
+            // so a trailing field never corrupts an earlier one)
+            const char* field = line + nameLen + 1;
+            for (int i = 0; i < fieldIndex && field != nullptr; i++) {
+                field = strchr(field, ' ');
+                if (field != nullptr) field++;
+            }
+            // The strchr walk can run past this line's newline into the
+            // next entry - a field found there doesn't exist on this line
+            if (field != nullptr && (size_t)(field - line) < lineLen) {
+                value = strtol(field, nullptr, 10);
+                if (value < 0) value = -1;
+            }
             break;
         }
         if (lineLen == nameLen && strncmp(line, name, nameLen) == 0) {
@@ -241,7 +256,15 @@ long getCachedFirFileSize(const char* name) {
         line = end + 1;
     }
     xSemaphoreGive(firCacheMutex);
-    return size;
+    return value;
+}
+
+long getCachedFirFileSize(const char* name) {
+    return getCachedFirFileField(name, 0);
+}
+
+long getCachedFirFileTaps(const char* name) {
+    return getCachedFirFileField(name, 1);
 }
 
 void requestFirFilesRefresh() {
@@ -253,7 +276,7 @@ void requestFirFilesRefresh() {
 // Handle one complete line from the Teensy. The Teensy sends:
 //   "EVENT boot"        on startup (triggers a full state re-sync)
 //   "PONG <uptimeMs>"   in reply to ping (reboot detection fallback)
-//   "FILES" ... "EOT"   the SD file list, one filename per line
+//   "FILES" ... "EOT"   the SD file list, one "name size [taps]" line per file
 // Anything else is forwarded to the debug console.
 static void handleTeensyLine(const char* line) {
     // RTA spectrum frames stream at ~10Hz while the analyzer UI is open -

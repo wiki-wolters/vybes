@@ -46,7 +46,8 @@ void teensyCommLoop();
 
 // The SD file list is fetched asynchronously and cached (requested at boot,
 // when the Teensy reboots, and by requestFirFilesRefresh). Each cached line
-// is "name size" (V1 Teensy firmware) or just "name" (older firmware).
+// is "name size" (V1 Teensy firmware) or just "name" (older firmware); WAV
+// lines from newer firmware carry the exact tap count: "name size taps".
 // Copies the newline-separated list into dst (empty string if nothing cached
 // yet) under the cache lock, so it is safe to call from any task. Returns
 // the list length.
@@ -56,5 +57,10 @@ void requestFirFilesRefresh();
 // Size in bytes of a cached FIR file, or -1 when the file isn't in the cache
 // or was listed without a size. Safe to call from any task.
 long getCachedFirFileSize(const char* name);
+
+// Exact tap count of a cached FIR file (the third listing token, sent for
+// WAV files by newer Teensy firmware), or -1 when absent. Safe to call from
+// any task.
+long getCachedFirFileTaps(const char* name);
 
 #endif // TEENSY_COMM_H

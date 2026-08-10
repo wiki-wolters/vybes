@@ -65,10 +65,11 @@ struct WavOptions {
     uint16_t channels = 1;
     uint16_t bitsPerSample = 32;
     bool junkChunkBeforeFmt = false; // odd-sized chunk + pad byte
+    bool factChunkAfterFmt = false;  // 'fact' chunk, as float WAV encoders emit
     int64_t dataSizeOverride = -1;   // declared 'data' size, if != actual
 };
 
-// Builds RIFF/WAVE with optional junk chunk, fmt, then data.
+// Builds RIFF/WAVE with optional junk chunk, fmt, optional fact, then data.
 static std::vector<uint8_t> buildWav(const std::vector<uint8_t>& dataBytes,
                                      const WavOptions& opt = WavOptions()) {
     std::vector<uint8_t> body; // everything after "RIFF"+size ("WAVE"...)
@@ -92,6 +93,12 @@ static std::vector<uint8_t> buildWav(const std::vector<uint8_t>& dataBytes,
     put32(body, byteRate);
     put16(body, (uint16_t)(opt.channels * (opt.bitsPerSample / 8)));
     put16(body, opt.bitsPerSample);
+
+    if (opt.factChunkAfterFmt) {
+        putTag(body, "fact");
+        put32(body, 4);           // dwSampleLength: frames per channel
+        put32(body, (uint32_t)(dataBytes.size() / (opt.bitsPerSample / 8) / opt.channels));
+    }
 
     putTag(body, "data");
     uint32_t declared = (opt.dataSizeOverride >= 0) ? (uint32_t)opt.dataSizeOverride
@@ -243,6 +250,65 @@ static void test_wav_missing_data_chunk_fails_cleanly(void) {
     TEST_ASSERT_EQUAL_UINT16(0, taps);
 }
 
+// --- countWavTaps tests (the exact counts the SD listing reports, which
+// the ESP's tap-pool accounting trusts verbatim - so they must never
+// overcount: an exact-fit pool config has zero headroom) ---
+
+static long countTaps(std::vector<uint8_t> bytes, const char* name) {
+    MemorySource src(std::move(bytes));
+    return FIRLoader::countWavTaps(src, String(name));
+}
+
+static void test_count_taps_plain_float32_wav(void) {
+    // 6144 mono float samples behind the minimal 44-byte header: the
+    // exact-fit case (3072+3072+6144 fills the 12288 pool exactly)
+    std::vector<uint8_t> data;
+    for (int i = 0; i < 6144; i++) putFloat(data, 0.5f);
+    TEST_ASSERT_EQUAL_INT32(6144, countTaps(buildWav(data), "fit.wav"));
+}
+
+static void test_count_taps_float32_wav_with_fact_chunk(void) {
+    // Float WAV encoders commonly add a 'fact' chunk; a fixed-header
+    // (size-44)/4 heuristic would overcount this file by 3 taps
+    std::vector<uint8_t> data;
+    for (int i = 0; i < 6144; i++) putFloat(data, 0.5f);
+    WavOptions opt;
+    opt.factChunkAfterFmt = true;
+    TEST_ASSERT_EQUAL_INT32(6144, countTaps(buildWav(data, opt), "fact.wav"));
+}
+
+static void test_count_taps_with_junk_and_fact_chunks(void) {
+    std::vector<uint8_t> data;
+    for (int i = 0; i < 100; i++) putFloat(data, 0.25f);
+    WavOptions opt;
+    opt.junkChunkBeforeFmt = true;
+    opt.factChunkAfterFmt = true;
+    TEST_ASSERT_EQUAL_INT32(100, countTaps(buildWav(data, opt), "meta.wav"));
+}
+
+static void test_count_taps_pcm16_wav(void) {
+    std::vector<uint8_t> data;
+    for (int i = 0; i < 48; i++) put16(data, (uint16_t)i);
+    WavOptions opt;
+    opt.format = 1;
+    opt.bitsPerSample = 16;
+    TEST_ASSERT_EQUAL_INT32(48, countTaps(buildWav(data, opt), "pcm.wav"));
+}
+
+static void test_count_taps_stereo_wav_counts_frames(void) {
+    std::vector<uint8_t> data;
+    for (int i = 0; i < 32; i++) putFloat(data, 0.1f); // 16 stereo frames
+    WavOptions opt;
+    opt.channels = 2;
+    TEST_ASSERT_EQUAL_INT32(16, countTaps(buildWav(data, opt), "stereo.wav"));
+}
+
+static void test_count_taps_garbage_is_zero(void) {
+    std::vector<uint8_t> garbage;
+    for (int i = 0; i < 300; i++) garbage.push_back((uint8_t)(i * 37 + 11));
+    TEST_ASSERT_EQUAL_INT32(0, countTaps(garbage, "garbage.wav"));
+}
+
 // --- TXT tests ---
 
 static void test_valid_txt_loads_exact_coefficients(void) {
@@ -344,6 +410,12 @@ int main(int, char**) {
     RUN_TEST(test_garbage_bytes_fail_cleanly);
     RUN_TEST(test_tiny_wav_fails_cleanly);
     RUN_TEST(test_wav_missing_data_chunk_fails_cleanly);
+    RUN_TEST(test_count_taps_plain_float32_wav);
+    RUN_TEST(test_count_taps_float32_wav_with_fact_chunk);
+    RUN_TEST(test_count_taps_with_junk_and_fact_chunks);
+    RUN_TEST(test_count_taps_pcm16_wav);
+    RUN_TEST(test_count_taps_stereo_wav_counts_frames);
+    RUN_TEST(test_count_taps_garbage_is_zero);
     RUN_TEST(test_valid_txt_loads_exact_coefficients);
     RUN_TEST(test_txt_without_trailing_newline);
     RUN_TEST(test_empty_txt_fails_cleanly);
