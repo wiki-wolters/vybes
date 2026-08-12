@@ -309,6 +309,27 @@ static void test_count_taps_garbage_is_zero(void) {
     TEST_ASSERT_EQUAL_INT32(0, countTaps(garbage, "garbage.wav"));
 }
 
+static void test_count_taps_sub_byte_bit_depth_is_zero(void) {
+    // A bit depth below 8 bytes-per-sample divides to zero: the counter must
+    // report "unknown" rather than divide by it
+    std::vector<uint8_t> data(64, 0);
+    WavOptions opt;
+    opt.format = 1;
+    opt.bitsPerSample = 4;
+    TEST_ASSERT_EQUAL_INT32(0, countTaps(buildWav(data, opt), "nibble.wav"));
+}
+
+static void test_count_taps_oversized_data_chunk_is_zero(void) {
+    // A 'data' size past the end of the file is corrupt or truncated. Counting
+    // from it would claim ~1e9 taps, which then drives the shared pool
+    // accounting and the load allocation.
+    std::vector<uint8_t> data;
+    for (int i = 0; i < 64; i++) putFloat(data, 0.5f);
+    WavOptions opt;
+    opt.dataSizeOverride = 0xFFFFFF00;
+    TEST_ASSERT_EQUAL_INT32(0, countTaps(buildWav(data, opt), "huge.wav"));
+}
+
 // --- TXT tests ---
 
 static void test_valid_txt_loads_exact_coefficients(void) {
@@ -416,6 +437,8 @@ int main(int, char**) {
     RUN_TEST(test_count_taps_pcm16_wav);
     RUN_TEST(test_count_taps_stereo_wav_counts_frames);
     RUN_TEST(test_count_taps_garbage_is_zero);
+    RUN_TEST(test_count_taps_sub_byte_bit_depth_is_zero);
+    RUN_TEST(test_count_taps_oversized_data_chunk_is_zero);
     RUN_TEST(test_valid_txt_loads_exact_coefficients);
     RUN_TEST(test_txt_without_trailing_newline);
     RUN_TEST(test_empty_txt_fails_cleanly);

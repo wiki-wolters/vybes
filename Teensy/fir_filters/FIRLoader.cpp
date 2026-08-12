@@ -90,11 +90,25 @@ long FIRLoader::countWavTaps(CoeffSource& src, const String& filename) {
             src.seek(fmt_data_start + chunk_size);
         } else {
             if (strncmp(chunk_id, "data", 4) == 0) {
+                // A declared size past the end of the file means the file is
+                // truncated or the header is corrupt. Report "unknown" rather
+                // than a count derived from it: an inflated figure would
+                // otherwise drive the shared pool accounting and the load
+                // allocation. The loader rejects such a file outright - a
+                // truncated impulse response is a different filter, not a
+                // shorter one.
+                if (chunk_size > src.size() - src.position()) {
+                    logError("Data chunk (" + String(chunk_size) +
+                             " bytes) runs past the end of: " + filename);
+                    return 0;
+                }
                 dataChunkSize = chunk_size;
                 dataChunkFound = true;
             }
-            // Skip the chunk body ('data' included - only its size matters)
-            src.seek(src.position() + chunk_size);
+            // Skip the chunk body ('data' included - only its size matters).
+            // A failed seek leaves the position untouched, which would re-read
+            // this same header forever - stop instead.
+            if (!src.seek(src.position() + chunk_size)) break;
         }
         // Handle odd-sized chunks (must be word-aligned)
         if (chunk_size % 2 != 0) {
@@ -108,11 +122,18 @@ long FIRLoader::countWavTaps(CoeffSource& src, const String& filename) {
     }
 
     long count;
-    if (fmtChunkFound && bitsPerSample > 0) {
-        count = dataChunkSize / (bitsPerSample / 8);
-        if (numChannels > 0) {
-            count /= numChannels;
+    if (fmtChunkFound) {
+        // Only whole-byte sample widths can be counted (the loader supports
+        // 8/16/32). Anything narrower would make the divisor below zero, so
+        // report "unknown" rather than dividing by it - the caller falls back
+        // to its own estimate and loadFromWAV rejects the file by bit depth.
+        uint32_t bytesPerFrame = (uint32_t)(bitsPerSample / 8) * numChannels;
+        if (bitsPerSample % 8 != 0 || bytesPerFrame == 0) {
+            logError("Unsupported bit depth (" + String(bitsPerSample) +
+                     ") counting taps in: " + filename);
+            return 0;
         }
+        count = (long)(dataChunkSize / bytesPerFrame);
     } else {
         // Fallback for safety, assume 16-bit mono if fmt chunk is weird
         count = dataChunkSize / 2;
@@ -179,6 +200,16 @@ float* FIRLoader::loadCoefficients(CoeffSource& src, const String& filename,
         Serial.print(" taps, limiting to ");
         Serial.println(maxTaps);
         coeffCount = maxTaps;
+    }
+
+    // Uncapped callers (maxTaps == 0) take coeffCount straight from the file
+    // header, where a corrupt size can name more taps than actualTaps can
+    // report or the allocation below can size. Refuse instead of wrapping.
+    if (coeffCount > 65535) {
+        actualTaps = 65535;
+        logError("File " + filename + " has " + String(coeffCount) +
+                 " taps - more than the 65535 one filter can hold");
+        return nullptr;
     }
 
     // Now that we know how many coefficients we have, allocate the array
@@ -345,15 +376,16 @@ int FIRLoader::loadFromWAV(CoeffSource& file, float* coeffs, int maxTaps) {
             dataFound = true;
 
             // Don't read the data yet - we might need to find fmt first
-            // Just skip past it
-            file.seek(file.position() + chunk_size);
+            // Just skip past it. A failed seek leaves the position untouched,
+            // which would re-read this same header forever - stop instead.
+            if (!file.seek(file.position() + chunk_size)) break;
             if (chunk_size % 2 != 0) {
                 file.seek(file.position() + 1);
             }
 
         } else {
-            // Unknown chunk, skip it
-            file.seek(file.position() + chunk_size);
+            // Unknown chunk, skip it (see above on the failed-seek guard)
+            if (!file.seek(file.position() + chunk_size)) break;
             if (chunk_size % 2 != 0) {
                 file.seek(file.position() + 1);
             }
