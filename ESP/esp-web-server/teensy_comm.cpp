@@ -12,8 +12,9 @@
 // Incoming line assembly. Sized for the longest line the Teensy sends: a
 // 121-band RTA frame ("RTA " + 242 hex chars = 246 chars).
 #define RX_LINE_MAX 300
-// Cached SD file list (newline separated "name size" lines; WAV lines from
-// newer Teensy firmware carry the exact tap count: "name size taps")
+// Cached SD file list (newline separated "name size" lines; WAV and TXT
+// lines from newer Teensy firmware carry the exact tap count:
+// "name size taps")
 #define FIR_CACHE_MAX 1024
 // Heartbeat: detects a Teensy reboot even if its boot event was missed
 #define PING_INTERVAL_MS 5000
@@ -220,9 +221,9 @@ size_t copyCachedFirFiles(char* dst, size_t dstSize) {
 
 // Look up a file's cache line and return the numeric field at fieldIndex
 // (0 = size, 1 = taps), or -1 if the file or the field is absent. A line is
-// "name" (old firmware), "name size", or "name size taps" (WAV lines from
-// newer firmware); filenames can't contain spaces (enforced on upload), so
-// the first token is always the name.
+// "name" (old firmware), "name size", or "name size taps" (WAV and TXT
+// lines from newer firmware); filenames can't contain spaces (enforced on
+// upload), so the first token is always the name.
 static long getCachedFirFileField(const char* name, int fieldIndex) {
     size_t nameLen = strlen(name);
     if (nameLen == 0) return -1;

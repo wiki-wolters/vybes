@@ -362,6 +362,57 @@ static void test_empty_txt_fails_cleanly(void) {
     TEST_ASSERT_EQUAL_UINT16(0, taps);
 }
 
+// --- countTxtTaps tests (the exact counts the SD listing reports for text
+// files; like the WAV counts, the ESP's tap-pool accounting trusts them
+// verbatim, so they must match what a load would parse - and never
+// overcount) ---
+
+static long countTxt(const std::string& text) {
+    MemorySource src(text);
+    return FIRLoader::countTxtTaps(src);
+}
+
+static void test_count_txt_rephase_style_lines(void) {
+    // rePhase exports one full-precision coefficient per line, ~23 bytes
+    // each - a size/12 heuristic would claim ~6100 taps for these 3072
+    // and wrongly reject a config that actually fits the pool
+    std::string text;
+    for (int i = 0; i < 3072; i++) text += "-1.2045678901234567e-05\n";
+    TEST_ASSERT_EQUAL_INT32(3072, countTxt(text));
+}
+
+static void test_count_txt_matches_loader_tokenization(void) {
+    // Mixed delimiters, run-together delimiters, no trailing newline:
+    // the count must equal the taps a load of the same bytes reports
+    std::string text("0.5,-0.25\n\n1.0e-3  2\t\t7\r\n0.125");
+    long counted = countTxt(text);
+    TEST_ASSERT_EQUAL_INT32(6, counted);
+
+    uint16_t taps = 0;
+    MemorySource src(text);
+    float* coeffs = FIRLoader::loadCoefficients(src, String("mixed.txt"), taps);
+    TEST_ASSERT_NOT_NULL(coeffs);
+    TEST_ASSERT_EQUAL_UINT16((uint16_t)counted, taps);
+    delete[] coeffs;
+}
+
+static void test_count_txt_token_at_eof_counts(void) {
+    TEST_ASSERT_EQUAL_INT32(2, countTxt("0.125 -0.5"));
+}
+
+static void test_count_txt_whitespace_only_is_zero(void) {
+    TEST_ASSERT_EQUAL_INT32(0, countTxt("  \n\t \r\n,"));
+    TEST_ASSERT_EQUAL_INT32(0, countTxt(""));
+}
+
+static void test_count_txt_nul_bytes_do_not_split_tokens(void) {
+    // The loader skips NULs without ending the token; the counter must too
+    std::string text("0.");
+    text += '\0';
+    text += "5 2.0\n";
+    TEST_ASSERT_EQUAL_INT32(2, countTxt(text));
+}
+
 // --- Misc ---
 
 static void test_unsupported_extension_fails_cleanly(void) {
@@ -442,6 +493,11 @@ int main(int, char**) {
     RUN_TEST(test_valid_txt_loads_exact_coefficients);
     RUN_TEST(test_txt_without_trailing_newline);
     RUN_TEST(test_empty_txt_fails_cleanly);
+    RUN_TEST(test_count_txt_rephase_style_lines);
+    RUN_TEST(test_count_txt_matches_loader_tokenization);
+    RUN_TEST(test_count_txt_token_at_eof_counts);
+    RUN_TEST(test_count_txt_whitespace_only_is_zero);
+    RUN_TEST(test_count_txt_nul_bytes_do_not_split_tokens);
     RUN_TEST(test_unsupported_extension_fails_cleanly);
     RUN_TEST(test_valid_bin_loads_verbatim);
     RUN_TEST(test_empty_bin_fails_cleanly);

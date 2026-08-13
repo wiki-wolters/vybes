@@ -21,6 +21,11 @@ public:
     // Reads only the header chunks - the data chunk is never read - so it is
     // cheap enough to call per file while building the SD listing.
     static long countWavTaps(File& file);
+
+    // Exact tap count of an open TXT file. One streamed pass over the whole
+    // file; coefficient files are tens of KB, so this too is cheap enough to
+    // call per file while building the SD listing.
+    static long countTxtTaps(File& file);
 #endif
 
     // Core WAV tap counter: parses the chunk list for 'fmt ' (bit depth,
@@ -29,6 +34,15 @@ public:
     // file-size heuristic this never over- or undercounts. Returns 0 if the
     // header can't be parsed. 'filename' is only used for log messages.
     static long countWavTaps(CoeffSource& src, const String& filename);
+
+    // Core TXT tap counter: counts coefficient tokens with the same
+    // delimiter set loadFromTXT parses by (\n \r , space tab; NULs ignored),
+    // so the count always matches what a load of the file would produce.
+    // Bytes-per-tap varies with the exporting tool (rePhase averages ~23
+    // bytes per coefficient line), so unlike a file-size heuristic this
+    // never over- or undercounts. loadCoefficients uses it too - the SD
+    // listing and the loader can't drift apart.
+    static long countTxtTaps(CoeffSource& src);
 
     // Core parse/load logic, operating on an abstract byte source so it can
     // be exercised host-side with in-memory fixtures. 'filename' is only

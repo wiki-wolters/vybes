@@ -40,11 +40,16 @@ float* FIRLoader::loadCoefficients(String filename, uint16_t& actualTaps, uint16
     return coeffs;
 }
 
-// SD wrapper for the core counter below; the caller keeps ownership of the
-// file (position is clobbered, the file is not closed).
+// SD wrappers for the core counters below; the caller keeps ownership of
+// the file (position is clobbered, the file is not closed).
 long FIRLoader::countWavTaps(File& file) {
     FileCoeffSource src(file);
     return countWavTaps(src, String(file.name()));
+}
+
+long FIRLoader::countTxtTaps(File& file) {
+    FileCoeffSource src(file);
+    return countTxtTaps(src);
 }
 #endif // VYBES_NATIVE
 
@@ -141,6 +146,35 @@ long FIRLoader::countWavTaps(CoeffSource& src, const String& filename) {
     return count;
 }
 
+// See the header comment: token count with loadFromTXT's delimiter set.
+// Buffered reads keep the pass fast enough to run per file in the SD
+// listing (single-byte File::read calls would be an order slower).
+long FIRLoader::countTxtTaps(CoeffSource& src) {
+    src.seek(0);
+    char buf[256];
+    long count = 0;
+    bool inToken = false;
+    int n;
+    while ((n = src.read(buf, sizeof(buf))) > 0) {
+        for (int i = 0; i < n; i++) {
+            char c = buf[i];
+            if (c == '\n' || c == '\r' || c == ',' || c == ' ' || c == '\t') {
+                if (inToken) {
+                    count++;
+                    inToken = false;
+                }
+            } else if (c != '\0') {
+                inToken = true;
+            }
+        }
+    }
+    // A token running to EOF still counts (file ends without a delimiter)
+    if (inToken) {
+        count++;
+    }
+    return count;
+}
+
 // Core implementation: reads the entire source once to count the taps, then
 // rewinds and loads them. See the header comment on the SD wrapper above.
 float* FIRLoader::loadCoefficients(CoeffSource& src, const String& filename,
@@ -155,24 +189,8 @@ float* FIRLoader::loadCoefficients(CoeffSource& src, const String& filename,
         // listing uses); the loader below does the full validation.
         coeffCount = (int)countWavTaps(src, filename);
     } else if (filename.endsWith(".txt") || filename.endsWith(".TXT")) {
-        // For text files, count the number of valid number entries
-        src.seek(0);
-        String line = "";
-        while (src.available()) {
-            char c = src.read();
-            if (c == '\n' || c == '\r' || c == ',' || c == ' ' || c == '\t') {
-                if (line.length() > 0) {
-                    coeffCount++;
-                    line = "";
-                }
-            } else if (c != '\0') {
-                line += c;
-            }
-        }
-        // Handle last coefficient if file ends without delimiter
-        if (line.length() > 0) {
-            coeffCount++;
-        }
+        // Exact token count (the same counter the SD listing uses)
+        coeffCount = (int)countTxtTaps(src);
     } else if (filename.endsWith(".bin") || filename.endsWith(".BIN")) {
         // Raw float32 taps, no header (matches the ESP's size/4 estimate)
         coeffCount = src.size() / 4;

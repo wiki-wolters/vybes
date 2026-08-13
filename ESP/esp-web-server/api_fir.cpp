@@ -33,12 +33,15 @@ bool isValidFirFilename(const String& filename) {
 
 // --- Tap accounting for the shared FIR pool ---
 // Tap counts come from the SD listing the Teensy reports:
-//   - WAV files carry an exact count as the line's third token ("name size
-//     taps", parsed from the WAV header by the Teensy) - used verbatim, so
-//     exact-fit pool configs are accepted
+//   - WAV and TXT files carry an exact count as the line's third token
+//     ("name size taps": WAV parsed from the header, TXT tokenized the same
+//     way the loader parses it) - used verbatim, so exact-fit pool configs
+//     are accepted
 //   - otherwise the count is estimated from the file size: .bin files are
-//     raw float32 taps (size / 4, exact); text formats are one coefficient
-//     line per tap (~12 bytes each printed): estimated as size / 12
+//     raw float32 taps (size / 4, exact); text files listed by older
+//     firmware without a taps token fall back to size / 12 (a poor fit for
+//     rePhase exports, which average ~23 bytes per coefficient - the exact
+//     listing count exists precisely because no divisor fits every tool)
 //   - files without a known size count as a flat default
 // This accounting is what the API enforces and the UI displays; the
 // Teensy's own load-time pool check remains the authoritative backstop.
