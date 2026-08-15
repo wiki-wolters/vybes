@@ -28,6 +28,28 @@ export const MIN_CONFIDENCE = 4;
 // for room-scale path differences plus phone clock drift over the sequence.
 const SEARCH_WINDOW_S = 0.04;
 
+// The noise floor is estimated over a wider half-window than the search,
+// because a narrowband output's correlation lobe can span the search window
+// on its own. Capped to a fraction of the chirp spacing so the estimate never
+// reaches a neighbouring slot's peak.
+const BACKGROUND_WINDOW_S = 0.15;
+const BACKGROUND_SPACING_FRACTION = 0.4;
+
+// The peak's own main lobe is excluded from that noise floor, and the width
+// to exclude is set by the bandwidth the output actually reproduces: a
+// full-range channel returns the whole 60Hz-8kHz sweep and peaks inside a
+// millisecond, while a subwoofer low-passed at ~150Hz returns well under an
+// octave and spreads its peak over tens of milliseconds. A fixed guard leaves
+// that lobe's own skirts inside the background term, inflating it until a
+// perfectly good arrival scores below MIN_CONFIDENCE - which is why
+// low-passed outputs never detected. The envelope's -6dB half-width sits near
+// 0.6/BW and its first null near 1/BW, so excluding twice the measured
+// half-width clears the lobe at any bandwidth.
+const LOBE_EDGE = 0.5;
+const LOBE_GUARD = 2;
+const MIN_GUARD_S = 0.003;
+const MAX_GUARD_FRACTION = 0.75;
+
 // --- Reference chirp ---
 
 // Generate the reference chirp at an arbitrary sample rate. The device
@@ -148,6 +170,19 @@ function slotOffsets(schedule, nSlots, sampleRate) {
   return offsets;
 }
 
+// Half-width, in samples, of the main lobe around an envelope peak: walk out
+// either side until the envelope falls to LOBE_EDGE of the peak. Pure noise
+// collapses to a sample or two, so an undetected slot keeps the minimum
+// guard and scores as low as it did before.
+function mainLobeHalfWidth(env, peak, lo, hi) {
+  const edge = env[peak] * LOBE_EDGE;
+  let left = peak;
+  while (left > lo && env[left] > edge) left--;
+  let right = peak;
+  while (right < hi && env[right] > edge) right++;
+  return Math.max(peak - left, right - peak);
+}
+
 // Find each slot's arrival time in the recording. Returns per-slot
 // { sample, deviationS, confidence, detected } where deviationS is the
 // arrival's offset from its scheduled position relative to the anchor -
@@ -158,6 +193,15 @@ export function findArrivals(recording, chirp, schedule, nSlots, sampleRate) {
   const offsets = slotOffsets(schedule, nSlots, sampleRate);
   const lastOffset = offsets[nSlots - 1];
   const searchWin = Math.round(SEARCH_WINDOW_S * sampleRate);
+  const spacing = schedule.spacingSamples * sampleRate / schedule.sampleRate;
+  const bgWin = Math.max(searchWin, Math.round(Math.min(
+    BACKGROUND_WINDOW_S * sampleRate,
+    BACKGROUND_SPACING_FRACTION * spacing
+  )));
+  const minGuard = Math.round(MIN_GUARD_S * sampleRate);
+  const maxGuard = Math.round(bgWin * MAX_GUARD_FRACTION);
+  // Correlation is only meaningful while a whole chirp still fits after t.
+  const envValid = env.length - chirp.length;
 
   const t0Max = env.length - lastOffset - chirp.length - searchWin;
   if (t0Max <= searchWin) {
@@ -198,12 +242,18 @@ export function findArrivals(recording, chirp, schedule, nSlots, sampleRate) {
       if (denom < 0) refined = peak + 0.5 * (a - c) / denom;
     }
 
-    // Confidence: peak against the RMS background of the search window,
-    // excluding the peak's immediate neighborhood.
-    const guard = Math.round(0.003 * sampleRate);
+    // Confidence: peak against the RMS background around it, excluding the
+    // peak's own main lobe - measured, not assumed, so a low-passed output's
+    // broad lobe does not end up counted as its own background noise.
+    const bgLo = Math.max(0, center - bgWin);
+    const bgHi = Math.min(envValid, center + bgWin);
+    const guard = Math.min(
+      maxGuard,
+      Math.max(minGuard, LOBE_GUARD * mainLobeHalfWidth(env, peak, bgLo, bgHi))
+    );
     let sum = 0;
     let count = 0;
-    for (let t = lo; t <= hi; t++) {
+    for (let t = bgLo; t <= bgHi; t++) {
       if (Math.abs(t - peak) <= guard) continue;
       sum += env[t] * env[t];
       count++;

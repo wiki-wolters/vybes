@@ -22,6 +22,19 @@ const SCHEDULE = {
   f1: 8000,
 }
 
+// The subwoofer case needs the device's real chirp length and 60Hz start:
+// the correlation lobe of a low-passed output is set by the bandwidth it
+// reproduces, and a shortened sweep does not reproduce the real peak-to-
+// background ratios. Spacing is tightened to just clear the chirp so the
+// FFT stays manageable.
+const SUB_SCHEDULE = {
+  ...SCHEDULE,
+  spacingSamples: 20480,
+  chirpSamples: 16384,
+  fadeSamples: 512,
+  f0: 60,
+}
+
 const PHONE_RATE = 48000
 const MAX_DELAY_US = 20000
 
@@ -37,23 +50,44 @@ function noiseGen(seed) {
   }
 }
 
+// Cascaded one-pole low-pass: a crude stand-in for a subwoofer's crossover.
+// Four poles roll off at ~24dB/oct, so a slot filtered this way reproduces
+// only the bottom of the sweep - the narrowband case that broadens the
+// correlation lobe.
+function lowPass(sig, fc, rate, poles = 4) {
+  const dt = 1 / rate
+  const a = dt / (1 / (2 * Math.PI * fc) + dt)
+  const out = Float32Array.from(sig)
+  for (let p = 0; p < poles; p++) {
+    let y = 0
+    for (let i = 0; i < out.length; i++) {
+      y += a * (out[i] - y)
+      out[i] = y
+    }
+  }
+  return out
+}
+
 /*
  * Synthesize a phone recording of a probe run: the chirp of slot k starts
  * at anchor + k*spacing (converted to the phone rate) plus that slot's
- * extra acoustic flight time. amplitude<0 flips polarity (inverted output).
+ * extra acoustic flight time. amplitude<0 flips polarity (inverted output);
+ * bandLimitHz[k] low-passes the slot, standing in for a crossover.
  */
 function synthesizeRecording({
   order,
   slotDeviationsUs,
   anchorSample = 5000,
   amplitudes = null,
+  bandLimitHz = null,
   noiseAmp = 0.02,
   seed = 42,
+  schedule = SCHEDULE,
 }) {
-  const chirp = generateChirp(PHONE_RATE, SCHEDULE)
-  const perSample = PHONE_RATE / SCHEDULE.sampleRate
+  const chirp = generateChirp(PHONE_RATE, schedule)
+  const perSample = PHONE_RATE / schedule.sampleRate
   const lastStart =
-    anchorSample + Math.round((order.length - 1) * SCHEDULE.spacingSamples * perSample)
+    anchorSample + Math.round((order.length - 1) * schedule.spacingSamples * perSample)
   const length = lastStart + chirp.length + Math.round(0.3 * PHONE_RATE)
   const rec = new Float32Array(length)
 
@@ -63,14 +97,16 @@ function synthesizeRecording({
   order.forEach((output, slot) => {
     const amp = amplitudes ? amplitudes[slot] : 0.5
     if (amp === 0) return // silent output (unrouted / disconnected)
+    const fc = bandLimitHz ? bandLimitHz[slot] : null
+    const wave = fc ? lowPass(chirp, fc, PHONE_RATE) : chirp
     const start =
       anchorSample +
       Math.round(
-        slot * SCHEDULE.spacingSamples * perSample +
+        slot * schedule.spacingSamples * perSample +
           (slotDeviationsUs[slot] / 1e6) * PHONE_RATE
       )
-    for (let i = 0; i < chirp.length; i++) {
-      rec[start + i] += amp * chirp[i]
+    for (let i = 0; i < wave.length; i++) {
+      rec[start + i] += amp * wave[i]
     }
   })
   return rec
@@ -176,6 +212,54 @@ describe('findArrivals + computeDelays (synthetic recordings)', () => {
     const ch1 = result.channels.find((c) => c.output === 1)
     expect(ch1.measured).toBe(true)
     expect(ch1.offsetUs - result.channels[0].offsetUs).toBeCloseTo(300, -2)
+  })
+
+  it('detects a low-passed subwoofer despite its broad correlation lobe', () => {
+    // Output 1 is a sub crossed at 120Hz, so it reproduces only 60-120Hz of
+    // the sweep and its correlation peak spreads over ~15ms rather than a
+    // fraction of a millisecond. Scored against a fixed guard that lobe's own
+    // skirts count as its background, which pins confidence just under
+    // MIN_CONFIDENCE no matter how clean the recording is - the sub then
+    // never detects. It arrives 4ms late (crossover group delay plus
+    // distance), which makes it the acoustically latest output.
+    const order = [0, 1, 1, 0]
+    const rec = synthesizeRecording({
+      order,
+      schedule: SUB_SCHEDULE,
+      slotDeviationsUs: [0, 4000, 4000, 0],
+      bandLimitHz: [null, 120, 120, null],
+    })
+    const result = analyzeRecording(
+      rec, PHONE_RATE, { ...SUB_SCHEDULE, order }, [0, 0], MAX_DELAY_US
+    )
+    const [ch0, ch1] = result.channels
+    expect(ch1.measured).toBe(true)
+    expect(ch1.confidence).toBeGreaterThan(MIN_CONFIDENCE)
+
+    // The crossover's own group delay is folded into the measured arrival -
+    // correctly so, since it really is part of when the sub's sound leaves
+    // the box. Difference against an otherwise identical run with no extra
+    // flight time to isolate the part the probe is supposed to recover.
+    const base = analyzeRecording(
+      synthesizeRecording({
+        order,
+        schedule: SUB_SCHEDULE,
+        slotDeviationsUs: [0, 0, 0, 0],
+        bandLimitHz: [null, 120, 120, null],
+      }),
+      PHONE_RATE, { ...SUB_SCHEDULE, order }, [0, 0], MAX_DELAY_US
+    )
+    const injectedUs =
+      ch1.offsetUs - ch0.offsetUs -
+      (base.channels[1].offsetUs - base.channels[0].offsetUs)
+    // Low-frequency timing is inherently coarse: a ~150Hz arrival can only be
+    // placed to within a fraction of its own period. That is still a small
+    // fraction of the wavelength being aligned.
+    expect(injectedUs).toBeCloseTo(4000, -3) // within ~500us
+
+    // The latest output sits at zero and the earlier one is delayed up to it.
+    expect(ch1.newDelayUs).toBe(0)
+    expect(ch0.newDelayUs).toBeCloseTo(ch1.offsetUs - ch0.offsetUs, -2)
   })
 
   it('applies incremental correction on top of existing delays', () => {

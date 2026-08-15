@@ -243,7 +243,7 @@
           <RangeSlider
             label="Max bands"
             :min="1"
-            :max="scopeIsOutput ? MAX_OUTPUT_EQ_BANDS : 12"
+            :max="scopeIsOutput ? MAX_OUTPUT_EQ_BANDS : MAX_INPUT_EQ_BANDS"
             :step="1"
             unit=""
             :decimals="0"
@@ -1261,6 +1261,7 @@ const applyState = reactive({ busy: false, message: '', error: false });
 // tab can't leave one speaker stuck alone) and routes the generated bands
 // to that output's EQ instead of the input EQ.
 const MAX_OUTPUT_EQ_BANDS = 10; // MAX_OUTPUT_PEQ on the device
+const MAX_INPUT_EQ_BANDS = 15; // MAX_PEQ_POINTS on the device
 const scope = ref('input'); // 'input' | output index as a string
 const outputs = ref([]); // enabled outputs of the active preset
 const inputEqEnabled = ref(true); // the active preset's inputEq.enabled flag
