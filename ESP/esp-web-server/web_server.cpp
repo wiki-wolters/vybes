@@ -274,6 +274,13 @@ static void registerRoutes(PsychicHttpServer &s, PsychicWebSocketHandler *ws) {
 void setupWebServer() {
     // ~35 routes per listener (esp-idf's default cap is 8)
     server.config.max_uri_handlers = 60;
+    // esp-idf defaults this to 7, which was never budgeted against
+    // CONFIG_LWIP_MAX_SOCKETS=16: 7 + listener + ctrl here, plus 3 + listener
+    // + ctrl on the HTTPS side, plus mDNS and DHCP, runs the socket table to
+    // its limit before heap ever becomes the constraint. Plain HTTP sockets
+    // are cheap in heap (no TLS buffers), so 4 costs nothing and keeps a
+    // browser's six parallel keep-alive connections from squeezing lwIP.
+    server.config.max_open_sockets = 4;
     // Evict the least-recently-active connection instead of refusing new
     // ones - browsers park idle keep-alive sockets that would otherwise
     // starve the listener. An idle live-updates websocket can be the
@@ -287,16 +294,20 @@ void setupWebServer() {
 #ifdef CONFIG_IDF_TARGET_ESP32S3
     if (loadCertificates()) {
         serverHttps.ssl_config.httpd.max_uri_handlers = 60;
-        // Each open TLS connection holds ~25-30KB of buffers, so this is a
-        // heap budget more than a concurrency limit: boot-time free heap is
-        // ~136KB, and a measured attempt at 6 sockets (2026-08-09) let a
-        // 6-fetch burst exhaust the heap and wedge lwIP until a hardware
-        // reset - the device stopped answering even ping. 4 keeps ~30KB of
-        // margin under a full burst. The page survives losing the race
-        // because the stylesheet is inlined into index.html (see
-        // WebUI/vite.config.js); only cosmetic fetches (icons/manifest) can
-        // fail. Check /status freeHeap before ever raising this.
-        serverHttps.ssl_config.httpd.max_open_sockets = 4;
+        // Each open TLS connection costs ~40KB at peak, so this is a heap
+        // budget more than a concurrency limit. Measured 2026-08-15 against
+        // a live device: 132,444 bytes free idle, 92,668 while serving one
+        // HTTPS request. 6 sockets (tried 2026-08-09) let a 6-fetch burst
+        // exhaust the heap and wedge lwIP until a hardware reset - the
+        // device stopped answering even ping. 4 was meant to fix that but
+        // still budgets ~160KB against ~132KB free, and the same wedge
+        // recurred on 2026-08-15. 3 is the first setting that actually fits.
+        // There is no leak: heap returns to ~132.1KB after every connection,
+        // so only a concurrency burst can trigger it. The page survives
+        // losing the race because the stylesheet is inlined into index.html
+        // (see WebUI/vite.config.js); only cosmetic fetches (icons/manifest)
+        // can fail. Check /status freeHeap before ever raising this.
+        serverHttps.ssl_config.httpd.max_open_sockets = 3;
         // Same LRU eviction as the HTTP listener - vital here, where the
         // socket budget is this tight.
         serverHttps.ssl_config.httpd.lru_purge_enable = true;

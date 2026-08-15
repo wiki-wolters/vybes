@@ -11,6 +11,7 @@
 #include "button.h"
 #include "remote_control.h"
 #include "wifi_setup.h"
+#include "health.h"
 
 // Define global objects
 RemoteControl remoteControl;
@@ -38,6 +39,15 @@ void setup() {
     // Debug output on USB
     DebugSerial.begin(115200);
     DebugSerial.println("\nVybes ESP starting");
+
+    // Why the last boot ended. A wedged chip that needs the EN pin pulled
+    // leaves no trace of its own, so this cannot explain a true lockup - but
+    // it separates a spontaneous reboot (brownout, panic, either watchdog)
+    // from a hand-pulled reset, which is the first fork in any "did it
+    // crash?" hunt. initHealth adds the liveness watchdog's own verdict when
+    // the restart was ours.
+    DebugSerial.printf("Reset reason: %s\n", healthResetReasonName());
+    initHealth();
 
     // UART2 is the Teensy link. See docs/WIRING.md.
     TeensySerial.begin(TEENSY_BAUD, SERIAL_8N1, TEENSY_RX_PIN, TEENSY_TX_PIN);
@@ -77,12 +87,22 @@ void setup() {
     setupWebSocket();
     setupWebServer();
 
+    // Last thing before loop() takes over: the boot-time screen write lit the
+    // backlight seconds ago, and loopScreen() would otherwise expire it
+    // against time the user could not see. See screen.cpp.
+    restartBacklightTimer();
+
+    // Last of all: everything it watches must already be up, and its boot
+    // grace starts from here.
+    startHealthMonitor(standalone);
+
     DebugSerial.println("Vybes DSP ready!");
     DebugSerial.println(standalone ? WiFi.softAPIP() : WiFi.localIP());
     DebugSerial.printf("Free heap: %d\n", ESP.getFreeHeap());
 }
 
 void loop() {
+    healthBeat();         // Liveness heartbeat the monitor task watches
     remoteControl.loop();
     teensyCommLoop();     // Drain queued Teensy commands, read replies/events
     websocketLoop();      // RTA keepalive relay to the Teensy

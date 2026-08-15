@@ -5,6 +5,7 @@
 #include "teensy_comm.h"
 #include "utilities.h"
 #include "api_helpers.h"
+#include "health.h"
 
 esp_err_t handleGetStatus(PsychicRequest *request) {
     JsonDocument doc;
@@ -41,6 +42,22 @@ esp_err_t handleGetStatus(PsychicRequest *request) {
     // Internal heap headroom - each open TLS socket costs ~40KB, so this is
     // the number to watch when tuning the HTTPS max_open_sockets budget.
     doc["freeHeap"] = ESP.getFreeHeap();
+
+    // Health telemetry. freeHeap above is a spot reading and looks fine right
+    // up until the device wedges; these are the numbers that actually predict
+    // it. largestFreeBlock is the important one - a TLS handshake needs 16KB
+    // contiguous, so once the low-water mark approaches that, HTTPS is dying
+    // of fragmentation while freeHeap still reads ~130KB. uptimeMs plus
+    // lastRestartCause is how you tell "up for weeks" from "silently
+    // restarting every few days".
+    JsonObject health = doc.createNestedObject("health");
+    health["uptimeMs"] = (uint32_t)millis();
+    health["freeInternal"] = healthFreeInternal();
+    health["minFreeInternal"] = healthMinFreeInternal();
+    health["largestFreeBlock"] = healthLargestFreeBlock();
+    health["minLargestFreeBlock"] = healthMinLargestFreeBlock();
+    health["resetReason"] = healthResetReasonName();
+    health["lastRestartCause"] = healthLastRestartCause();
 
     String response;
     serializeJson(doc, response);

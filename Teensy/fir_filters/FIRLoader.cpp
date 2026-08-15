@@ -1,4 +1,5 @@
 #include "FIRLoader.h"
+#include <new>
 #ifndef VYBES_NATIVE
 #include <SPI.h> // Usually needed for SD card
 
@@ -236,9 +237,13 @@ float* FIRLoader::loadCoefficients(CoeffSource& src, const String& filename,
     Serial.print(" bytes for ");
     Serial.print(coeffCount);
     Serial.println(" taps...");
-    float* coeffs = new float[coeffCount];
+    // nothrow: the Teensy core's operator new returns nullptr rather than
+    // throwing, but the compiler assumes throwing-new can't - without
+    // std::nothrow this null check is dead code.
+    float* coeffs = new (std::nothrow) float[coeffCount];
     if (!coeffs) {
-        logError("!!! MEMORY ALLOCATION FAILED !!! System will likely crash.");
+        logError("Allocation failed (" + String(coeffCount * sizeof(float)) +
+                 " bytes) - load rejected: " + filename);
         return nullptr;
     }
     logInfo("Memory allocated successfully.");

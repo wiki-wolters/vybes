@@ -2,6 +2,7 @@
 #include <SPI.h>
 #include <SD.h>
 #include <SerialFlash.h>
+#include <malloc.h>
 #include "FIRLoader.h"
 #include "PEQProcessor.h"
 #include "CrossoverFilter.h"
@@ -54,6 +55,25 @@ SerialCommandRouter router(Serial1);
 // relay. Fast convolution costs ~16 bytes/tap of heap; the direct engine
 // runs out of CPU long before it runs out of pool.
 #define FIR_TAP_POOL 12288
+
+// Audio block pool size (see the AudioMemory call in setup for the budget).
+#define AUDIO_POOL_BLOCKS (FIR_USE_FAST_CONVOLUTION ? 480 : 240)
+
+// RAM2 heap and audio-block-pool stats, printed where the budget matters:
+// FIR loads are the only large runtime allocations, and the pool-sized
+// fast-convolution buffers (~196KB) plus the loader's transient (~48KB)
+// compete with the USB resampler, RTA and compressor buffers for the same
+// heap. "unclaimed" is heap sbrk has never handed out; "reclaimable" is
+// freed space inside the arena (usable, but possibly fragmented).
+extern unsigned long _heap_end;
+extern char* __brkval;
+static void printMemoryStats(const char* tag) {
+  struct mallinfo mi = mallinfo();
+  Serial.printf("MEM %s: heap unclaimed %lu + reclaimable %lu bytes, audio blocks %d used (max %d of %d)\n",
+                tag, (unsigned long)((char*)&_heap_end - __brkval),
+                (unsigned long)mi.fordblks,
+                AudioMemoryUsage(), AudioMemoryUsageMax(), AUDIO_POOL_BLOCKS);
+}
 
 // Audio generators
 AudioSynthWaveform       Tone_generator;
@@ -326,7 +346,7 @@ void setup() {
   // 20ms user cap, ~440 blocks total. Sizing flagged for a hardware
   // benchmark in docs/FIRMWARE_V1_HANDOVER.md.
   Serial.println("Allocating audio memory");
-  AudioMemory(FIR_USE_FAST_CONVOLUTION ? 480 : 240);
+  AudioMemory(AUDIO_POOL_BLOCKS);
   Serial.println("=== Audio Memory Debug ===");
   Serial.print("AudioMemoryUsage(): ");
   Serial.println(AudioMemoryUsage());
@@ -453,6 +473,7 @@ void loop() {
     Serial.print(AudioProcessorUsageMax());
     Serial.println("%)");
     AudioProcessorUsageMaxReset();
+    printMemoryStats("periodic");
 
 #if USB_INPUT_ASYNC
     Serial.print("USB in (async): ");
@@ -1100,6 +1121,7 @@ void loadFirFiles() {
   // filter is cleared before its file is (re)loaded so peak heap holds one
   // engine's buffers, not two - at the pool limit the fast-convolution
   // buffers are ~200KB and double-buffering wouldn't fit.
+  printMemoryStats("before FIR loads");
   uint32_t poolUsed = 0;
   for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
     OutputState& o = state.outputs[ch];
@@ -1143,6 +1165,8 @@ void loadFirFiles() {
                   ch, o.firFile, actualTaps, (unsigned long)poolUsed, FIR_TAP_POOL,
                   firPinkGainDb[ch]);
   }
+
+  printMemoryStats("after FIR loads");
 
   // FIR latencies may have changed - realign the channels
   applyDelays();

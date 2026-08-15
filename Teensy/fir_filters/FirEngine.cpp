@@ -1,5 +1,6 @@
 #include "FirEngine.h"
 #include <string.h>
+#include <new>
 #include <arm_const_structs.h>
 #include <arm_common_tables.h>
 
@@ -64,17 +65,24 @@ bool FirEngine::buildPending(const float* coeffs, uint16_t newNumTaps) {
   float* newFdl = nullptr;
   uint16_t newPartitions = 0;
 
+  // All allocations must be nothrow: the Teensy core's operator new is a
+  // plain malloc wrapper that returns nullptr, but the compiler assumes a
+  // throwing new never does - with `new float[n]()` it zeroes the "result"
+  // before any null check can run (memset to address 0 = hard fault, the
+  // crash 82b8bd8 tried to fix). nothrow makes the checks below real; the
+  // zeroing that value-init used to do is explicit instead.
   if (newNumTaps > 0 && coeffs != nullptr) {
     if (fast) {
       newPartitions = (newNumTaps + BLOCK_SAMPLES - 1) / BLOCK_SAMPLES;
-      newPartSpectra = new float[(size_t)newPartitions * FFT_SIZE];
-      newFdl = new float[(size_t)newPartitions * FFT_SIZE]();
+      newPartSpectra = new (std::nothrow) float[(size_t)newPartitions * FFT_SIZE];
+      newFdl = new (std::nothrow) float[(size_t)newPartitions * FFT_SIZE];
       if (!newPartSpectra || !newFdl) {
         // Allocation failed - keep the current filter.
         delete[] newPartSpectra;
         delete[] newFdl;
         return false;
       }
+      memset(newFdl, 0, (size_t)newPartitions * FFT_SIZE * sizeof(float));
       // Pre-transform each 128-tap partition, zero-padded to FFT_SIZE.
       // (arm_rfft_fast_f32 clobbers its input, hence the scratch buffer.)
       float scratch[FFT_SIZE];
@@ -87,7 +95,7 @@ bool FirEngine::buildPending(const float* coeffs, uint16_t newNumTaps) {
         arm_rfft_fast_f32(&rfft, scratch, newPartSpectra + (size_t)p * FFT_SIZE, 0);
       }
     } else {
-      newCoeffs = new float[newNumTaps];
+      newCoeffs = new (std::nothrow) float[newNumTaps];
       if (!newCoeffs) {
         // Allocation failed - keep the current filter.
         return false;
@@ -100,11 +108,12 @@ bool FirEngine::buildPending(const float* coeffs, uint16_t newNumTaps) {
         newCoeffs[i] = coeffs[newNumTaps - 1 - i];
       }
 
-      newState = new float[newNumTaps + BLOCK_SAMPLES - 1]();
+      newState = new (std::nothrow) float[newNumTaps + BLOCK_SAMPLES - 1];
       if (!newState) {
         delete[] newCoeffs; // Clean up partial allocation
         return false;
       }
+      memset(newState, 0, (size_t)(newNumTaps + BLOCK_SAMPLES - 1) * sizeof(float));
     }
   }
 

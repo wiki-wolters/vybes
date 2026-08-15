@@ -20,6 +20,8 @@ const {
 const app = express();
 const expressStaticGzip = require('express-static-gzip');
 const PORT = process.env.PORT !== undefined ? parseInt(process.env.PORT, 10) : 80; // Standard HTTP port for vybes.local
+// Stands in for the device's millis() in GET /status health telemetry
+const mockBootTime = Date.now();
 // Standalone websocket port (the real device serves /live-updates on the
 // same port; the mock keeps it separate so vite can proxy-free connect).
 const WS_PORT = process.env.WS_PORT !== undefined ? parseInt(process.env.WS_PORT, 10) : 8080;
@@ -536,7 +538,18 @@ app.get('/status', async (req, res) => {
       deviceName: deviceName || 'vybes',
       volume: volume ? parseInt(volume) : 50,
       // Mirrors the ESP's heap headroom report (bytes); fixed value here
-      freeHeap: 200000
+      freeHeap: 200000,
+      // Mirrors the ESP's health telemetry. Fixed, healthy-looking values -
+      // uptimeMs is the one thing worth making real so the UI can render it.
+      health: {
+        uptimeMs: Date.now() - mockBootTime,
+        freeInternal: 132000,
+        minFreeInternal: 50000,
+        largestFreeBlock: 110000,
+        minLargestFreeBlock: 48000,
+        resetReason: 'power-on',
+        lastRestartCause: 'none'
+      }
     });
   } catch (error) {
     res.status(500).json({ error: error.message });

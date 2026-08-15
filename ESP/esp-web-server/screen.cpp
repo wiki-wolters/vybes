@@ -51,6 +51,19 @@ void writeToScreen(String message, unsigned long duration) {
     backlightStart = millis();
 }
 
+// The backlight timer starts inside setup(), but loopScreen() - the only
+// thing that expires it - cannot run until setup() returns. WiFi association
+// alone was measured at 1.2-5.2s across boots, so most of the 5s budget was
+// spent before the display was ever worth looking at, and a slow association
+// meant the first loopScreen() call blanked the backlight the instant the
+// device came up (measured: 4.93s of the 5s gone on a 5.2s association).
+// Restart the clock once boot is done so the 5s is 5s of visible time.
+void restartBacklightTimer() {
+    if (backlightStart > 0) {
+        backlightStart = millis();
+    }
+}
+
 void loopScreen() {
     // This function handles timed messages
     if (messageDuration > 0 && (millis() - messageStart) > messageDuration) {
