@@ -240,7 +240,6 @@ esp_err_t handleDeletePreset(PsychicRequest *request) {
     }
 
     updateTeensyWithActivePresetParameters();
-    loadFirFilters();
 
     scheduleConfigWrite();
     return request->reply(200, "application/json", "{}");
@@ -263,7 +262,6 @@ esp_err_t handlePutActivePreset(PsychicRequest *request) {
         scheduleConfigWrite();
     }
     updateTeensyWithActivePresetParameters();
-    loadFirFilters();
 
     // Broadcast first, then reply (reply ends the request)
 

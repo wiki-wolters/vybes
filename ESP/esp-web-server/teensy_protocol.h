@@ -37,6 +37,15 @@
 // live boosts cost headroom.
 #define CMD_SET_OUTPUT_EQ_ENABLED "setOutputEqEnabled"
 
+// Audio hold, bracketing a full state sync: "setConfigHold <0|1>".
+// A sync is hundreds of commands, and every value in flight is a default
+// until its command lands - master volume, per-output gain, input gains and
+// crossovers all arrive at different moments. With the hold asserted the
+// Teensy keeps every output amp at zero, so a partially applied config is
+// never audible. The Teensy also holds from power-on until the first sync
+// releases it, and holds across FIR loads on its own account.
+#define CMD_SET_CONFIG_HOLD "setConfigHold"
+
 // Shared input EQ (L/R buses ahead of the routing matrix)
 //   setInputEq        <band> <freq> <q> <gain>
 //   resetInputEq      <fromBand>

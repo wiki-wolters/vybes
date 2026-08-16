@@ -57,6 +57,10 @@ public:
     // Parse and dispatch a raw command line (exposed for testing)
     void processCommand(const String& rawCommand, OutputStream& output);
 
+    // Commands dispatched since boot. Lets callers tell "the ESP is still
+    // mid-burst" from "the link has gone quiet" without inspecting the port.
+    uint32_t dispatched() const { return dispatchCount; }
+
     // Split a space-separated argument string; runs of spaces count as one
     // delimiter. Returns a new[]'d array (caller deletes) and sets count,
     // or nullptr with count 0. (Exposed for testing.)
@@ -76,6 +80,7 @@ private:
     SerialOutputStream output;
     Command commands[MAX_COMMANDS];
     int commandCount;
+    uint32_t dispatchCount = 0;
 
     char lineBuffer[LINE_BUFFER_SIZE];
     size_t lineLength;

@@ -106,7 +106,6 @@ void handleButton() {
         if (currentPresetIndex != current_config.active_preset_index) {
             current_config.active_preset_index = currentPresetIndex;
             updateTeensyWithActivePresetParameters();
-            loadFirFilters();
             scheduleConfigWrite();
 
             // Prepare data for WebSocket broadcast

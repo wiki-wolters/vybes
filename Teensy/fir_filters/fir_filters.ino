@@ -197,6 +197,36 @@ const int CURRENT_VERSION = 4;
 bool sdCardInitialized = false;
 bool firFilesPending = false;
 
+// --- audio hold (see CMD_SET_CONFIG_HOLD in teensy_protocol.h) ---
+// Two independent sources; audio is silent while either is asserted.
+// configHold starts true so a Teensy that reboots under a running ESP stays
+// silent until that ESP has pushed the whole preset, rather than briefly
+// playing boot defaults at full-range and 50% volume.
+// bootHold covers power-on until the first sync completes. syncHoldDepth
+// nests, so two overlapping syncs (preset button pressed twice, or a boot
+// event racing an API call) release only when the outer one finishes rather
+// than the inner one unmuting mid-config.
+bool bootHold = true;
+int syncHoldDepth = 0;
+bool firLoadHold = false;
+unsigned long configHoldIdleSince = 0; // last command seen while holding
+uint32_t configHoldLastDispatch = 0;
+
+// Fail-safe: an ESP running firmware without setConfigHold, or a release
+// lost to a UART glitch, must not mute the device forever. Releasing early
+// is only ever as bad as the old behaviour; staying silent is worse.
+//
+// Measured from the last command received, NOT from when the hold went on: a
+// full sync is hundreds of commands and the ESP drains its queue as fast as
+// its own loop allows, so a fixed deadline can expire mid-sync and unmute the
+// outputs one at a time as each setOutputSource lands - audibly staggering
+// the channels. Idle time is the thing that actually means "no sync coming".
+#define CONFIG_HOLD_IDLE_MS 3000
+
+static inline bool audioHeld() {
+  return bootHold || syncHoldDepth > 0 || firLoadHold;
+}
+
 // --- RTA (real-time analyzer) state ---
 // The ESP refreshes the enable flag every couple of seconds while a web
 // client is listening ("setRta 1" keepalives); streaming stops on its own
@@ -447,6 +477,18 @@ void setup() {
   static uint8_t espTxBuffer[512];
   Serial1.addMemoryForWrite(espTxBuffer, sizeof(espTxBuffer));
 
+  // Anything already in the RX buffer was sent before we rebooted and belongs
+  // to the previous session - including, possibly, the tail of an interrupted
+  // sync. A stale "setConfigHold 0" in there would release the boot hold
+  // before the real sync has sent a single value.
+  while (Serial1.available()) Serial1.read();
+
+  // Outputs are held silent from power-on (bootHold) until the sync below
+  // completes. Start the fail-safe idle window here rather than at millis()
+  // 0, so it measures the ESP's response to the boot event and not however
+  // long setup() spent on the SD card.
+  configHoldIdleSince = millis();
+
   // Tell the ESP we (re)booted so it pushes the full DSP state
   router.sendEvent("boot");
 }
@@ -543,6 +585,23 @@ void loop() {
     }
     loadFirFiles();
     firFilesPending = false;
+    firLoadHold = false;
+  }
+
+  // Fail-safe release: never let a missing or lost setConfigHold 0 leave the
+  // device permanently silent (e.g. an ESP on firmware that predates the
+  // command). Audio comes back with whatever state did arrive - no worse
+  // than the behaviour before the hold existed. The deadline restarts on
+  // every command, so an in-progress sync can take as long as it likes.
+  if (bootHold || syncHoldDepth > 0) {
+    if (router.dispatched() != configHoldLastDispatch) {
+      configHoldLastDispatch = router.dispatched();
+      configHoldIdleSince = millis();
+    } else if ((millis() - configHoldIdleSince) > CONFIG_HOLD_IDLE_MS) {
+      bootHold = false;
+      syncHoldDepth = 0;
+      Serial.println("WARN: no config sync, releasing audio hold");
+    }
   }
 
   static unsigned long lastMemoryCheck = 0;
@@ -716,6 +775,14 @@ static bool slewToward(float& current, float target, float alpha) {
 // instead (see the probe state block above) and every other output is
 // silenced; normal targets return through the same ramp when it ends.
 static float outputTargetGain(int ch, const OutputState& o) {
+  // A config sync applies hundreds of commands one at a time, so until it
+  // finishes every unsent value is still a boot default - master volume
+  // 50%, output gain 0dB, input gains 1.0, crossovers bypassed. Opening an
+  // output before its own commands land plays that default state, which is
+  // both louder than intended and full-range. Hold every output at zero
+  // until the whole picture is in place; updateAudioVolume's ramp makes the
+  // release click-free.
+  if (audioHeld()) return 0.0f;
   if (probeActive) {
     if (ch != probeSolo) return 0.0f;
     return o.invert ? -probeGain : probeGain;
@@ -1372,6 +1439,27 @@ void handleSetFIREnabled(const String& command, String* args, int argCount, Outp
 
 void handleLoadFirFiles(const String& command, String* args, int argCount, OutputStream& stream) {
   firFilesPending = true;
+  // The load itself happens in loop() and reads from SD, which can take
+  // seconds. Stay silent across it rather than play the new preset's gains
+  // through the old preset's filters.
+  firLoadHold = true;
+}
+
+void handleSetConfigHold(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 1) {
+    const bool wasHeld = audioHeld();
+    if (args[0].toInt() == 1) {
+      syncHoldDepth++;
+      configHoldIdleSince = millis();
+    } else {
+      if (syncHoldDepth > 0) syncHoldDepth--;
+      bootHold = false; // a completed sync is what boot was waiting for
+    }
+    if (audioHeld() != wasHeld) {
+      Serial.print("Audio hold ");
+      Serial.println(audioHeld() ? "on (config sync)" : "off (config applied)");
+    }
+  }
 }
 
 void handleSetDelaysEnabled(const String& command, String* args, int argCount, OutputStream& stream) {

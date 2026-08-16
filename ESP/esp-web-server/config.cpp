@@ -553,7 +553,6 @@ void init_config() {
     }
 
     updateTeensyWithActivePresetParameters();
-    loadFirFilters();
 }
 
 // --- Teensy sync ---
@@ -614,6 +613,11 @@ void sendDynamicsToTeensy(const Dynamics& dyn) {
 void updateTeensyWithActivePresetParameters() {
     Preset* activePreset = &current_config.presets[current_config.active_preset_index];
 
+    // Silence the outputs for the duration of the sync. Everything below
+    // lands one command at a time and the Teensy would otherwise play each
+    // half-applied state on the way through - see CMD_SET_CONFIG_HOLD.
+    sendOnOffToTeensy(CMD_SET_CONFIG_HOLD, true);
+
     //Update displayed preset name
     DebugSerial.print("Updating screen: ");DebugSerial.print(current_config.active_preset_index);DebugSerial.print(" ");DebugSerial.println(activePreset->name);
     writeToScreen(activePreset->name);
@@ -624,10 +628,6 @@ void updateTeensyWithActivePresetParameters() {
     for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
         const Output& output = activePreset->outputs[ch];
         snprintf(a, sizeof(a), "%d", ch);
-
-        snprintf(b, sizeof(b), "%.4f", output.sourceLeft);
-        snprintf(c, sizeof(c), "%.4f", output.sourceRight);
-        sendToTeensy(CMD_SET_OUTPUT_SOURCE, a, b, c);
 
         snprintf(b, sizeof(b), "%.2f", output.gainDb);
         sendToTeensy(CMD_SET_OUTPUT_GAIN, a, b);
@@ -652,6 +652,14 @@ void updateTeensyWithActivePresetParameters() {
 
         // Bare "setFir <ch>" clears the filter
         sendToTeensy(CMD_SET_FIR, a, output.fir[0] != '\0' ? output.fir : nullptr);
+
+        // Routing last, the same discipline the compressor uses below: the
+        // source mix is what makes a channel audible at all, so it goes on
+        // only once this channel's gain, crossover, EQ and FIR are set. On
+        // its own that closes the window even if the hold is unavailable.
+        snprintf(b, sizeof(b), "%.4f", output.sourceLeft);
+        snprintf(c, sizeof(c), "%.4f", output.sourceRight);
+        sendToTeensy(CMD_SET_OUTPUT_SOURCE, a, b, c);
     }
 
     // Preset-level master toggles
@@ -697,6 +705,15 @@ void updateTeensyWithActivePresetParameters() {
     snprintf(d, sizeof(d), "%.2f", current_config.inputGains.tone);
     snprintf(e, sizeof(e), "%.2f", current_config.inputGains.analog);
     sendToTeensy(CMD_SET_INPUT_GAINS, a, b, c, d, e);
+
+    // Queue the FIR reload before releasing, so the Teensy sees the load
+    // request while still muted and can keep holding across the SD read.
+    // Every caller of this function paired it with loadFirFilters() anyway.
+    loadFirFilters();
+
+    // Whole preset is now in flight ahead of this in the queue; the Teensy
+    // ramps the outputs back up when it reaches this and the FIR load done.
+    sendOnOffToTeensy(CMD_SET_CONFIG_HOLD, false);
 
     // Every full sync is a potential audible-state change (preset switches
     // from the API, button, remote and Teensy reboots all land here)

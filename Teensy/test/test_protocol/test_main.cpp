@@ -85,6 +85,7 @@ static const ProtocolCase kProtocolCases[] = {
     // "<freq> <q> <gain>" triple as one builder parameter, exactly as the
     // ESP sends it (config.cpp sendOutputEqPointToTeensy) - the router
     // splits it back into separate arguments.
+    {CMD_SET_CONFIG_HOLD, "1", nullptr, nullptr, nullptr, nullptr, 1},
     {CMD_SET_OUTPUT_GAIN, "3", "-4.50", nullptr, nullptr, nullptr, 2},
     {CMD_SET_OUTPUT_MUTE, "3", "1", nullptr, nullptr, nullptr, 2},
     {CMD_SET_OUTPUT_INVERT, "3", "0", nullptr, nullptr, nullptr, 2},

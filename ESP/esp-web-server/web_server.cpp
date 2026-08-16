@@ -148,7 +148,6 @@ static esp_err_t finishRestore(PsychicRequest *request) {
 
     // Apply the restored state to the DSP
     updateTeensyWithActivePresetParameters();
-    loadFirFilters();
 
     return request->reply(200, "text/plain", "Configuration restored successfully.");
 }

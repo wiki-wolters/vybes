@@ -9,6 +9,7 @@
 //
 // Each entry is X(commandName, handlerFunction).
 #define TEENSY_COMMAND_LIST(X) \
+  X(setConfigHold, handleSetConfigHold) \
   X(setOutputGain, handleSetOutputGain) \
   X(setOutputMute, handleSetOutputMute) \
   X(setOutputInvert, handleSetOutputInvert) \

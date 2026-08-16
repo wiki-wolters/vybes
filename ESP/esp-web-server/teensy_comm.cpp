@@ -100,6 +100,21 @@ static int coalesceKeyTokens(const char* command) {
     return 1;
 }
 
+// Ordered barriers: commands whose meaning is their POSITION in the stream,
+// not the value they carry. Coalescing rewrites an existing entry in place
+// and keeps its old slot, which is right for a parameter ("the latest value
+// wins, wherever it sits") and completely wrong for these:
+//   setConfigHold - the closing 0 would overwrite the opening 1 at the front
+//                   of the sync, collapsing the bracket into a single release
+//                   delivered BEFORE any config, unmuting the outputs for the
+//                   whole sync - the exact thing the hold exists to prevent.
+//   loadFirFiles  - would hop backwards ahead of the setFir commands naming
+//                   the files it is supposed to load.
+static bool isOrderedBarrier(const char* command) {
+    return strcmp(command, CMD_SET_CONFIG_HOLD) == 0 ||
+           strcmp(command, CMD_LOAD_FIR_FILES) == 0;
+}
+
 // Two messages coalesce when they set the same parameter: same command and
 // same identifying arguments. The newer message replaces the older one in
 // place, preserving queue order.
@@ -108,6 +123,7 @@ static bool coalesces(const char* a, const char* b) {
     firstTokens(a, a1, sizeof(a1), a2, sizeof(a2), a3, sizeof(a3));
     firstTokens(b, b1, sizeof(b1), b2, sizeof(b2), b3, sizeof(b3));
     if (strcmp(a1, b1) != 0) return false;
+    if (isOrderedBarrier(a1)) return false;
     int keyTokens = coalesceKeyTokens(a1);
     if (keyTokens >= 2 && strcmp(a2, b2) != 0) return false;
     if (keyTokens >= 3 && strcmp(a3, b3) != 0) return false;
@@ -279,6 +295,10 @@ void requestFirFilesRefresh() {
 //   "PONG <uptimeMs>"   in reply to ping (reboot detection fallback)
 //   "FILES" ... "EOT"   the SD file list, one "name size [taps]" line per file
 // Anything else is forwarded to the debug console.
+// Last uptime reported by the Teensy, for reboot detection. File-scope so
+// the boot-event path can re-arm it and suppress a duplicate sync.
+static unsigned long teensyLastUptime = 0;
+
 static void handleTeensyLine(const char* line) {
     // RTA spectrum frames stream at ~10Hz while the analyzer UI is open -
     // forward them straight to the websocket, no debug logging.
@@ -338,21 +358,25 @@ static void handleTeensyLine(const char* line) {
 
     if (strcmp(line, "EVENT boot") == 0) {
         DebugSerial.println("Teensy booted - syncing DSP state");
+        // The PONG path below also spots this reboot (uptime goes backwards)
+        // and would queue a SECOND full sync on top of this one. A sync is
+        // ~195 commands against a 220-slot queue, so two of them overflow it
+        // and the surplus is dropped - leaving the DSP half-configured.
+        // Re-arm the baseline so only this sync runs.
+        teensyLastUptime = 0;
         updateTeensyWithActivePresetParameters();
-        loadFirFilters();
         requestFirFilesRefresh();
         return;
     }
 
     if (strncmp(line, "PONG ", 5) == 0) {
-        static unsigned long lastUptime = 0;
+        unsigned long& lastUptime = teensyLastUptime;
         unsigned long uptime = strtoul(line + 5, nullptr, 10);
         // Uptime going backwards means the Teensy rebooted and we missed its
         // boot event (e.g. it happened while we were rebooting too).
         if (lastUptime > 0 && uptime < lastUptime) {
             DebugSerial.println("Teensy reboot detected - re-syncing DSP state");
             updateTeensyWithActivePresetParameters();
-            loadFirFilters();
             requestFirFilesRefresh();
         }
         lastUptime = uptime;

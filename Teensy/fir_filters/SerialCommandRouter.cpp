@@ -70,6 +70,7 @@ void SerialCommandRouter::processCommand(const String& rawCommand, OutputStream&
             int argCount;
             String* args = parseArgs(argsString, argCount);
 
+            dispatchCount++;
             commands[i].handler(cmd_str, args, argCount, out);
 
             if (argCount > 0 && args != nullptr) {
