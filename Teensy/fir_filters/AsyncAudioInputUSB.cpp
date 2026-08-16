@@ -119,7 +119,14 @@ void AsyncAudioInputUSB::resyncToTarget()
 {
     const uint32_t target = (uint32_t)(targetLatencyS * USB_NOMINAL_HZ);
     const uint32_t avail = ring->available();
-    if (avail > target) ring->consume(avail - target);
+    if (avail > target) {
+        // Skipping samples is an instantaneous waveform discontinuity - one
+        // audible click. Counted so it can never hide behind clean
+        // drop/starve counters.
+        resyncCount++;
+        lastResyncFillMs = (float)(avail * (1000.0 / USB_NOMINAL_HZ));
+        ring->consume(avail - target);
+    }
     diffFiltered = 0.0f;
     resampler->fixStep();
 }
@@ -169,6 +176,57 @@ int AsyncAudioInputUSB::resampleBlock(int16_t* dstL, int16_t* dstR)
     return filled;
 }
 
+// Glitch reporter. Runs in loop(), never in the audio/USB interrupts where
+// Serial output would deadlock: polls the counters at ~25ms and prints the
+// instant one moves, placing a single audible click in time to 25ms.
+//
+// Deliberately event-driven rather than periodic. Teensy's USB CDC write
+// blocks for up to TX_TIMEOUT (~120ms) when a host holds the port open but
+// stops draining it, and a stall that long in loop() coarsens
+// updateAudioVolume()'s gain smoothing - i.e. a debug print that causes the
+// very artefact it is here to find. These lines only fire when something has
+// already gone wrong; steady-state health belongs in the 20s summary.
+void AsyncAudioInputUSB::diagLoop()
+{
+    static uint32_t lastPoll = 0;
+    static uint32_t pDrop = 0, pStarve = 0, pStop = 0, pResync = 0,
+                    pAlloc = 0, pRecov = 0;
+    const uint32_t now = millis();
+    if ((uint32_t)(now - lastPoll) < 25) return;
+    lastPoll = now;
+
+    const uint32_t cDrop = drops(), cStarve = starves(), cStop = stops(),
+                   cResync = resyncCount, cAlloc = allocFailCount,
+                   cRecov = recoveryCount;
+    if (cDrop != pDrop || cStarve != pStarve || cStop != pStop ||
+        cResync != pResync || cAlloc != pAlloc || cRecov != pRecov) {
+        Serial.printf("UEVT %lu drop+%lu starve+%lu(filled %u) stop+%lu "
+                      "resync+%lu(fill %ld) alloc+%lu heal+%lu fill %ld step %ld\n",
+                      (unsigned long)now,
+                      (unsigned long)(cDrop - pDrop),
+                      (unsigned long)(cStarve - pStarve), (unsigned)lastStarveFilled,
+                      (unsigned long)(cStop - pStop),
+                      (unsigned long)(cResync - pResync), (long)(lastResyncFillMs * 10),
+                      (unsigned long)(cAlloc - pAlloc),
+                      (unsigned long)(cRecov - pRecov),
+                      (long)(bufferedMs() * 10), (long)stepPpm());
+        pDrop = cDrop; pStarve = cStarve; pStop = cStop;
+        pResync = cResync; pAlloc = cAlloc; pRecov = cRecov;
+    }
+
+    // The verdict line for a stop: how long the host was actually silent.
+    // ~100ms+ means the host really stalled; ~1ms means the stop detector
+    // fired while packets were still arriving normally.
+    static uint32_t pResumeSeq = 0;
+    if (ring->resumeSeqNo() != pResumeSeq) {
+        pResumeSeq = ring->resumeSeqNo();
+        Serial.printf("URESUME %lu host silence %lu us, packets %lu\n",
+                      (unsigned long)now, (unsigned long)ring->resumeGap(),
+                      (unsigned long)ring->packets());
+    }
+
+}
+
 void AsyncAudioInputUSB::update(void)
 {
     if (ring == nullptr || resampler == nullptr) return;
@@ -209,13 +267,14 @@ void AsyncAudioInputUSB::update(void)
     // windup can never creep toward the 1% kill switch.
     if (++updatesSinceFix >= 4096) { // ~12s
         updatesSinceFix = 0;
-        if (fabsf(diffFiltered) < 0.0005f) resampler->fixStep();
+        if (fabsf(diffFiltered) < 0.0005f) { resampler->fixStep(); fixStepCount++; }
     }
 
     audio_block_t* left = allocate();
-    if (left == nullptr) return;
+    if (left == nullptr) { allocFailCount++; return; }
     audio_block_t* right = allocate();
     if (right == nullptr) {
+        allocFailCount++;
         release(left);
         return;
     }
@@ -224,6 +283,7 @@ void AsyncAudioInputUSB::update(void)
         memset(left->data + filled, 0, (AUDIO_BLOCK_SAMPLES - filled) * sizeof(int16_t));
         memset(right->data + filled, 0, (AUDIO_BLOCK_SAMPLES - filled) * sizeof(int16_t));
         starveCount++;
+        lastStarveFilled = (uint16_t)filled;
     }
     transmit(left, 0);
     release(left);

@@ -16,6 +16,13 @@
 #include "ProbeSource.h"
 #include "AsyncAudioInputUSB.h"
 
+// The .ino prototype generator injects generated prototypes for the sketch's
+// functions partway down the globals below - above where OutputState is
+// defined. outputTargetGain() takes an OutputState&, and a reference only
+// needs the type declared, so declare it here (before the insertion point) or
+// that generated prototype fails to compile.
+struct OutputState;
+
 // V1 8-output architecture (docs/CHANNEL_ARCHITECTURE.md): a shared stereo
 // input stage (source mixing + input EQ) feeds eight identical output
 // channels, each with its own source mix, HP/LP crossover, 10-band PEQ, FIR
@@ -460,6 +467,7 @@ void loop() {
   // Rebuild the USB resampler here (not in the audio interrupt) if its
   // kill switch tripped; no-op otherwise. Prints a diagnostic when it runs.
   USB_in.healPending();
+  USB_in.diagLoop();
 #endif
 
   // Optional: Print some diagnostics every 20 seconds
@@ -489,7 +497,19 @@ void loop() {
     Serial.print(", stops ");
     Serial.print(USB_in.stops());
     Serial.print(", recoveries ");
-    Serial.println(USB_in.recoveries());
+    Serial.print(USB_in.recoveries());
+    Serial.print(", resyncs ");
+    Serial.print(USB_in.resyncs());
+    Serial.print(", allocfails ");
+    Serial.print(USB_in.allocFails());
+    // Races the stop detector survived (see UsbRxRing::consumerReady) and the
+    // worst host packet gap this interval - 1000us is nominal, a large value
+    // means the host really did stall.
+    Serial.print(", falsestops ");
+    Serial.print(USB_in.falseStops());
+    Serial.print(", maxgap ");
+    Serial.print(USB_in.takeMaxGapUs());
+    Serial.println(" us");
 #else
     static uint32_t lastUnderruns = 0, lastOverruns = 0;
     uint32_t underruns = usb_audio_underrun_count;

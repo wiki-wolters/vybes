@@ -172,6 +172,32 @@ static void test_micros_wraparound_no_false_stop() {
     TEST_ASSERT_EQUAL_UINT32(0, ring.stops());
 }
 
+// The consumer samples micros() in the audio ISR (priority 208) and only then
+// calls consumerReady(). The USB ISR (priority 128) preempts it and can stamp
+// a NEWER lastRxMicros in that window, so the timestamp is legitimately
+// allowed to sit slightly in the future. Computed unsigned, that tiny negative
+// elapsed time wraps to ~4.29e9 and trips the 100ms stop gap - which threw
+// away the ring, re-armed the prefill and produced an audible click roughly
+// once a minute during normal playback. Elapsed time must be evaluated signed.
+static void test_packet_timestamp_ahead_of_now_is_not_a_stop() {
+    UsbRxRing ring(PREFILL, STOP_GAP_US);
+    uint32_t now = feed(ring, PREFILL, 1000);
+    TEST_ASSERT_TRUE(ring.consumerReady(now));
+
+    // A packet lands 40us after the consumer sampled its own timestamp
+    ring.write(makePacket(44).data(), 44, now + 40);
+    TEST_ASSERT_TRUE(ring.consumerReady(now));
+    TEST_ASSERT_EQUAL_UINT32(0, ring.stops());
+
+    // ...and the same interleaving across the micros() wrap
+    UsbRxRing wrapped(PREFILL, STOP_GAP_US);
+    uint32_t edge = 0xFFFFFFF0u;
+    feed(wrapped, PREFILL, edge - PREFILL / 44 * 1000);
+    wrapped.write(makePacket(44).data(), 44, edge);
+    TEST_ASSERT_TRUE(wrapped.consumerReady(edge - 40)); // consumer sampled first
+    TEST_ASSERT_EQUAL_UINT32(0, wrapped.stops());
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_write_and_available);
@@ -183,5 +209,6 @@ int main(int, char**) {
     RUN_TEST(test_short_gap_is_not_a_stop);
     RUN_TEST(test_ring_index_wrap);
     RUN_TEST(test_micros_wraparound_no_false_stop);
+    RUN_TEST(test_packet_timestamp_ahead_of_now_is_not_a_stop);
     return UNITY_END();
 }

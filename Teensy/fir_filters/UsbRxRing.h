@@ -30,6 +30,19 @@ public:
     // fit is dropped whole (counted); partial packets would corrupt L/R
     // alignment downstream less gracefully than a dropped one.
     bool write(const int16_t* lr, uint32_t frames, uint32_t nowMicros) {
+        const uint32_t gap = nowMicros - lastRxMicros;
+        if (active) {
+            if (gap > maxGapUs) maxGapUs = gap;
+        } else if (pktCount) {
+            // First packet after the consumer declared the stream stopped.
+            // This is the ONLY place the true host silence across a stop can
+            // be measured - while inactive the running gap is not tracked, so
+            // without this a stop looks identical whether the host paused for
+            // a second or never paused at all.
+            resumeGapUs = gap;
+            resumeSeq++;
+        }
+        pktCount++;
         lastRxMicros = nowMicros;
         active = true;
         const uint32_t free = CAPACITY - (wpos - rpos);
@@ -55,11 +68,26 @@ public:
     // Stop detection + prefill gate. Returns true when the consumer should
     // produce output this cycle.
     bool consumerReady(uint32_t nowMicros) {
-        if (active && (uint32_t)(nowMicros - lastRxMicros) > stopGap) {
+        // nowMicros was sampled by our caller in the audio interrupt
+        // (priority 208). The USB interrupt (priority 128) preempts us and
+        // can stamp a NEWER lastRxMicros in the window between that sample
+        // and this comparison - so lastRxMicros is legitimately allowed to
+        // sit slightly in the future. An unsigned difference wraps to ~4.29e9
+        // in that case and trips any threshold; the elapsed time must be
+        // evaluated signed. (Signed also keeps the 71-minute micros()
+        // rollover correct.) Read the volatile exactly once.
+        const uint32_t last = lastRxMicros;
+        const int32_t elapsed = (int32_t)(nowMicros - last);
+        if (active && elapsed > (int32_t)stopGap) {
             active = false;
             prefilled = false;
             rpos = wpos; // drain stale audio from the ended stream
             stopCount++;
+        } else if (active && elapsed < 0) {
+            // Diagnostic: this is the exact interleaving that the old
+            // unsigned test mistook for a 100ms host stall.
+            falseStopCount++;
+            lastFalseDeltaUs = elapsed;
         }
         if (!active) return false;
         if (!prefilled) {
@@ -98,6 +126,18 @@ public:
     uint32_t drops() const { return dropCount; }
     uint32_t stops() const { return stopCount; }
 
+    // Longest silence between two packets since the last call. Nominal
+    // delivery is one packet per 1ms USB frame, so a value far above 1000us
+    // means the HOST (or the USB stack below us) stalled - as opposed to a
+    // stop our own consumer invented.
+    uint32_t takeMaxGapUs() { const uint32_t g = maxGapUs; maxGapUs = 0; return g; }
+
+    uint32_t packets() const { return pktCount; }
+    uint32_t falseStops() const { return falseStopCount; }
+    int32_t lastFalseDelta() const { return lastFalseDeltaUs; }
+    uint32_t resumeGap() const { return resumeGapUs; } // host silence across the last stop
+    uint32_t resumeSeqNo() const { return resumeSeq; }
+
 private:
     float bufL[CAPACITY];
     float bufR[CAPACITY];
@@ -109,6 +149,12 @@ private:
     bool started = false; // consumer-only
     volatile uint32_t dropCount;
     uint32_t stopCount; // consumer-only
+    volatile uint32_t maxGapUs = 0;      // diagnostics, producer-written
+    volatile uint32_t pktCount = 0;
+    volatile uint32_t resumeGapUs = 0;
+    volatile uint32_t resumeSeq = 0;
+    uint32_t falseStopCount = 0; // consumer-only
+    int32_t lastFalseDeltaUs = 0;
     const uint32_t prefill;
     const uint32_t stopGap;
 };

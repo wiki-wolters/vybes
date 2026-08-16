@@ -41,6 +41,14 @@ public:
     uint32_t stops() const { return ring ? ring->stops() : 0; }   // stream stop/start transitions
     uint32_t starves() const { return starveCount; }              // blocks padded with silence mid-stream
     uint32_t recoveries() const { return recoveryCount; }         // resampler kill-switch self-heals
+    uint32_t resyncs() const { return resyncCount; }              // hard fill trims (each one skips samples = click)
+    uint32_t allocFails() const { return allocFailCount; }        // audio pool empty, block never transmitted
+    uint32_t falseStops() const { return ring ? ring->falseStops() : 0; }
+    uint32_t takeMaxGapUs() { return ring ? ring->takeMaxGapUs() : 0; } // host packet gap since last call
+
+    // Call from loop(): prints a line whenever any glitch counter moves, plus
+    // a periodic trace of fill/step/packet-gap. Cheap when nothing happens.
+    void diagLoop();
 
     // Call from loop(): runs the expensive resampler rebuild after a
     // kill-switch trip outside the audio interrupt (update() outputs
@@ -69,6 +77,13 @@ private:
     volatile bool healNeeded;
     float stepAtKillPpm;
     uint32_t updatesSinceFix;
+
+    // --- diagnostics ---
+    volatile uint32_t resyncCount = 0;
+    volatile uint32_t allocFailCount = 0;
+    volatile uint32_t fixStepCount = 0;
+    volatile float lastResyncFillMs = 0.0f;   // fill that triggered the last resync
+    volatile uint16_t lastStarveFilled = 0;   // samples produced in the last short block
 };
 
 #endif // ASYNC_AUDIO_INPUT_USB_H
