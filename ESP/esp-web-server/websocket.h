@@ -28,6 +28,11 @@ void broadcastGrmFrame(const char* hexData);
 // clients as a probeEvent message
 void broadcastProbeEvent(const char* line);
 
+// Announce that an output's FIR filter failed to load (code: nosd, missing,
+// poolfull, toobig, nomem).
+void broadcastFirLoadError(const char* presetName, int output,
+                           const char* code, const char* file);
+
 // Tracks client interest in RTA frames and relays it to the Teensy.
 // Call from loop().
 void websocketLoop();

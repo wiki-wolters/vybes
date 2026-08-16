@@ -70,6 +70,16 @@ const FIR_FILE_TAPS = {
 };
 const firTaps = (file) => (file ? (FIR_FILE_TAPS[file] ?? 2048) : 0);
 
+// Per-output FIR load failures. Real hardware fills these from the Teensy's
+// FIRERR lines; here they are opt-in so the warning UI can be exercised.
+function mockFirErrors() {
+  if (process.env.MOCK_FIR_ERRORS !== '1') return [];
+  return [
+    { output: 0, code: 'missing', file: 'L-correction.wav' },
+    { output: 1, code: 'toobig', file: 'R-correction-loud.wav' },
+  ];
+}
+
 function firPool(config) {
   const outputs = config.outputs.map((o, i) => ({ output: i, file: o.fir, taps: firTaps(o.fir) }));
   return {
@@ -842,7 +852,10 @@ app.get('/preset', wrap(async (req, res) => {
     firEnabled: c.firEnabled,
     // Presets saved before dynamics existed default to disabled
     dynamics: c.dynamics || defaultDynamics(),
-    firPool: { total: pool.total, used: pool.used },
+    // errors: per-output FIR load failures reported by the Teensy (active
+    // preset only on real hardware). Set MOCK_FIR_ERRORS=1 to exercise the
+    // web UI's warning without a broken SD card.
+    firPool: { total: pool.total, used: pool.used, errors: mockFirErrors() },
   });
 }));
 

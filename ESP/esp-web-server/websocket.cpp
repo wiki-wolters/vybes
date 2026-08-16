@@ -4,6 +4,7 @@
 #include "teensy_comm.h"
 #include "compare_mode.h"
 #include "config.h" // NUM_OUTPUTS, for solo channel validation
+#include <ArduinoJson.h>
 #include <atomic>
 
 // One handler per listener. esp-idf's httpd runs everything for a server -
@@ -195,6 +196,25 @@ void broadcastProbeEvent(const char* line) {
     char buf[128];
     snprintf(buf, sizeof(buf), "{\"messageType\":\"probeEvent\",\"line\":\"%s\"}", line);
     broadcastWebSocket(buf);
+}
+
+// Tell clients a channel's FIR filter failed to load, so the UI can stop
+// presenting that output as corrected when it is running without a filter.
+void broadcastFirLoadError(const char* presetName, int output,
+                           const char* code, const char* file) {
+    if (totalClients() == 0) return;
+    if (presetName == nullptr || code == nullptr || file == nullptr) return;
+    // Preset names are user-supplied, so serialize rather than snprintf into
+    // a JSON template - a quote in a name would otherwise break the message.
+    JsonDocument doc;
+    doc["messageType"] = "firLoadError";
+    doc["presetName"] = presetName;
+    doc["output"] = output;
+    doc["code"] = code;
+    doc["file"] = file;
+    String out;
+    serializeJson(doc, out);
+    broadcastWebSocket(out.c_str());
 }
 
 // Forward one GRM frame (the hex payload after "GRM ") to all clients.

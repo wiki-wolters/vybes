@@ -583,5 +583,7 @@ esp_err_t handlePutOutputFir(PsychicRequest *request) {
     JsonObject pool = doc.createNestedObject("firPool");
     pool["total"] = FIR_TAP_POOL;
     pool["used"] = used;
+    firPoolErrorsToJson(ctx.preset == &current_config.presets[current_config.active_preset_index],
+                        pool);
     return replyOutputChanged(request, ctx, doc);
 }

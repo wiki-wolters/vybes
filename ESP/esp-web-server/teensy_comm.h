@@ -55,6 +55,13 @@ void teensyCommLoop();
 size_t copyCachedFirFiles(char* dst, size_t dstSize);
 void requestFirFilesRefresh();
 
+// Per-output result of the last FIR load. Cleared when a load is requested,
+// repopulated from the Teensy's FIRERR lines. Returns false when the output
+// loaded cleanly (or has no filter assigned).
+void clearFirLoadErrors();
+bool getFirLoadError(int output, char* code, size_t codeSize,
+                     char* file, size_t fileSize);
+
 // Size in bytes of a cached FIR file, or -1 when the file isn't in the cache
 // or was listed without a size. Safe to call from any task.
 long getCachedFirFileSize(const char* name);

@@ -46,6 +46,16 @@ static char firFilesPending[FIR_CACHE_MAX];
 static size_t firFilesPendingLen = 0;
 static bool collectingFiles = false;
 
+// Per-output result of the last FIR load, from the Teensy's "FIRERR ch code
+// file" lines. A failed load used to be visible only on the Teensy's debug
+// console, so the UI happily showed a channel as FIR-corrected while it was
+// running with no filter at all. Cleared when a fresh load is requested.
+struct FirLoadError {
+    char code[12];
+    char file[FIR_FILENAME_LEN + 1];
+};
+static FirLoadError firLoadErrors[NUM_OUTPUTS] = {};
+
 // --- Message building ---
 
 // The actual formatting lives in teensy_protocol.h (shared with the Teensy
@@ -288,6 +298,27 @@ void requestFirFilesRefresh() {
     sendToTeensy(CMD_GET_FILES, nullptr);
 }
 
+// --- FIR load errors ---
+
+void clearFirLoadErrors() {
+    xSemaphoreTake(firCacheMutex, portMAX_DELAY);
+    memset(firLoadErrors, 0, sizeof(firLoadErrors));
+    xSemaphoreGive(firCacheMutex);
+}
+
+bool getFirLoadError(int output, char* code, size_t codeSize,
+                     char* file, size_t fileSize) {
+    if (output < 0 || output >= NUM_OUTPUTS) return false;
+    xSemaphoreTake(firCacheMutex, portMAX_DELAY);
+    const bool present = firLoadErrors[output].code[0] != '\0';
+    if (present) {
+        strlcpy(code, firLoadErrors[output].code, codeSize);
+        strlcpy(file, firLoadErrors[output].file, fileSize);
+    }
+    xSemaphoreGive(firCacheMutex);
+    return present;
+}
+
 // --- RX line handling ---
 
 // Handle one complete line from the Teensy. The Teensy sends:
@@ -327,6 +358,38 @@ static void handleTeensyLine(const char* line) {
         long ch = strtol(line + 8, &end, 10);
         if (end != nullptr && *end == ' ') {
             compareSetFirGain((int)ch, (int)strtol(end + 1, nullptr, 10));
+        }
+        return;
+    }
+
+    // "FIRERR <ch> <code> <file>": a channel's FIR filter did not load. Record
+    // it and tell the UI immediately - silently running an uncorrected channel
+    // is the worst possible failure mode for a room-correction box.
+    if (strncmp(line, "FIRERR ", 7) == 0) {
+        char* end = nullptr;
+        long ch = strtol(line + 7, &end, 10);
+        if (end != nullptr && *end == ' ' && ch >= 0 && ch < NUM_OUTPUTS) {
+            char code[12] = {0};
+            const char* codeStart = end + 1;
+            const char* codeEnd = strchr(codeStart, ' ');
+            if (codeEnd != nullptr) {
+                size_t codeLen = (size_t)(codeEnd - codeStart);
+                if (codeLen >= sizeof(code)) codeLen = sizeof(code) - 1;
+                memcpy(code, codeStart, codeLen);
+                const char* file = codeEnd + 1;
+
+                xSemaphoreTake(firCacheMutex, portMAX_DELAY);
+                strlcpy(firLoadErrors[ch].code, code, sizeof(firLoadErrors[ch].code));
+                strlcpy(firLoadErrors[ch].file, file, sizeof(firLoadErrors[ch].file));
+                xSemaphoreGive(firCacheMutex);
+
+                DebugSerial.printf("FIR load failed on output %ld (%s): %s\n", ch, code, file);
+                // A load only ever concerns the active preset, and the UI
+                // filters live messages by preset name.
+                broadcastFirLoadError(
+                    current_config.presets[current_config.active_preset_index].name,
+                    (int)ch, code, file);
+            }
         }
         return;
     }

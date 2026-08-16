@@ -722,6 +722,9 @@ void updateTeensyWithActivePresetParameters() {
 
 void loadFirFilters() {
     Preset* activePreset = &current_config.presets[current_config.active_preset_index];
+    // Stale failures must not outlive the load that caused them; the Teensy
+    // re-reports any that still apply as FIRERR lines during this load.
+    clearFirLoadErrors();
     if (activePreset->firEnabled) {
         sendToTeensy(CMD_LOAD_FIR_FILES, nullptr);
     }

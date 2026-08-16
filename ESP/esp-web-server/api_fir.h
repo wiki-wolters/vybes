@@ -21,4 +21,10 @@ uint32_t firFileTaps(const char* file);
 // (used to price a candidate load before accepting it).
 uint32_t firPoolUsed(const Preset& preset, int overrideOutput = -1, const char* overrideFile = nullptr);
 
+// Serialize total/used plus per-output FIR load failures (active preset only).
+void firPoolToJson(const Preset& preset, bool isActive, JsonObject pool);
+
+// Just the "errors" array, for callers that compute "used" themselves.
+void firPoolErrorsToJson(bool isActive, JsonObject pool);
+
 #endif // API_FIR_H

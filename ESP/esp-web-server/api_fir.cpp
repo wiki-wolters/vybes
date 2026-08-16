@@ -120,6 +120,32 @@ esp_err_t handleGetFirFiles(PsychicRequest *request) {
     return request->reply(200, "application/json", jsonResponse.c_str());
 }
 
+// Fill a "firPool" object: capacity, usage, and any per-output load failures.
+// Failures only make sense for the active preset - they describe what the
+// Teensy actually has loaded right now, not what a stored preset would load.
+void firPoolToJson(const Preset& preset, bool isActive, JsonObject pool) {
+    pool["total"] = FIR_TAP_POOL;
+    pool["used"] = firPoolUsed(preset);
+    firPoolErrorsToJson(isActive, pool);
+}
+
+// The web UI replaces its whole firPool object from every broadcast carrying
+// one, so each of them has to include the errors or an unrelated edit would
+// silently clear the warning.
+void firPoolErrorsToJson(bool isActive, JsonObject pool) {
+    if (!isActive) return;
+    JsonArray errors = pool.createNestedArray("errors");
+    for (int i = 0; i < NUM_OUTPUTS; i++) {
+        char code[12];
+        char file[FIR_FILENAME_LEN + 1];
+        if (!getFirLoadError(i, code, sizeof(code), file, sizeof(file))) continue;
+        JsonObject entry = errors.createNestedObject();
+        entry["output"] = i;
+        entry["code"] = code;
+        entry["file"] = file;
+    }
+}
+
 // GET /preset/fir/pool - tap pool status for a preset
 esp_err_t handleGetPresetFirPool(PsychicRequest *request) {
     if (!request->hasParam("preset_name")) {

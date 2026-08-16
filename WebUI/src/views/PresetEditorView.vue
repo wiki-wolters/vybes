@@ -170,7 +170,11 @@
             </div>
 
             <div class="mb-4">
-              <FirPoolBar :used="store.firPool.used" :total="store.firPool.total" />
+              <FirPoolBar
+                :used="store.firPool.used"
+                :total="store.firPool.total"
+                :errors="store.firPool.errors ?? []"
+              />
             </div>
             <div class="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-4 gap-4 items-start">
               <ChannelStrip

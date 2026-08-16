@@ -81,9 +81,8 @@ esp_err_t handleGetPreset(PsychicRequest *request) {
     doc["firEnabled"] = preset.firEnabled;
     dynamics_to_json(preset.dynamics, doc.createNestedObject("dynamics"));
 
-    JsonObject firPool = doc.createNestedObject("firPool");
-    firPool["total"] = FIR_TAP_POOL;
-    firPool["used"] = firPoolUsed(preset);
+    firPoolToJson(preset, presetIndex == current_config.active_preset_index,
+                  doc.createNestedObject("firPool"));
 
     String response;
     serializeJson(doc, response);

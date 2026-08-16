@@ -307,6 +307,20 @@ export const usePresetStore = defineStore('preset', () => {
         if (msg.firPool) preset.value.firPool = msg.firPool;
         if (msg.template) preset.value.template = msg.template;
         break;
+      case 'firLoadError': {
+        // A channel is running without the filter it is configured for.
+        // Merge rather than replace: a load reports one line per failure.
+        const pool = preset.value.firPool ?? (preset.value.firPool = { total: 0, used: 0 });
+        if (!pool.errors) pool.errors = [];
+        const existing = pool.errors.find((e) => e.output === msg.output);
+        if (existing) {
+          existing.code = msg.code;
+          existing.file = msg.file;
+        } else {
+          pool.errors.push({ output: msg.output, code: msg.code, file: msg.file });
+        }
+        break;
+      }
       case 'crossoverChanged': {
         const point = preset.value.crossovers.find((x) => x.id === msg.id);
         if (point) point.freq = msg.crossoverFreq;

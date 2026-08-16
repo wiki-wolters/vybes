@@ -1188,16 +1188,49 @@ static void reportFirGains(Print& out) {
   }
 }
 
+// sdCardInitialized only records what happened at boot. The card can be
+// pulled at runtime, and SdFat then keeps answering from a stale mount: a
+// removed card listed one garbage filename and failed every FIR open, with
+// nothing anywhere saying the card was gone. Re-check the media on each use
+// and re-mount when it comes back.
+static bool sdReady() {
+  const bool present = SD.mediaPresent();
+  if (!present) {
+    if (sdCardInitialized) {
+      sdCardInitialized = false;
+      Serial.println("SD card removed");
+    }
+    return false;
+  }
+  if (!sdCardInitialized) {
+    sdCardInitialized = SD.begin(BUILTIN_SDCARD);
+    Serial.println(sdCardInitialized ? "SD card re-mounted"
+                                     : "SD card present but mount failed");
+  }
+  return sdCardInitialized;
+}
+
+// Machine-readable companion to the human-readable "ERROR FIR ..." lines, so
+// the ESP can attribute a failure to a channel and surface it in the web UI
+// instead of it dying in a debug console. Codes: nosd, missing, poolfull,
+// toobig, nomem.
+static void reportFirError(int ch, const char* code, const char* file) {
+  Serial1.printf("FIRERR %d %s %s\n", ch, code, file);
+}
+
 void loadFirFiles() {
   // Note: incoming serial commands are buffered by the UART while we read
   // from the SD card, so no special handling is needed here.
-  if (!sdCardInitialized) {
-    Serial.println("SD not initialized - can't load FIR files");
+  if (!sdReady()) {
+    Serial.println("SD not available - can't load FIR files");
     // Clear any existing FIR filters to ensure no stale filters are used
     for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
       firFilter[ch].loadCoefficients(nullptr, 0);
       state.outputs[ch].firTaps = 0;
       firPinkGainDb[ch] = 0.0f;
+      if (state.outputs[ch].firFile[0] != '\0') {
+        reportFirError(ch, "nosd", state.outputs[ch].firFile);
+      }
     }
     applyDelays();
     reportFirGains(Serial1);
@@ -1220,6 +1253,7 @@ void loadFirFiles() {
     uint32_t remaining = FIR_TAP_POOL - poolUsed;
     if (remaining == 0) {
       Serial1.printf("ERROR FIR pool exhausted, skipping %s (output %d)\n", o.firFile, ch);
+      reportFirError(ch, "poolfull", o.firFile);
       continue;
     }
 
@@ -1231,8 +1265,10 @@ void loadFirFiles() {
       if (actualTaps > 0) {
         Serial1.printf("ERROR FIR pool exceeded: %s needs %u taps, %lu of %u left (output %d)\n",
                        o.firFile, actualTaps, (unsigned long)remaining, FIR_TAP_POOL, ch);
+        reportFirError(ch, "toobig", o.firFile);
       } else {
         Serial1.printf("ERROR FIR load failed: %s (output %d)\n", o.firFile, ch);
+        reportFirError(ch, "missing", o.firFile);
       }
       continue;
     }
@@ -1244,6 +1280,7 @@ void loadFirFiles() {
     delete[] coeffs;
     if (!loaded) {
       Serial1.printf("ERROR FIR load failed: out of memory for %s (output %d)\n", o.firFile, ch);
+      reportFirError(ch, "nomem", o.firFile);
       continue;
     }
     o.firTaps = actualTaps;
@@ -1501,12 +1538,18 @@ void handleSetVolume(const String& command, String* args, int argCount, OutputSt
 void handleGetFiles(const String& command, String* args, int argCount, OutputStream& stream) {
   stream.print("FILES\n");
 
-  if (sdCardInitialized) {
+  if (sdReady()) {
     File root = SD.open("/");
     if (root && root.isDirectory()) {
       File file = root.openNextFile();
       while (file) {
-        if (!file.isDirectory()) {
+        // Skip dotfiles. macOS writes AppleDouble sidecars ("._name") beside
+        // every real file on removable media plus .Spotlight-V100/.Trashes;
+        // Finder hides them, this listing did not. They doubled the list,
+        // offered non-FIR blobs in the picker, cost an SD tap-count pass
+        // each, and ate the ESP's fixed 1KB list cache - which drops entries
+        // silently once full, making real files vanish from the UI.
+        if (!file.isDirectory() && file.name()[0] != '.') {
           stream.print(file.name());
           stream.print(" ");
           stream.print((unsigned long)file.size());
