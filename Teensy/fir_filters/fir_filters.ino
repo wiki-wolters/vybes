@@ -23,13 +23,6 @@
 // that generated prototype fails to compile.
 struct OutputState;
 
-// The .ino prototype generator injects generated prototypes for the sketch's
-// functions partway down the globals below - above where OutputState is
-// defined. outputTargetGain() takes an OutputState&, and a reference only
-// needs the type declared, so declare it here (before the insertion point) or
-// that generated prototype fails to compile.
-struct OutputState;
-
 // V1 8-output architecture (docs/CHANNEL_ARCHITECTURE.md): a shared stereo
 // input stage (source mixing + input EQ) feeds eight identical output
 // channels, each with its own source mix, HP/LP crossover, 10-band PEQ, FIR
