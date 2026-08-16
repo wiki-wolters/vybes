@@ -5,5 +5,9 @@ ESP/esp-web-server/data/dist
 # TLS certificate + private key served by the device (ESP/make-certs.sh)
 ESP/esp-web-server/data/certs/
 
+# Device config snapshots pulled with `curl /backup` before a uploadfs wipe.
+# Local workflow artifacts, not repo content.
+ESP/config-backup-*.msgpack
+
 # PlatformIO build output
 .pio/
