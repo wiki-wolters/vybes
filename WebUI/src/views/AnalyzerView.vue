@@ -785,12 +785,19 @@ function pollTick() {
   micDb.value = powerToDb(micAvgPower);
 
   // Level alignment: mic and source have unrelated absolute scales, so
-  // shift the mic trace by the median mid-band difference before comparing.
+  // shift the mic trace by the median difference before comparing - taken
+  // only inside the scoped output's passband and only where the mic is
+  // clear of its noise floor, so bands the output can't reproduce don't
+  // corrupt the offset.
   if (sourceCompareDb.value && sourceLive.value && micCompareDb.value) {
     offset.value = medianOffset(
       micCompareDb.value,
       sourceCompareDb.value,
-      compareGrid.value.centers
+      compareGrid.value.centers,
+      alignWindow.value.loHz,
+      alignWindow.value.hiHz,
+      floorCompareDb.value,
+      NOISE_FLOOR_MARGIN_DB
     );
   }
 }
@@ -1212,7 +1219,11 @@ const targetGridCurve = computed(() => {
       : TARGET_CURVE_PRESETS.find((c) => c.id === eqTarget.mode)?.points;
   // Custom selected with nothing imported yet: behave as flat
   if (!points) return compareGrid.value.centers.map(() => 0);
-  return targetCurveForGrid(points, compareGrid.value);
+  // Re-center over the same window the mic/source alignment uses, or the
+  // curve's offset would fight the alignment and become an overall gain.
+  return targetCurveForGrid(
+    points, compareGrid.value, alignWindow.value.loHz, alignWindow.value.hiHz
+  );
 });
 
 const targetModeHelp = computed(
@@ -1273,6 +1284,32 @@ const scopeOutput = computed(() =>
     ? outputs.value.find((o) => o.index === Number(scope.value)) ?? null
     : null
 );
+
+// Level-alignment window: the band used to line the mic trace up with the
+// source before differencing. It has to fall where the scoped output
+// actually makes sound, or the offset is computed from noise (this is why
+// a soloed sub used to swing wildly - it was aligned on 200-5000 Hz, which
+// the sub can't reproduce). Full-range scopes align on the trustworthy
+// midrange (clear of room modes and mic HF rolloff); a band-limited output
+// aligns inside its passband, pulled a half octave in from each crossover
+// corner so the rolloff skirts don't drag the offset.
+const ALIGN_SKIRT = Math.SQRT2; // half octave
+const alignWindow = computed(() => {
+  const o = scopeOutput.value;
+  if (!o || (!o.hpHz && !o.lpHz)) return { loHz: 200, hiHz: 5000 };
+  const rawLo = o.hpHz ?? 20;
+  const rawHi = o.lpHz ?? 20000;
+  let lo = rawLo * ALIGN_SKIRT;
+  let hi = rawHi / ALIGN_SKIRT;
+  if (hi <= lo) { lo = rawLo; hi = rawHi; } // passband narrower than an octave
+  // Where the passband reaches the midrange, align there (a woofer aligns
+  // on 200 Hz up, not through its modal region); a sub sits entirely below
+  // it and keeps its own band.
+  const midLo = Math.max(lo, 200);
+  const midHi = Math.min(hi, 5000);
+  if (midHi / midLo >= 1.26) return { loHz: midLo, hiHz: midHi }; // >= 1/3 oct
+  return { loHz: lo, hiHz: hi };
+});
 // Whether the EQ the correction targets is currently bypassed. Applying
 // re-enables it (see applyGeneratedEq) - a correction saved into a bypassed
 // EQ would be inaudible, and the measurement was made without it anyway.
@@ -1382,9 +1419,14 @@ watch(scope, (s, prev) => {
     apiClient.sendLiveMessage(`solo:${s}`);
     const o = scopeOutput.value;
     // Correct only inside the driver's passband - chasing the crossover
-    // slopes would burn the whole boost budget on rolloff.
+    // slopes would burn the whole boost budget on rolloff. hiHz tracks the
+    // low-pass corner directly (a sub crossed at 90 Hz gets hiHz 90, not a
+    // floored 1 kHz that would let EQ bands land above its passband); it's
+    // only kept >= loHz so the window can't invert.
     eqGen.loHz = o?.hpHz ? Math.round(Math.min(500, Math.max(20, o.hpHz))) : 25;
-    eqGen.hiHz = o?.lpHz ? Math.round(Math.min(20000, Math.max(1000, o.lpHz))) : 10000;
+    eqGen.hiHz = o?.lpHz
+      ? Math.round(Math.min(20000, Math.max(eqGen.loHz, o.lpHz)))
+      : 10000;
     // Output EQ boosts are covered by the device's shared headroom pad
     // (the largest active output-EQ boost pads all outputs equally), so
     // the boost budget matches the input scope.

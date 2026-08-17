@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { averageDbArrays, BUILTIN_CAL_PRESETS, makeBandGrid, aggregateBands } from '../../src/rta.js'
+import { averageDbArrays, BUILTIN_CAL_PRESETS, makeBandGrid, aggregateBands, medianOffset } from '../../src/rta.js'
 
 describe('averageDbArrays', () => {
   it('returns null for an empty list', () => {
@@ -65,6 +65,46 @@ describe('BUILTIN_CAL_PRESETS', () => {
     for (let i = 1; i < preset.points.length; i++) {
       expect(preset.points[i][1]).toBeGreaterThanOrEqual(preset.points[i - 1][1])
     }
+  })
+})
+
+describe('medianOffset', () => {
+  const { centers } = makeBandGrid(3)
+
+  it('returns the median level difference over the window', () => {
+    const b = centers.map(() => -30)
+    const a = centers.map(() => -45) // a - b = -15 everywhere
+    expect(medianOffset(a, b, centers, 200, 5000)).toBeCloseTo(-15, 6)
+  })
+
+  it('ignores bands outside [loHz, hiHz]', () => {
+    const b = centers.map(() => -30)
+    // -10 offset inside 200-5000 Hz; absurd values outside must not count
+    const a = centers.map((fc) => (fc >= 200 && fc <= 5000 ? -40 : 40))
+    expect(medianOffset(a, b, centers, 200, 5000)).toBeCloseTo(-10, 6)
+  })
+
+  it('aligns a band-limited output inside its passband, not on dead bands', () => {
+    // Sub: real signal only 40-80 Hz (mic - source = -20); the full-range
+    // source is present everywhere, but the mic reads its noise floor above.
+    const b = centers.map(() => -30)
+    const a = centers.map((fc) => (fc >= 40 && fc <= 80 ? -50 : -88))
+    // Aligned on the sub's passband -> the true -20 dB offset.
+    expect(medianOffset(a, b, centers, 40, 80)).toBeCloseTo(-20, 6)
+    // Aligned on the old 200-5000 Hz window -> pure noise-floor arithmetic
+    // (this was the sub bug: a wildly wrong offset the whole curve inherits).
+    expect(medianOffset(a, b, centers, 200, 5000)).toBeCloseTo(-58, 6)
+  })
+
+  it('drops bands where the mic sits within the margin of its noise floor', () => {
+    // Same sub, but isolated by the floor gate instead of a narrow window:
+    // dead bands sit above the -95 hard gate yet within 8 dB of the floor.
+    const b = centers.map(() => -30)
+    const floor = centers.map(() => -90)
+    const a = centers.map((fc) => (fc >= 40 && fc <= 80 ? -50 : -88))
+    expect(medianOffset(a, b, centers, 20, 20000, floor, 8)).toBeCloseTo(-20, 6)
+    // Without the gate the noise-floor bands dominate and wreck the offset.
+    expect(medianOffset(a, b, centers, 20, 20000)).toBeCloseTo(-58, 6)
   })
 })
 

@@ -192,12 +192,18 @@ export const BUILTIN_CAL_PRESETS = [
 ];
 
 // Median of (a[i] - b[i]) over the bands whose center lies in [loHz, hiHz].
-// Used to auto-align the mic trace level with the source trace. a, b and
-// centers must share one grid.
-export function medianOffset(a, b, centers, loHz = 200, hiHz = 5000) {
+// Used to auto-align the mic trace level (a) with the source trace (b). a, b
+// and centers must share one grid. When a floor array is supplied, bands
+// where the mic sits within floorMarginDb of its noise floor are dropped, so
+// bands the scoped output can't reproduce (mic at floor) never bias the
+// offset - the alignment happens only where there's real signal to align.
+export function medianOffset(a, b, centers, loHz = 200, hiHz = 5000, floor = null, floorMarginDb = 0) {
   const diffs = [];
   for (let i = 0; i < centers.length; i++) {
-    if (centers[i] >= loHz && centers[i] <= hiHz && a[i] > -95 && b[i] > -95) {
+    if (
+      centers[i] >= loHz && centers[i] <= hiHz && a[i] > -95 && b[i] > -95 &&
+      (!floor || a[i] >= floor[i] + floorMarginDb)
+    ) {
       diffs.push(a[i] - b[i]);
     }
   }
