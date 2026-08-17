@@ -111,20 +111,16 @@
         />
       </div>
 
-      <!-- PEQ -->
+      <!-- PEQ: the enable toggle lives in the header (like the input EQ
+           section) so it stays visible whether the section is open or not -->
       <CollapsibleSection
-        :title="`PEQ (${output.peq.length}/10)${output.eqEnabled === false ? ' · bypassed' : ''}`"
-        :toggleable="false"
+        :title="`PEQ (${output.peq.length}/10)`"
+        :model-value="output.eqEnabled !== false"
         :animate="false"
         :start-expanded="false"
         class="!mb-0"
+        @update:modelValue="store.setOutputEqEnabled(output.index, $event)"
       >
-        <ToggleSwitch
-          :model-value="output.eqEnabled !== false"
-          label="EQ enabled"
-          class="mb-2"
-          @update:modelValue="store.setOutputEqEnabled(output.index, $event)"
-        />
         <ParametricEQ
           :peq-points="peqPoints"
           :preset-name="store.presetName"
