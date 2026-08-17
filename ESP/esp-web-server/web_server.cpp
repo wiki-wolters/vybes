@@ -280,6 +280,15 @@ void setupWebServer() {
     // are cheap in heap (no TLS buffers), so 4 costs nothing and keeps a
     // browser's six parallel keep-alive connections from squeezing lwIP.
     server.config.max_open_sockets = 4;
+    // esp-idf defaults the server task stack to 4096, which POST /restore
+    // overflows: the multipart parser is already ~3.4KB deep when the
+    // completion handler runs, and load_config_from's msgpack deserialize
+    // peaks the task at ~4.1KB. The overflow panicked the device mid-request
+    // (client saw a hung socket, config was left untouched) - measured
+    // 2026-08-17. esp-idf gives its own TLS listener 10240
+    // (HTTPD_SSL_CONFIG_DEFAULT), which is why the same restore always
+    // worked over HTTPS; both listeners serve identical routes, so match it.
+    server.config.stack_size = 10240;
     // Evict the least-recently-active connection instead of refusing new
     // ones - browsers park idle keep-alive sockets that would otherwise
     // starve the listener. An idle live-updates websocket can be the
@@ -313,6 +322,8 @@ void setupWebServer() {
         // Every esp-idf httpd instance needs its own control socket; the
         // default (32768) is already taken by the HTTP listener above
         serverHttps.ssl_config.httpd.ctrl_port = 32769;
+        // stack_size is left at HTTPD_SSL_CONFIG_DEFAULT's 10240 - see the
+        // note on the HTTP listener's stack above.
         if (serverHttps.listen(443, serverCert.c_str(), serverKey.c_str()) == ESP_OK) {
             registerRoutes(serverHttps, &wsHttps);
             DebugSerial.println("HTTPS server started on port 443");
