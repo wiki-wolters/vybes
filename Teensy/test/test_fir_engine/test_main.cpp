@@ -6,6 +6,7 @@
 #include <unity.h>
 
 #include <cmath>
+#include <cstdio>  // snprintf: libc++ pulls this in transitively, libstdc++ does not
 #include <cstring>
 #include <vector>
 
