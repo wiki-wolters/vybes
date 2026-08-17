@@ -146,9 +146,14 @@ AudioAmplifier           outputAmp[NUM_OUTPUTS];
 AudioOutputSPDIF3        L_R_Spdif_Out;
 AudioOutputI2SOct        Analog_Out;
 
-// RTA spectrum tap: the L+R source mix (pre-DSP) feeds a 4096-point FFT
-// whose 1/12-octave band levels stream to the web UI over the ESP link.
-// The FFT input is disconnected while idle so it costs no CPU (see rtaLoop).
+// RTA spectrum tap: a 4096-point FFT whose 1/12-octave band levels stream to
+// the web UI over the ESP link. Its input is switched by updateRtaSource():
+// the L+R source mix (pre-DSP) for the input scope, or a single soloed
+// output's post-crossover signal so the "source" trace is band-limited
+// exactly like that driver (a soloed sub then shows no energy above its
+// low-pass, and the analyzer's mic/source comparison lines up instead of
+// trying to correct bands the driver can't reproduce). The FFT input is
+// disconnected while idle so it costs no CPU (see rtaLoop).
 AudioMixer4              RTA_mixer;
 RtaFFT4096               RTA_fft;
 
@@ -173,10 +178,14 @@ AudioConnection          patchCord_AnalogRToRightAux(Analog_in, 1, Right_Aux_mix
 AudioConnection          patchCord_LeftAuxToLeftMixer(Left_Aux_mixer, 0, Left_mixer, 3);
 AudioConnection          patchCord_RightAuxToRightMixer(Right_Aux_mixer, 0, Right_mixer, 3);
 
-// RTA tap connections (the FFT link starts disconnected; see setup)
+// RTA tap connections (the FFT link starts disconnected; see setup).
+// updateRtaSource() feeds RTA_fft from exactly one of these at a time:
+// patchCord_RTAMixerToFFT for the input scope, patchCord_SoloToFFT (rebound
+// to the soloed output's crossover) while an output is soloed.
 AudioConnection          patchCord_LeftMixerToRTA(Left_mixer, 0, RTA_mixer, 0);
 AudioConnection          patchCord_RightMixerToRTA(Right_mixer, 0, RTA_mixer, 1);
 AudioConnection          patchCord_RTAMixerToFFT(RTA_mixer, 0, RTA_fft, 0);
+AudioConnection          patchCord_SoloToFFT; // bound to xover[solo] on demand
 
 // Input EQ patchcords
 AudioConnection patchCord_LeftMixerToPreEQ(Left_mixer, 0, Left_Pre_EQ_amp, 0);
@@ -627,6 +636,7 @@ void outputSoloLoop() {
   if (outputSolo < 0) return;
   if (millis() - outputSoloLastKeepaliveAt > OUTPUT_SOLO_KEEPALIVE_TIMEOUT_MS) {
     outputSolo = -1;
+    updateRtaSource(); // fall back to the L+R mix if RTA is still streaming
     Serial.println("Output solo timed out");
   }
 }
@@ -649,16 +659,31 @@ void compareTrimLoop() {
   }
 }
 
+// Route the FFT input to match the analyzer scope. Exactly one source feeds
+// RTA_fft at a time (its input port holds one connection), so both candidate
+// cords are torn down first. Call this whenever rtaEnabled or outputSolo
+// changes - not on every solo keepalive, since re-binding the cord restarts
+// the FFT's accumulation window.
+void updateRtaSource() {
+  patchCord_RTAMixerToFFT.disconnect();
+  patchCord_SoloToFFT.disconnect();
+  if (!rtaEnabled) return; // idle: leave the FFT unfed
+  if (outputSolo >= 0 && outputSolo < NUM_OUTPUTS) {
+    // Post-crossover, pre-PEQ - the same "pre-EQ source" semantics the input
+    // scope has (it taps the source mix ahead of the input EQ), so measuring
+    // with the output EQ bypassed yields the raw driver+room response.
+    patchCord_SoloToFFT.connect(xover[outputSolo], 0, RTA_fft, 0);
+  } else {
+    patchCord_RTAMixerToFFT.connect();
+  }
+}
+
 void setRtaEnabled(bool enabled) {
   rtaLastKeepaliveAt = millis();
   if (enabled == rtaEnabled) return;
   rtaEnabled = enabled;
   Serial.println(enabled ? "RTA started" : "RTA stopped");
-  if (enabled) {
-    patchCord_RTAMixerToFFT.connect();
-  } else {
-    patchCord_RTAMixerToFFT.disconnect();
-  }
+  updateRtaSource();
 }
 
 // Sum FFT power over [lo,hi) Hz. Edge bins contribute proportionally to
@@ -1635,10 +1660,14 @@ void handleSoloOutput(const String& command, String* args, int argCount, OutputS
   if (argCount != 1) return;
   int ch = args[0].toInt();
   if (ch >= 0 && ch < NUM_OUTPUTS) {
-    outputSolo = ch;
-    outputSoloLastKeepaliveAt = millis();
-  } else {
+    outputSoloLastKeepaliveAt = millis(); // refresh on every keepalive...
+    if (outputSolo != ch) {               // ...but only re-route when it moves
+      outputSolo = ch;
+      updateRtaSource();
+    }
+  } else if (outputSolo != -1) {
     outputSolo = -1;
+    updateRtaSource();
   }
 }
 

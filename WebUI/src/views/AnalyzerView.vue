@@ -804,11 +804,14 @@ function pollTick() {
 
 // Accumulate quiet frames into the floor estimate; a frame counts only when
 // the device itself is silent, so music playing during mic start doesn't
-// masquerade as the floor. Called from pollTick with cal-corrected bands.
+// masquerade as the floor. "Silent" is judged by the loudest source band,
+// not the median: a soloed output streams a band-limited source (nearly all
+// bands sit at the floor even while it plays), which the median would read
+// as quiet. Called from pollTick with cal-corrected bands.
 function sampleNoiseFloor(bands) {
   const quiet =
     !sourceLive.value ||
-    (sourceCompareDb.value && medianDb(sourceCompareDb.value) <= NOISE_FLOOR_SRC_QUIET_DB);
+    (sourceCompareDb.value && maxDb(sourceCompareDb.value) <= NOISE_FLOOR_SRC_QUIET_DB);
   if (quiet) {
     for (let i = 0; i < bands.length; i++) floorPower[i] += Math.pow(10, bands[i] / 10);
     floorFrames++;
@@ -823,10 +826,10 @@ function sampleNoiseFloor(bands) {
   noiseFloor.value = { values, grid: displayGrid.value };
 }
 
-function medianDb(values) {
-  const arr = Array.from(values).sort((a, b) => a - b);
-  const mid = Math.floor(arr.length / 2);
-  return arr.length % 2 ? arr[mid] : (arr[mid - 1] + arr[mid]) / 2;
+function maxDb(values) {
+  let m = -Infinity;
+  for (let i = 0; i < values.length; i++) if (values[i] > m) m = values[i];
+  return m;
 }
 
 const floorCompareDb = computed(() =>
