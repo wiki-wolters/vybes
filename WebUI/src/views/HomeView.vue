@@ -87,11 +87,12 @@
           </div>
         </CardSection>
 
-        <!-- Volume -->
+        <!-- Volume: stored on the active preset, so switching presets
+             restores the level that one was last played at -->
         <CardSection title="Volume">
           <div class="space-y-4">
             <RangeSlider
-              :model-value="volume"
+              :model-value="system.volume"
               label="Master Volume"
               :min="0"
               :max="100"
@@ -99,6 +100,9 @@
               unit="%"
               @update:modelValue="updateVolume($event)"
             />
+            <p v-if="system.currentPreset" class="text-sm text-vybes-text-secondary">
+              Remembered on “{{ system.currentPreset }}”.
+            </p>
           </div>
         </CardSection>
 
@@ -256,7 +260,6 @@ const showNewPresetDialog = ref(false);
 const newPresetName = ref('');
 const newPresetTemplate = ref('2.1');
 const newPresetNameInput = ref(null);
-const volume = ref(50);
 let volumeUpdateTimeout = null;
 
 const MIN_DB = -40;
@@ -293,7 +296,6 @@ async function loadSystemData() {
           inputGainsDB.value[source] = linearToDb(inputGainsLinear.value[source]);
         }
       }
-      volume.value = status.volume ?? 50;
       await loadActivePresetOutputs(status.currentPreset);
     } catch (statusError) {
       console.warn('Could not load system status:', statusError);
@@ -333,16 +335,18 @@ function updateInputGain(source, dbValue) {
   }, 250);
 }
 
+// No preset name: the device writes the active preset, which is what the
+// master volume slider means here.
 function updateVolume(newValue) {
   if (volumeUpdateTimeout) {
     clearTimeout(volumeUpdateTimeout);
   }
 
-  volume.value = newValue;
+  system.volume = newValue;
 
   volumeUpdateTimeout = setTimeout(async () => {
     try {
-      await apiClient.setVolume(volume.value);
+      await apiClient.setVolume(system.volume);
     } catch (error) {
       console.error('Failed to update volume:', error);
       errorMessage.value = `Failed to update volume: ${error.message}`;
@@ -494,9 +498,6 @@ function setupLiveUpdates() {
           isCurrent: p.name === data.activePresetName
         }));
         loadActivePresetOutputs(data.activePresetName);
-      }
-      if (data.messageType === 'volumeChanged') {
-        volume.value = data.volume;
       }
       // Keep the mute groups in sync with output edits made elsewhere
       if (data.messageType === 'outputChanged' && data.presetName === activePresetName.value) {

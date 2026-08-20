@@ -279,6 +279,11 @@ static void preset_from_json(JsonObject obj, Preset& preset) {
     preset.delaysEnabled = obj["delaysEnabled"] | false;
     preset.firEnabled = obj["firEnabled"] | false;
 
+    // Absent before v4 (the migration seeds it); clamp so a hand-edited or
+    // corrupt file can't hand the Teensy an out-of-range master gain
+    int volume = obj["volume"] | PRESET_VOLUME_DEFAULT;
+    preset.volume = volume < 0 ? 0 : (volume > 100 ? 100 : volume);
+
     // Absent in configs saved before v3 - defaults leave it disabled
     preset.dynamics = Dynamics();
     JsonObject dyn = obj["dynamics"];
@@ -317,6 +322,7 @@ static void preset_to_json(const Preset& preset, JsonObject obj) {
     }
     obj["delaysEnabled"] = preset.delaysEnabled;
     obj["firEnabled"] = preset.firEnabled;
+    obj["volume"] = preset.volume;
     dynamics_to_json(preset.dynamics, obj.createNestedObject("dynamics"));
 }
 
@@ -325,11 +331,22 @@ static void preset_to_json(const Preset& preset, JsonObject obj) {
 // Schema migration hook: upgrade steps mutate doc in place before the
 // normal parse runs. Returns false for versions that can't be migrated.
 static bool migrate_config(JsonDocument& doc, uint8_t fromVersion) {
-    (void)doc;
+    if (fromVersion < 1 || fromVersion > CONFIG_CURRENT_VERSION) {
+        return false;
+    }
     // v1 -> v2: deviceName was added; absent keys parse to the default.
     // v2 -> v3: per-preset dynamics was added; an absent section parses to
     // defaults (disabled). No doc rewrite is needed for either.
-    return fromVersion >= 1 && fromVersion <= CONFIG_CURRENT_VERSION;
+    if (fromVersion < 4) {
+        // v3 -> v4: master volume moved from global state into the presets.
+        // Seed every preset with the level the device was last playing so
+        // the upgrade doesn't change how anything sounds.
+        int legacyVolume = doc["volume"] | PRESET_VOLUME_DEFAULT;
+        for (JsonObject preset : doc["presets"].as<JsonArray>()) {
+            preset["volume"] = legacyVolume;
+        }
+    }
+    return true;
 }
 
 bool load_config() {
@@ -398,7 +415,6 @@ bool load_config_from(const char* path) {
     current_config.noiseVolume = doc["noiseVolume"] | 0;
     current_config.muted = doc["muted"] | false;
     current_config.mutePercent = doc["mutePercent"] | 0;
-    current_config.volume = doc["volume"] | 50;
 
     JsonObject speakerGains = doc["speakerGains"];
     current_config.speakerGains.left = speakerGains["left"] | 1.0f;
@@ -451,7 +467,6 @@ void save_config() {
     doc["noiseVolume"] = current_config.noiseVolume;
     doc["muted"] = current_config.muted;
     doc["mutePercent"] = current_config.mutePercent;
-    doc["volume"] = current_config.volume;
 
     JsonObject speakerGains = doc.createNestedObject("speakerGains");
     speakerGains["left"] = current_config.speakerGains.left;
@@ -522,7 +537,6 @@ void reset_config_to_defaults() {
     current_config.noiseVolume = 0;
     current_config.muted = false;
     current_config.mutePercent = 0;
-    current_config.volume = 50;
 
     current_config.speakerGains = SpeakerGains();
     current_config.inputGains = InputGains();
@@ -688,8 +702,8 @@ void updateTeensyWithActivePresetParameters() {
     snprintf(a, sizeof(a), "%d", num_points);
     sendToTeensy(CMD_RESET_INPUT_EQ, a);
 
-    // Send volume and mute state
-    sendFloatToTeensy(CMD_SET_VOLUME, current_config.volume / 100.0f);
+    // Send volume (per-preset) and mute state
+    sendFloatToTeensy(CMD_SET_VOLUME, activePreset->volume / 100.0f);
     sendOnOffToTeensy(CMD_SET_MUTE, current_config.muted);
     sendFloatToTeensy(CMD_SET_MUTE_PERCENT, current_config.mutePercent);
 

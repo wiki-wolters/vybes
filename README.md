@@ -71,10 +71,11 @@ Up to 8 presets are stored (see `ESP/esp-web-server/config.h`). Each preset cont
   plus an enabled flag. Each set carries an SPL value for future volume-dependent EQ,
   but currently only the default set (spl = 0) is used.
 * FIR filters: a filter filename per channel (left, right, sub) + enabled flag
+* Master volume (0-100): each preset remembers the level it was last played at,
+  and activating a preset restores it
 
-Global (non-preset) state includes master volume, mute state and mute percentage,
-input gains (spdif, bluetooth, usb, tone, analog), and the tone/noise generator
-settings.
+Global (non-preset) state includes mute state and mute percentage, input gains
+(spdif, bluetooth, usb, tone, analog), and the tone/noise generator settings.
 
 ## Web UI
 
@@ -83,7 +84,7 @@ A Vue 3 + Vite single-page app (in `/WebUI`), served by the ESP32. Four views:
 ### Home
 * Presets: a button for each, and a plus icon to add new. Tapping the active preset's
   edit icon navigates to the preset editor.
-* Master volume slider
+* Master volume slider (the active preset's stored level)
 * Input source gain sliders: Bluetooth, TV (SPDIF), USB, Tone, Analog
 * Speaker on/off toggles: left, right, subwoofer
 * Mute: volume-reduction percentage slider and on/off toggle
@@ -119,6 +120,7 @@ Rename, copy, and delete buttons for the selected preset, plus collapsible secti
   the device's SD card (with a free-text fallback when the list is unavailable)
 * Subwoofer crossover: frequency slider
 * Speaker delays: an input per speaker, in microseconds
+* Master volume: the level this preset plays at, restored whenever it is activated
 
 ## API
 
@@ -127,7 +129,10 @@ HTTP on port 80 and HTTPS on 443 (same routes; HTTPS only when certificates are 
 ### System
 * **GET /status** — current state: speaker gains, input gains, mute, tone and noise
   generator settings, master volume, and the active preset name
-* **PUT /volume?value={0-100}** — master volume
+* **PUT /volume?value={0-100}[&preset_name={name}]** — master volume. It is stored
+  per preset: without `preset_name` the write lands on the active preset (the live
+  master volume); naming a preset sets the level it will play at without changing
+  what is playing now
 * **PUT /mute?state={on|off}**
 * **PUT /mute/percent?percent={0-100}** — how much mute reduces the volume
 * **GET /backup** — download the device configuration (MessagePack)
@@ -170,7 +175,9 @@ HTTP on port 80 and HTTPS on 443 (same routes; HTTPS only when certificates are 
 ### Live updates (WebSocket)
 * **ws://vybes.local/live-updates** (or `wss://` when the page is served over HTTPS)
   * State changes are broadcast to all connected clients as JSON with a `messageType`
-    field: `volumeChanged`, `muteChanged`, `mutePercentChanged`, `activePresetChanged`,
+    field: `volumeChanged` (with the `presetName` the level belongs to),
+    `muteChanged`, `mutePercentChanged`, `activePresetChanged` (which carries the
+    newly active preset's `volume`),
     `delayChanged`, `delayEnabledChanged`, `eqPointsChanged`, `eqEnabledChanged`,
     `crossoverChanged`, `crossoverEnabledChanged`, `firChanged`, `firEnabledChanged`,
     plus payload fields (usually `presetName` and the new value).

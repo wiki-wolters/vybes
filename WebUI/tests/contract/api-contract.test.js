@@ -15,9 +15,10 @@
  * Real-device politeness:
  *  - All preset mutations happen on uniquely named "contract-test-…" presets
  *    created by the suite and deleted in afterAll.
- *  - Global values the suite touches (volume, mute, mute percent, speaker
- *    gains, input gains, tone, noise, active preset) are snapshotted from
- *    /status in beforeAll and restored in afterAll.
+ *  - Global values the suite touches (mute, mute percent, speaker gains,
+ *    input gains, tone, noise, active preset) are snapshotted from /status
+ *    in beforeAll and restored in afterAll. Master volume is per-preset, so
+ *    it is restored by name against the preset that owns it.
  *  - Tone/noise tests run at volume 1 and are stopped immediately.
  *  - Destructive checks that can't be restored (deleting down to the last
  *    remaining preset, /restore) only run against the mock.
@@ -32,6 +33,7 @@ const enc = encodeURIComponent
 
 const PREFIX = `contract-test-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
 const P = `${PREFIX}-main` // dedicated preset for all preset mutations
+const V = `${PREFIX}-volume` // per-preset master volume tests (activated + levelled)
 
 let t // target from harness
 let snapshot // /status snapshot for restoring globals
@@ -58,7 +60,12 @@ afterAll(async () => {
   try {
     // Restore globals from the snapshot
     if (snapshot) {
-      await PUT(`/volume?value=${snapshot.volume}`)
+      // Master volume lives on a preset: name the one it was read from so
+      // the restore doesn't depend on which preset is active right now
+      const volumeTarget = snapshot.currentPreset
+        ? `&preset_name=${enc(snapshot.currentPreset)}`
+        : ''
+      await PUT(`/volume?value=${snapshot.volume}${volumeTarget}`)
       await PUT(`/mute?state=${snapshot.mute.muted ? 'on' : 'off'}`)
       await PUT(`/mute/percent?percent=${snapshot.mute.percent}`)
       for (const s of ['left', 'right', 'sub']) {
@@ -155,6 +162,9 @@ describe('PUT /device/name', () => {
 
 // ===== /volume =====
 
+// Master volume is stored per preset: each one remembers the level it was
+// last played at, and activating a preset restores it. Without preset_name
+// the write lands on the active preset (the live master volume).
 describe('PUT /volume', () => {
   it('sets the volume and echoes it back', async () => {
     const res = await PUT('/volume?value=43')
@@ -163,11 +173,48 @@ describe('PUT /volume', () => {
 
     const status = (await GET('/status')).json
     expect(status.volume).toBe(43)
+    expect(res.json.presetName).toBe(status.currentPreset)
   })
 
   it('rejects out-of-range values with 400', async () => {
     expect((await PUT('/volume?value=101')).status).toBe(400)
     expect((await PUT('/volume?value=-1')).status).toBe(400)
+  })
+
+  // A preset of its own: activating one and moving its level would otherwise
+  // leave P dirty for the "created preset defaults" checks below
+  it('preset_name sets that preset\'s stored level without touching the live one', async () => {
+    await POST(`/preset?action=create&name=${enc(V)}`)
+    expect((await getPreset(V)).volume).toBe(50) // documented default
+    const before = (await GET('/status')).json.volume
+
+    const res = await PUT(`/volume?value=17&preset_name=${enc(V)}`)
+    expect(res.status).toBe(200)
+    expect(res.json).toMatchObject({ success: true, presetName: V, volume: 17 })
+
+    expect((await getPreset(V)).volume).toBe(17)
+    // V is not the active preset, so nothing about the live level changed
+    expect((await GET('/status')).json.volume).toBe(before)
+  })
+
+  it('unknown preset_name is a 404', async () => {
+    expect((await PUT(`/volume?value=20&preset_name=${enc(PREFIX + '-missing')}`)).status).toBe(404)
+  })
+
+  it('activating a preset restores the volume it was last played at', async () => {
+    await PUT(`/volume?value=31&preset_name=${enc(V)}`)
+
+    await PUT(`/preset/active?name=${enc(V)}`)
+    expect((await GET('/status')).json.volume).toBe(31)
+
+    // Editing the live volume now writes V, not the preset we came from
+    await PUT('/volume?value=64')
+    expect((await getPreset(V)).volume).toBe(64)
+
+    await PUT(`/preset/active?name=${enc(snapshot.currentPreset)}`)
+    expect((await GET('/status')).json.volume).toBe(
+      (await getPreset(snapshot.currentPreset)).volume
+    )
   })
 })
 
@@ -379,6 +426,7 @@ describe('preset CRUD', () => {
     expect(preset.template).toBe('2.1')
     expect(preset.delaysEnabled).toBe(false)
     expect(preset.firEnabled).toBe(false)
+    expect(preset.volume).toBe(50)
     expect(preset.inputEq.enabled).toBe(false)
     expect(preset.crossovers.find((x) => x.id === 'sub_xo').freq).toBe(80)
     for (const output of preset.outputs) {
@@ -1094,10 +1142,11 @@ describe('websocket broadcasts', () => {
     // leave globals as the outer afterAll expects to restore them anyway
   })
 
-  it('volumeChanged', async () => {
+  it('volumeChanged names the preset the level belongs to', async () => {
+    const current = (await GET('/status')).json.currentPreset
     const wait = ws.expect((m) => m.messageType === 'volumeChanged')
     await PUT('/volume?value=47')
-    expect(await wait).toEqual({ messageType: 'volumeChanged', volume: 47 })
+    expect(await wait).toEqual({ messageType: 'volumeChanged', presetName: current, volume: 47 })
   })
 
   it('muteChanged', async () => {
@@ -1116,12 +1165,14 @@ describe('websocket broadcasts', () => {
     expect(await wait).toEqual({ messageType: 'mutePercentChanged', mutePercent: 42 })
   })
 
-  it('activePresetChanged carries activePresetName and activePresetIndex', async () => {
+  it('activePresetChanged carries the name, index and the new master volume', async () => {
     const wait = ws.expect((m) => m.messageType === 'activePresetChanged' && m.activePresetName === P)
     await PUT(`/preset/active?name=${enc(P)}`)
     const msg = await wait
     expect(msg.activePresetName).toBe(P)
     expect(typeof msg.activePresetIndex).toBe('number')
+    // Per-preset master volume: clients follow the switch without refetching
+    expect(msg.volume).toBe((await getPreset(P)).volume)
 
     // Restore the original active preset (also a broadcast; consume it)
     const waitRestore = ws.expect((m) => m.messageType === 'activePresetChanged')

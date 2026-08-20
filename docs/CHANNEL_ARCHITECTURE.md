@@ -67,10 +67,11 @@ spec for the ESP32-S3 firmware.
         }
       ],
       "delaysEnabled": false,          // preset-level master toggles (A/B comparison)
-      "firEnabled": false
+      "firEnabled": false,
+      "volume": 50                     // master volume 0-100, restored on activation
     }
   ]
-  // global system state (volume, mute, input gains, tone/noise) unchanged
+  // global system state (mute, input gains, tone/noise) unchanged
 }
 ```
 
@@ -190,6 +191,8 @@ projection of it, not a separate mode.
 - **HomeView** (daily driver) — unchanged in role: presets, master volume,
   input sources, mute. The hardcoded Left/Right/Sub speaker toggles become
   template-derived mute groups (e.g. "Subs" toggles all sub-labeled outputs).
+  Master volume is stored on the preset, so the slider here writes the active
+  one and follows preset switches.
 - **PresetEditorView** becomes tabbed: **Tuning** | **Channels**.
   - *Tuning* (simple view, per template): input EQ (existing EQSection with
     SPL sets), Crossovers card, speaker-group levels and delays, FIR per

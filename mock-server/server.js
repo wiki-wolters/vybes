@@ -10,6 +10,7 @@ const {
   MAX_INPUT_PEQ,
   MAX_DELAY_US,
   CROSSOVER_TYPES,
+  PRESET_VOLUME_DEFAULT,
   PROBE_SCHEDULE,
   DEFAULT_TEMPLATE,
   buildPresetConfig,
@@ -144,7 +145,6 @@ db.serialize(() => {
         ['usb_gain', '1.0'],
         ['tone_gain', '0.0'],
         ['analog_gain', '1.0'],
-        ['volume', '50'],
         ['device_name', 'vybes']
       ];
 
@@ -491,7 +491,6 @@ app.get('/status', async (req, res) => {
       usbGain,
       toneGain,
       analogGain,
-      volume,
       deviceName
     ] = await Promise.all([
       getSetting('sub_gain'),
@@ -507,17 +506,21 @@ app.get('/status', async (req, res) => {
       getSetting('usb_gain'),
       getSetting('tone_gain'),
       getSetting('analog_gain'),
-      getSetting('volume'),
       getSetting('device_name')
     ]);
 
-    // Get current preset
-    const currentPreset = await new Promise((resolve, reject) => {
-      db.get("SELECT name FROM presets WHERE is_current = 1", (err, row) => {
+    // Get current preset. Master volume lives on it (api_system.cpp reports
+    // the active preset's value), so it comes from the same row.
+    const currentRow = await new Promise((resolve, reject) => {
+      db.get("SELECT name, config FROM presets WHERE is_current = 1", (err, row) => {
         if (err) reject(err);
-        else resolve(row ? row.name : null);
+        else resolve(row || null);
       });
     });
+    const currentPreset = currentRow ? currentRow.name : null;
+    const volume = currentRow
+      ? (JSON.parse(currentRow.config).volume ?? PRESET_VOLUME_DEFAULT)
+      : PRESET_VOLUME_DEFAULT;
 
     res.json({
       speakerGains: {
@@ -546,7 +549,7 @@ app.get('/status', async (req, res) => {
       },
       currentPreset,
       deviceName: deviceName || 'vybes',
-      volume: volume ? parseInt(volume) : 50,
+      volume,
       // Mirrors the ESP's heap headroom report (bytes); fixed value here
       freeHeap: 200000,
       // Mirrors the ESP's health telemetry. Fixed, healthy-looking values -
@@ -566,21 +569,27 @@ app.get('/status', async (req, res) => {
   }
 });
 
-app.put('/volume', async (req, res) => {
-  const { value } = req.query;
+// Master volume - api_volume.cpp handlePutVolume. The value lives on a
+// preset, so without preset_name this writes the active one (the live master
+// volume); naming a preset sets the level it will play at instead.
+app.put('/volume', wrap(async (req, res) => {
+  const { value, preset_name: presetName } = req.query;
   const volume = parseInt(value);
   if (isNaN(volume) || volume < 0 || volume > 100) {
     return res.status(400).json({ error: 'Volume must be between 0 and 100' });
   }
 
-  try {
-    await setSetting('volume', volume.toString());
-    broadcast({ messageType: 'volumeChanged', volume });
-    res.json({ success: true, volume });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+  const row = presetName
+    ? await dbGet("SELECT name FROM presets WHERE name = ?", [presetName])
+    : await dbGet("SELECT name FROM presets WHERE is_current = 1");
+  if (!row) {
+    return res.status(404).json({ error: 'Preset not found' });
   }
-});
+
+  await saveConfigPath(row.name, '$.volume', volume);
+  broadcast({ messageType: 'volumeChanged', presetName: row.name, volume });
+  res.json({ success: true, presetName: row.name, volume });
+}));
 
 // Device name - api_system.cpp handlePutDeviceName. One DNS label: the ESP
 // uses it for "<name>.local" mDNS and the standalone AP SSID so several
@@ -850,6 +859,8 @@ app.get('/preset', wrap(async (req, res) => {
     outputs: c.outputs,
     delaysEnabled: c.delaysEnabled,
     firEnabled: c.firEnabled,
+    // Presets saved before master volume moved into the preset default to 50
+    volume: c.volume ?? PRESET_VOLUME_DEFAULT,
     // Presets saved before dynamics existed default to disabled
     dynamics: c.dynamics || defaultDynamics(),
     // errors: per-output FIR load failures reported by the Teensy (active
@@ -992,10 +1003,13 @@ app.put('/preset/active', wrap(async (req, res) => {
 
   const rows = await dbAll("SELECT name FROM presets ORDER BY rowid");
   const index = rows ? rows.findIndex(r => r.name === name) : 0;
+  const activated = await loadPreset(name);
   broadcast({
     messageType: 'activePresetChanged',
     activePresetName: name,
-    activePresetIndex: index
+    activePresetIndex: index,
+    // Master volume is per-preset: the level that just took effect
+    volume: activated.config.volume ?? PRESET_VOLUME_DEFAULT
   });
   res.json({});
 }));

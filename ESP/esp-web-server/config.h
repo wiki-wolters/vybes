@@ -16,7 +16,10 @@
 // 2 - Added deviceName (multi-device support; older files default to "vybes")
 // 3 - Added per-preset dynamics (mixed-input multiband compressor); absent
 //     sections parse to defaults (disabled), so no doc rewrite is needed
-#define CONFIG_CURRENT_VERSION 3
+// 4 - Master volume moved from global state into each preset, so switching
+//     presets restores the level it was last played at. The migration seeds
+//     every preset with the old global value.
+#define CONFIG_CURRENT_VERSION 4
 
 #define MAX_PRESETS 12
 // Long enough for the contract suite's generated "contract-test-…" names
@@ -32,6 +35,7 @@
 #define MAX_DELAY_US 20000
 #define OUTPUT_GAIN_MIN_DB -40.0
 #define OUTPUT_GAIN_MAX_DB 10.0
+#define PRESET_VOLUME_DEFAULT 50
 
 #define OUTPUT_LABEL_MAX_LEN 24
 #define XOVER_ID_MAX_LEN 15
@@ -154,6 +158,10 @@ struct Preset {
     bool delaysEnabled = false;
     bool firEnabled = false;
     Dynamics dynamics;
+    // Master volume, 0-100. Per-preset so switching presets restores the
+    // level that preset was last played at; only the active preset's value
+    // is on the Teensy at any moment.
+    int volume = PRESET_VOLUME_DEFAULT;
 };
 
 struct SpeakerGains {
@@ -190,11 +198,16 @@ struct Config {
     int mutePercent = 0;            // 0-100
     SpeakerGains speakerGains;
     InputGains inputGains;
-    int volume = 50; // 0-100
 };
 
 // --- Global Configuration Variable ---
 extern Config current_config;
+
+// The preset the device is playing. active_preset_index is clamped on load
+// and whenever a preset is deleted, so this always names a real slot.
+inline Preset& active_preset() {
+    return current_config.presets[current_config.active_preset_index];
+}
 
 // current_config is shared between the two httpd server tasks (API handlers)
 // and the loop task (debounced save, IR remote, button). Handlers must hold

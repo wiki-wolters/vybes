@@ -79,6 +79,7 @@ esp_err_t handleGetPreset(PsychicRequest *request) {
 
     doc["delaysEnabled"] = preset.delaysEnabled;
     doc["firEnabled"] = preset.firEnabled;
+    doc["volume"] = preset.volume;
     dynamics_to_json(preset.dynamics, doc.createNestedObject("dynamics"));
 
     firPoolToJson(preset, presetIndex == current_config.active_preset_index,
@@ -269,7 +270,10 @@ esp_err_t handlePutActivePreset(PsychicRequest *request) {
     doc["messageType"] = "activePresetChanged";
     doc["activePresetName"] = current_config.presets[current_config.active_preset_index].name;
     doc["activePresetIndex"] = current_config.active_preset_index;
-    char responseBuffer[192];
+    // Master volume is per-preset: carry the level that just took effect so
+    // clients don't have to refetch /status to follow it
+    doc["volume"] = active_preset().volume;
+    char responseBuffer[256];
     size_t len = serializeJson(doc, responseBuffer, sizeof(responseBuffer));
     if (len > 0 && len < sizeof(responseBuffer)) {
         broadcastWebSocket(responseBuffer);

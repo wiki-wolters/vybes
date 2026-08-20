@@ -148,6 +148,26 @@
                 />
               </div>
             </CollapsibleSection>
+
+            <!-- Master volume is stored per preset, so each one plays at the
+                 level it was last left at -->
+            <CollapsibleSection title="Master Volume" :toggleable="false" :animate="animationsEnabled">
+              <RangeSlider
+                :model-value="store.preset.volume"
+                label="Master Volume"
+                :min="0"
+                :max="100"
+                :step="1"
+                unit="%"
+                :decimals="0"
+                @update:modelValue="store.setVolume($event)"
+              />
+              <p class="mt-3 text-sm text-vybes-text-secondary">
+                {{ store.preset.isCurrent
+                  ? 'The level playing now — this preset restores it whenever it is activated.'
+                  : 'The level this preset will play at once it is activated.' }}
+              </p>
+            </CollapsibleSection>
           </div>
 
           <!-- ===== Channels tab: the full 8-output matrix ===== -->
@@ -217,7 +237,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, inject, onUnmounted, nextTick } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted, inject, nextTick, watch } from 'vue';
 import InputGroup from '../components/shared/InputGroup.vue';
 import SelectGroup from '../components/shared/SelectGroup.vue';
 import ModalDialog from '../components/shared/ModalDialog.vue';
@@ -341,6 +361,14 @@ async function selectPreset(presetName, isNewOrCopy = false) {
 }
 
 let unsubscribeLive = null;
+
+// The route keeps this component mounted when only its :name param changes
+// (the nav's preset tab follows the active preset, so that happens), and
+// onMounted alone would leave the previous preset's data on screen - and
+// edits would be saved against it.
+watch(() => props.name, (name) => {
+  if (name) selectPreset(name);
+});
 
 // Component lifecycle hook
 onMounted(async () => {

@@ -43,8 +43,9 @@
             v-for="tab in tabs"
             :key="tab.name"
             :to="tab.to"
-            class="nav-link"
+            class="nav-link max-w-[10rem] truncate"
             :class="{ 'nav-link-active': isActive(tab) }"
+            :title="tab.label"
           >
             {{ tab.label }}
           </router-link>
@@ -92,7 +93,9 @@
     <nav
       class="sm:hidden fixed bottom-0 inset-x-0 z-40 bg-vybes-dark-element border-t border-vybes-dark-input pb-[env(safe-area-inset-bottom)]"
     >
-      <div class="grid grid-cols-3">
+      <!-- The preset tab drops out until the active preset is known, so the
+           column count is computed rather than a fixed Tailwind class -->
+      <div class="grid" :style="{ gridTemplateColumns: `repeat(${tabs.length + 1}, minmax(0, 1fr))` }">
         <router-link
           v-for="tab in tabs"
           :key="tab.name"
@@ -103,7 +106,7 @@
           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" :d="tab.icon" />
           </svg>
-          {{ tab.label }}
+          {{ tab.shortLabel ?? tab.label }}
         </router-link>
         <button
           class="flex flex-col items-center gap-0.5 py-2 text-[11px] font-medium transition-colors cursor-pointer"
@@ -139,23 +142,41 @@ const generator = useGeneratorStore();
 const compare = useCompareStore();
 const sweep = useSweepStore();
 
-const tabs = [
-  {
-    name: 'Home',
-    label: 'Home',
-    to: '/',
-    // The preset editor is reached from Home, so it keeps the Home tab lit.
-    matches: ['Home', 'Preset'],
-    icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6'
-  },
-  {
-    name: 'Analyzer',
-    label: 'Analyzer',
-    to: '/analyzer',
-    matches: ['Analyzer'],
-    icon: 'M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z'
-  }
-];
+const HOME_TAB = {
+  name: 'Home',
+  label: 'Home',
+  to: '/',
+  matches: ['Home'],
+  icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6'
+};
+
+const ANALYZER_TAB = {
+  name: 'Analyzer',
+  label: 'Analyzer',
+  to: '/analyzer',
+  matches: ['Analyzer'],
+  icon: 'M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z'
+};
+
+// The active preset's editor is its own destination: it used to keep the
+// Home tab lit, which left no way to get back to Home except tapping the
+// tab that already looked selected. Desktop shows the preset's name, the
+// bottom bar the generic label (long names don't fit a phone tab).
+const presetTab = computed(() => {
+  if (!system.currentPreset) return null;
+  return {
+    name: 'Preset',
+    label: system.currentPreset,
+    shortLabel: 'Preset',
+    to: `/preset/${encodeURIComponent(system.currentPreset)}`,
+    matches: ['Preset'],
+    icon: 'M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75'
+  };
+});
+
+const tabs = computed(() =>
+  presetTab.value ? [HOME_TAB, presetTab.value, ANALYZER_TAB] : [HOME_TAB, ANALYZER_TAB]
+);
 
 const isActive = (tab) => tab.matches.includes(route.name);
 

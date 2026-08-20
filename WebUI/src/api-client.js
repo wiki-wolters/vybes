@@ -438,8 +438,17 @@ class VybesAPI {
   }
 
   // ===== VOLUME ===== //
-  async setVolume(volume) {
-    return this.request('PUT', `/volume?value=${volume}`);
+
+  /**
+   * Set the master volume. It is stored per preset, so omitting presetName
+   * writes the active one (the live master volume); naming a preset sets the
+   * level it will play at without changing what is playing now.
+   * @param {number} volume - 0-100
+   * @param {string} [presetName]
+   */
+  async setVolume(volume, presetName) {
+    const preset = presetName ? `&preset_name=${encodeURIComponent(presetName)}` : '';
+    return this.request('PUT', `/volume?value=${volume}${preset}`);
   }
 
   /**

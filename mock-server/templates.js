@@ -15,6 +15,10 @@ const MAX_OUTPUT_PEQ = 10;
 const MAX_INPUT_PEQ = 15;
 const MAX_DELAY_US = 20000;
 const CROSSOVER_TYPES = ['LR2', 'LR4', 'BW2'];
+// Master volume is per-preset (PRESET_VOLUME_DEFAULT in
+// ESP/esp-web-server/config.h): each preset remembers the level it was last
+// played at, and activating one restores it.
+const PRESET_VOLUME_DEFAULT = 50;
 
 // Auto delay alignment probe chirp/schedule contract - must match the
 // PROBE_* constants in ESP/esp-web-server/teensy_protocol.h.
@@ -200,6 +204,7 @@ function buildPresetConfig(templateId = DEFAULT_TEMPLATE) {
     outputs,
     delaysEnabled: false,
     firEnabled: false,
+    volume: PRESET_VOLUME_DEFAULT,
     dynamics: defaultDynamics(),
   };
 }
@@ -221,6 +226,7 @@ module.exports = {
   MAX_INPUT_PEQ,
   MAX_DELAY_US,
   CROSSOVER_TYPES,
+  PRESET_VOLUME_DEFAULT,
   PROBE_SCHEDULE,
   DEFAULT_TEMPLATE,
   buildPresetConfig,

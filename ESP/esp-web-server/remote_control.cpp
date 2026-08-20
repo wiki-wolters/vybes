@@ -108,13 +108,13 @@ void RemoteControl::loop() {
                 if (_last_volume_action == VOLUME_UP) {
                     increase_volume(2);
                     if (millis() - lastVolumeScreenUpdateTime > VOLUME_SCREEN_UPDATE_INTERVAL) {
-                        writeToScreen("Volume " + String(current_config.volume), 3000);
+                        writeToScreen("Volume " + String(active_preset().volume), 3000);
                         lastVolumeScreenUpdateTime = millis();
                     }
                 } else if (_last_volume_action == VOLUME_DOWN) {
                     decrease_volume(2);
                     if (millis() - lastVolumeScreenUpdateTime > VOLUME_SCREEN_UPDATE_INTERVAL) {
-                        writeToScreen("Volume " + String(current_config.volume), 3000);
+                        writeToScreen("Volume " + String(active_preset().volume), 3000);
                         lastVolumeScreenUpdateTime = millis();
                     }
                 }
@@ -142,7 +142,7 @@ void RemoteControl::handle_ir_code(uint64_t code) {
         case VOLUME_UP:
             increase_volume();
             if (millis() - lastVolumeScreenUpdateTime > VOLUME_SCREEN_UPDATE_INTERVAL) {
-                writeToScreen("Volume " + String(current_config.volume), 3000);
+                writeToScreen("Volume " + String(active_preset().volume), 3000);
                 lastVolumeScreenUpdateTime = millis();
             }
             _last_volume_action = VOLUME_UP;
@@ -152,7 +152,7 @@ void RemoteControl::handle_ir_code(uint64_t code) {
         case VOLUME_DOWN:
             decrease_volume();
             if (millis() - lastVolumeScreenUpdateTime > VOLUME_SCREEN_UPDATE_INTERVAL) {
-                writeToScreen("Volume " + String(current_config.volume), 3000);
+                writeToScreen("Volume " + String(active_preset().volume), 3000);
                 lastVolumeScreenUpdateTime = millis();
             }
             _last_volume_action = VOLUME_DOWN;

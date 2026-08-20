@@ -205,6 +205,7 @@ bool build_preset_from_template(Preset& preset, const char* templateId) {
     defaultInputEq(preset.inputEq);
     preset.delaysEnabled = false;
     preset.firEnabled = false;
+    preset.volume = PRESET_VOLUME_DEFAULT;
 
     entry->build(preset);
     return true;

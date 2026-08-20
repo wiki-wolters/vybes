@@ -36,8 +36,8 @@ esp_err_t handleGetStatus(PsychicRequest *request) {
     doc["currentPreset"] = current_config.presets[current_config.active_preset_index].name;
     doc["deviceName"] = current_config.deviceName;
 
-    // Add master volume
-    doc["volume"] = current_config.volume; // Add this line
+    // Master volume, which lives on the active preset
+    doc["volume"] = active_preset().volume;
 
     // Internal heap headroom - each open TLS socket costs ~40KB, so this is
     // the number to watch when tuning the HTTPS max_open_sockets budget.

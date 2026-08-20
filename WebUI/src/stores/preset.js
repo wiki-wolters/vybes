@@ -291,6 +291,18 @@ export const usePresetStore = defineStore('preset', () => {
       'Failed to update FIR setting');
   }
 
+  /**
+   * Master volume (0-100). Stored per preset, so this is the level the
+   * preset plays at - editing the active preset moves the live volume, and
+   * editing any other one only changes what it will restore to.
+   */
+  function setVolume(volume) {
+    preset.value.volume = volume;
+    return pushDebounced('volume',
+      () => apiClient.setVolume(volume, presetName.value),
+      'Failed to update master volume');
+  }
+
   // ===== Websocket merge =====
 
   /**
@@ -352,6 +364,9 @@ export const usePresetStore = defineStore('preset', () => {
       case 'eqEnabledChanged':
         preset.value.inputEq.enabled = msg.enabled;
         break;
+      case 'volumeChanged':
+        preset.value.volume = msg.volume;
+        break;
     }
   }
 
@@ -368,6 +383,7 @@ export const usePresetStore = defineStore('preset', () => {
     setOutputFilter, saveOutputEq, setOutputEqEnabled,
     setCrossoverFreq, setCrossoverEnabled,
     setInputEqEnabled, saveInputEq, setDelaysEnabled, setFirEnabled,
+    setVolume,
     handleLiveMessage,
   };
 });
