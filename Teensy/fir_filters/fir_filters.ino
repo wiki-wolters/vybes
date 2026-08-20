@@ -3,6 +3,7 @@
 #include <SD.h>
 #include <SerialFlash.h>
 #include <malloc.h>
+#include <new>          // std::nothrow for the shared FIR buffer block
 #include "FIRLoader.h"
 #include "PEQProcessor.h"
 #include "CrossoverFilter.h"
@@ -59,8 +60,14 @@ SerialCommandRouter router(Serial1);
 
 // FIR taps shared across all outputs (FIR_TAP_POOL on the ESP). Loads that
 // would push the total over the pool are rejected with an error the ESP can
-// relay. Fast convolution costs ~16 bytes/tap of heap; the direct engine
-// runs out of CPU long before it runs out of pool.
+// relay. Fast convolution costs 16 bytes/tap of heap (2 x partitions x 256
+// floats), so a full pool is ~192KB of the ~207KB the RAM2 heap has left once
+// the audio block pool, the RTA and everything else are up. That margin is
+// why loadFirFiles streams coefficients into the engine instead of loading
+// the file into an array first: the extra 4 bytes/tap of a whole-file copy
+// put an exact-fit set (3072+3072+6144) over the top, and the last filter
+// failed to load. The direct engine runs out of CPU long before it runs out
+// of pool.
 #define FIR_TAP_POOL 12288
 
 // Audio block pool size (see the AudioMemory call in setup for the budget).
@@ -1182,30 +1189,90 @@ void applyDelays() {
 // level-match FIR on/off states without ever reading the taps itself.
 float firPinkGainDb[NUM_OUTPUTS] = {0.0f};
 
-static float firPinkGain(const float* h, uint16_t n) {
-  if (h == nullptr || n == 0) return 0.0f;
-  const int SAMPLES = 100;
-  double powerSum = 0.0;
-  for (int i = 0; i < SAMPLES; i++) {
-    float freq = 20.0f * powf(1000.0f, (float)i / (SAMPLES - 1)); // 20Hz..20kHz
-    double w = 2.0 * M_PI * (double)freq / AUDIO_SAMPLE_RATE_EXACT;
-    // DTFT via phasor recurrence; double precision keeps the rotation
-    // stable over pool-sized tap counts.
-    double cr = cos(w), ci = -sin(w);
-    double pr = 1.0, pi = 0.0, re = 0.0, im = 0.0;
-    for (uint16_t k = 0; k < n; k++) {
-      re += h[k] * pr;
-      im += h[k] * pi;
-      double t = pr * cr - pi * ci;
-      pi = pr * ci + pi * cr;
-      pr = t;
+// The filter is never in RAM all at once (loadFirFiles streams it straight
+// into the engine), so the sum is accumulated as the coefficients go past:
+// one phasor per probe frequency is carried between chunks, each coefficient
+// is visited once in file order, and the result is what a single pass over a
+// full array would have produced. The phasor state is ~4.7KB, parked in RAM2
+// (DMAMEM) rather than RAM1: it buys back 4 bytes/tap of the RAM2 heap at
+// load time, so paying for it out of the same pot still nets ~20KB at the
+// pool limit, and RAM1's remaining headroom is the stack's.
+class FirPinkGain {
+public:
+  void begin() {
+    for (int i = 0; i < SAMPLES; i++) {
+      float freq = 20.0f * powf(1000.0f, (float)i / (SAMPLES - 1)); // 20Hz..20kHz
+      double w = 2.0 * M_PI * (double)freq / AUDIO_SAMPLE_RATE_EXACT;
+      // DTFT via phasor recurrence; double precision keeps the rotation
+      // stable over pool-sized tap counts.
+      bins[i].cr = cos(w);
+      bins[i].ci = -sin(w);
+      bins[i].pr = 1.0;
+      bins[i].pi = 0.0;
+      bins[i].re = 0.0;
+      bins[i].im = 0.0;
     }
-    powerSum += re * re + im * im;
+    taps = 0;
   }
-  double meanPower = powerSum / SAMPLES;
-  if (meanPower < 1e-20) return -100.0f;
-  return (float)(10.0 * log10(meanPower));
-}
+
+  void add(const float* h, uint16_t n) {
+    if (h == nullptr || n == 0) return;
+    for (int i = 0; i < SAMPLES; i++) {
+      Bin& b = bins[i];
+      const double cr = b.cr, ci = b.ci;
+      double pr = b.pr, pi = b.pi, re = b.re, im = b.im;
+      for (uint16_t k = 0; k < n; k++) {
+        re += h[k] * pr;
+        im += h[k] * pi;
+        double t = pr * cr - pi * ci;
+        pi = pr * ci + pi * cr;
+        pr = t;
+      }
+      b.pr = pr; b.pi = pi; b.re = re; b.im = im;
+    }
+    taps += n;
+  }
+
+  float db() const {
+    if (taps == 0) return 0.0f;
+    double powerSum = 0.0;
+    for (int i = 0; i < SAMPLES; i++) {
+      powerSum += bins[i].re * bins[i].re + bins[i].im * bins[i].im;
+    }
+    double meanPower = powerSum / SAMPLES;
+    if (meanPower < 1e-20) return -100.0f;
+    return (float)(10.0 * log10(meanPower));
+  }
+
+private:
+  static const int SAMPLES = 100;
+  struct Bin { double cr, ci, pr, pi, re, im; };
+  Bin bins[SAMPLES];
+  uint32_t taps;
+};
+
+// DMAMEM is not cleared at boot and takes no constructor, hence the plain
+// members above - begin() is what puts the accumulator in a known state, and
+// every load calls it before the first add().
+DMAMEM static FirPinkGain firPinkGain;
+
+// Couples the two: the engine pulls partitions from the file through here,
+// and every coefficient is weighed on its way past. This is the only place
+// coefficients exist outside the engine's buffers - one partition of the
+// engine's own stack scratch, not a copy of the filter.
+class FirGainTap : public CoeffFeed {
+public:
+  FirGainTap(FIRLoader::Stream& src, FirPinkGain& gain) : src(src), gain(gain) {}
+  uint16_t read(float* dst, uint16_t count) override {
+    uint16_t n = src.read(dst, count);
+    gain.add(dst, n);
+    return n;
+  }
+  bool starved() const { return src.starved(); }
+private:
+  FIRLoader::Stream& src;
+  FirPinkGain& gain;
+};
 
 static void reportFirGains(Print& out) {
   for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
@@ -1243,16 +1310,74 @@ static void reportFirError(int ch, const char* code, const char* file) {
   Serial1.printf("FIRERR %d %s %s\n", ch, code, file);
 }
 
+// One block holding every loaded filter's working buffers, sliced across the
+// channels. Six separate large allocations cost the allocator ~8KB of
+// padding each - ~24KB against a 15KB margin at the pool limit, which is
+// what failed the last reservation with 64KB still free. Claimed once per
+// load, so that padding is paid once. Null when no filter is loaded.
+static float* firArena = nullptr;
+
+// Clears every filter and releases the block its buffers lived in. The
+// engines hold slices of it, so they have to be cleared first.
+static void releaseFirBuffers() {
+  for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
+    firFilter[ch].loadCoefficients(nullptr, 0);
+    state.outputs[ch].firTaps = 0;
+    firPinkGainDb[ch] = 0.0f;
+  }
+  delete[] firArena;
+  firArena = nullptr;
+}
+
+// Streams one output's file into the buffers already reserved for it,
+// weighing the coefficients for the pink gain as they pass. The engine pulls
+// one 128-tap partition at a time, so this is the only place coefficients
+// exist outside its buffers - 512 bytes of its own stack scratch, never a
+// copy of the filter. 'taps' is the count the sizing pass accepted.
+static bool fillFirChannel(int ch, uint16_t taps) {
+  OutputState& o = state.outputs[ch];
+
+  File file = SD.open(o.firFile);
+  if (!file) {
+    Serial1.printf("ERROR FIR load failed: %s (output %d)\n", o.firFile, ch);
+    reportFirError(ch, "missing", o.firFile);
+    return false;
+  }
+  FIRLoader::FileSource source(file);
+  FIRLoader::Stream stream;
+
+  // prepare() is where an encoding the reader can't convert is caught; the
+  // sizing pass only needed the chunk headers.
+  if (stream.begin(source, o.firFile) != (long)taps || !stream.prepare()) {
+    file.close();
+    Serial1.printf("ERROR FIR load failed: %s (output %d)\n", o.firFile, ch);
+    reportFirError(ch, "missing", o.firFile);
+    return false;
+  }
+
+  firPinkGain.begin();
+  FirGainTap feed(stream, firPinkGain);
+  bool loaded = firFilter[ch].fillReserved(feed);
+  file.close();
+  if (!loaded) {
+    Serial1.printf("ERROR FIR load failed: unreadable file %s (output %d)\n", o.firFile, ch);
+    reportFirError(ch, "missing", o.firFile);
+    return false;
+  }
+
+  firPinkGainDb[ch] = firPinkGain.db();
+  o.firTaps = taps;
+  return true;
+}
+
 void loadFirFiles() {
   // Note: incoming serial commands are buffered by the UART while we read
   // from the SD card, so no special handling is needed here.
   if (!sdReady()) {
     Serial.println("SD not available - can't load FIR files");
     // Clear any existing FIR filters to ensure no stale filters are used
+    releaseFirBuffers();
     for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
-      firFilter[ch].loadCoefficients(nullptr, 0);
-      state.outputs[ch].firTaps = 0;
-      firPinkGainDb[ch] = 0.0f;
       if (state.outputs[ch].firFile[0] != '\0') {
         reportFirError(ch, "nosd", state.outputs[ch].firFile);
       }
@@ -1262,17 +1387,25 @@ void loadFirFiles() {
     return;
   }
 
-  // Load every channel's file, drawing taps from the shared pool. Each
-  // filter is cleared before its file is (re)loaded so peak heap holds one
-  // engine's buffers, not two - at the pool limit the fast-convolution
-  // buffers are ~200KB and double-buffering wouldn't fit.
+  // Three passes, because the engine's partition arrays are large, need
+  // contiguous runs, and the heap only has ~15KB of slack at the pool limit
+  // (measured: 211,672 bytes free with nothing loaded, 196,608 for a full
+  // pool). Size every file first, then claim the whole set as a single
+  // block, then read the files in. Allocating per filter as each was read
+  // used to fail the last one with 64KB still free - partly because the SD
+  // opens and String temporaries in between cut up the free space, and
+  // mostly because every large request costs ~8KB of allocator padding that
+  // is then too small to serve the next one.
   printMemoryStats("before FIR loads");
+  releaseFirBuffers();
+
+  // Pass 1: size every file (header reads only - no coefficients yet) and
+  // spend the pool in channel order, so which outputs get rejected when a
+  // set over-subscribes stays independent of the load order chosen below.
+  long wantTaps[NUM_OUTPUTS] = {0};
   uint32_t poolUsed = 0;
   for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
     OutputState& o = state.outputs[ch];
-    firFilter[ch].loadCoefficients(nullptr, 0);
-    o.firTaps = 0;
-    firPinkGainDb[ch] = 0.0f;
     if (o.firFile[0] == '\0') continue;
 
     uint32_t remaining = FIR_TAP_POOL - poolUsed;
@@ -1282,37 +1415,94 @@ void loadFirFiles() {
       continue;
     }
 
-    // truncateToMax=false: a file that doesn't fit the remaining pool is
-    // rejected outright (actualTaps then reports the requested size)
-    uint16_t actualTaps = 0;
-    float* coeffs = FIRLoader::loadCoefficients(o.firFile, actualTaps, (uint16_t)remaining, false);
-    if (!coeffs) {
-      if (actualTaps > 0) {
-        Serial1.printf("ERROR FIR pool exceeded: %s needs %u taps, %lu of %u left (output %d)\n",
-                       o.firFile, actualTaps, (unsigned long)remaining, FIR_TAP_POOL, ch);
-        reportFirError(ch, "toobig", o.firFile);
-      } else {
-        Serial1.printf("ERROR FIR load failed: %s (output %d)\n", o.firFile, ch);
-        reportFirError(ch, "missing", o.firFile);
-      }
+    File file = SD.open(o.firFile);
+    if (!file) {
+      Serial1.printf("ERROR FIR load failed: %s (output %d)\n", o.firFile, ch);
+      reportFirError(ch, "missing", o.firFile);
       continue;
     }
+    FIRLoader::FileSource source(file);
+    FIRLoader::Stream stream;
+    long fileTaps = stream.begin(source, o.firFile);
+    file.close();
 
-    bool loaded = firFilter[ch].loadCoefficients(coeffs, actualTaps);
-    if (loaded) {
-      firPinkGainDb[ch] = firPinkGain(coeffs, actualTaps);
-    }
-    delete[] coeffs;
-    if (!loaded) {
-      Serial1.printf("ERROR FIR load failed: out of memory for %s (output %d)\n", o.firFile, ch);
-      reportFirError(ch, "nomem", o.firFile);
+    if (fileTaps <= 0) {
+      Serial1.printf("ERROR FIR load failed: %s (output %d)\n", o.firFile, ch);
+      reportFirError(ch, "missing", o.firFile);
       continue;
     }
-    o.firTaps = actualTaps;
-    poolUsed += actualTaps;
-    Serial.printf("Output %d FIR loaded: %s (%u taps, pool %lu/%u, pink gain %.2f dB)\n",
-                  ch, o.firFile, actualTaps, (unsigned long)poolUsed, FIR_TAP_POOL,
-                  firPinkGainDb[ch]);
+    // A file that doesn't fit the remaining pool is rejected outright
+    // rather than truncated - a shortened impulse response is a different
+    // filter, not a smaller one.
+    if ((uint32_t)fileTaps > remaining) {
+      Serial1.printf("ERROR FIR pool exceeded: %s needs %ld taps, %lu of %u left (output %d)\n",
+                     o.firFile, fileTaps, (unsigned long)remaining, FIR_TAP_POOL, ch);
+      reportFirError(ch, "toobig", o.firFile);
+      continue;
+    }
+    wantTaps[ch] = fileTaps;
+    poolUsed += (uint32_t)fileTaps;
+  }
+
+  // Pass 2: claim the whole set as one block and carve it up, largest first.
+  // Nothing between here and the fills touches the SD card or builds a
+  // String, and there is only the one request for the allocator to pad.
+  int order[NUM_OUTPUTS];
+  uint16_t orderTaps[NUM_OUTPUTS];
+  int reserved = 0;
+  size_t arenaFloats = 0;
+  for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
+    if (wantTaps[ch] > 0) arenaFloats += firFilter[ch].reservedFloats((uint16_t)wantTaps[ch]);
+  }
+  if (arenaFloats > 0) {
+    firArena = new (std::nothrow) float[arenaFloats];
+    if (firArena == nullptr) {
+      // Fall back to a buffer per filter: a set that won't fit one block
+      // may still fit the holes, and a smaller filter still beats none.
+      Serial1.printf("ERROR FIR arena alloc failed (%lu bytes), falling back\n",
+                     (unsigned long)(arenaFloats * sizeof(float)));
+    }
+  }
+
+  size_t arenaUsed = 0;
+  for (int n = 0; n < NUM_OUTPUTS; n++) {
+    int ch = -1;
+    for (int i = 0; i < NUM_OUTPUTS; i++) {
+      if (wantTaps[i] > 0 && (ch < 0 || wantTaps[i] > wantTaps[ch])) ch = i;
+    }
+    if (ch < 0) break;
+    uint16_t taps = (uint16_t)wantTaps[ch];
+    wantTaps[ch] = 0; // taken, whatever the outcome
+
+    bool ok;
+    if (firArena != nullptr) {
+      ok = firFilter[ch].reserveCoefficientsIn(firArena + arenaUsed, taps);
+      if (ok) arenaUsed += firFilter[ch].reservedFloats(taps);
+    } else {
+      ok = firFilter[ch].reserveCoefficients(taps);
+    }
+    if (!ok) {
+      Serial1.printf("ERROR FIR load failed: out of memory for %s (%u taps, output %d)\n",
+                     state.outputs[ch].firFile, taps, ch);
+      reportFirError(ch, "nomem", state.outputs[ch].firFile);
+      continue;
+    }
+    order[reserved] = ch;
+    orderTaps[reserved] = taps;
+    reserved++;
+  }
+
+  // Pass 3: fill what was reserved. A file that can't be read now releases
+  // only its own buffers.
+  poolUsed = 0;
+  for (int n = 0; n < reserved; n++) {
+    int ch = order[n];
+    if (fillFirChannel(ch, orderTaps[n])) {
+      poolUsed += orderTaps[n];
+      Serial.printf("Output %d FIR loaded: %s (%u taps, pool %lu/%u, pink gain %.2f dB)\n",
+                    ch, state.outputs[ch].firFile, orderTaps[n], (unsigned long)poolUsed,
+                    FIR_TAP_POOL, firPinkGainDb[ch]);
+    }
   }
 
   printMemoryStats("after FIR loads");

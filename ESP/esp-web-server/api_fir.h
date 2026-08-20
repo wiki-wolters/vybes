@@ -27,4 +27,13 @@ void firPoolToJson(const Preset& preset, bool isActive, JsonObject pool);
 // Just the "errors" array, for callers that compute "used" themselves.
 void firPoolErrorsToJson(bool isActive, JsonObject pool);
 
+// Push the active preset's whole tap-pool state - capacity, usage and the
+// current error list - to every websocket client. Failures are broadcast as
+// they happen, but nothing ever announced their absence: clients merge
+// firLoadError messages and had no way to learn a filter recovered, so the
+// UI's list only grew, and could show failures from separate loads that
+// never coexisted. Sent when a load clears the slate, so clients reset
+// before that load's own FIRERR lines arrive.
+void broadcastFirPool(const Preset& preset);
+
 #endif // API_FIR_H

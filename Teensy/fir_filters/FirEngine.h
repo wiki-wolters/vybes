@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <arm_math.h>
 
+#include "CoeffSource.h"
+
 // Hardware-free core of the FIR filter, with two interchangeable engines:
 //
 //  - Direct form: CMSIS arm_fir_f32. Cost grows linearly with tap count, so
@@ -41,6 +43,13 @@ public:
   // only the pointer swap runs inside their critical section.
   bool loadCoefficients(const float* coeffs, uint16_t numTaps);
 
+  // Same, pulling the coefficients from a feed instead of a finished array.
+  // Prefer this for anything loaded off the SD card: the engine consumes one
+  // partition at a time, so the filter never exists in RAM outside the
+  // buffers below (see CoeffFeed). Also returns false if the feed comes up
+  // short, which the caller must distinguish from an allocation failure.
+  bool loadCoefficients(CoeffFeed& feed, uint16_t numTaps);
+
   // Three-phase coefficient load:
   //  1. buildPending: allocate and pre-transform the new engine buffers
   //     (slow; run with interrupts enabled). Returns false on allocation
@@ -51,6 +60,33 @@ public:
   //  3. freeRetired: release the replaced buffers (run with interrupts
   //     enabled).
   bool buildPending(const float* coeffs, uint16_t numTaps);
+  bool buildPending(CoeffFeed& feed, uint16_t numTaps);
+
+  // buildPending split in two, for a caller loading several filters in one
+  // go. Reserve every filter's buffers back-to-back first, then fill them:
+  // the partition arrays are large and need contiguous runs, and anything
+  // that allocates in between (an SD open, a String temporary) cuts the free
+  // space into pieces too small to serve the next one. reservePending
+  // allocates and nothing else; fillPending reads the coefficients in and
+  // makes the reservation swappable; discardPending releases a reservation
+  // that will not be filled. A failed fill discards its own reservation.
+  bool reservePending(uint16_t numTaps);
+  bool fillPending(CoeffFeed& feed);
+  void discardPending();
+
+  // Floats a reservation for numTaps needs, so a caller can size one block
+  // for a whole set of filters.
+  size_t pendingFloats(uint16_t numTaps) const;
+
+  // reservePending against caller-supplied storage - pendingFloats(numTaps)
+  // floats, which the engine reads and writes but never frees. One block
+  // sliced across every filter costs the allocator's per-request padding
+  // once instead of once per filter; at the pool limit that padding was the
+  // difference between the set fitting and the last filter failing.
+  // The storage must outlive the filter, i.e. until the next load replaces
+  // it - clear the filters before releasing it.
+  bool reservePendingIn(float* storage, uint16_t numTaps);
+
   void swapPending();
   void freeRetired();
 
@@ -80,6 +116,7 @@ private:
     uint16_t partitions;
     uint16_t taps;
     bool fast;
+    bool owned;          // false when the storage belongs to the caller
   };
 
   // Direct engine
@@ -98,10 +135,12 @@ private:
   uint16_t numTaps;
   bool useFastConvolution; // engine for the next coefficient load
   bool loadedFast;         // engine the current coefficients were built for
+  bool loadedOwned;        // whether the current buffers are ours to free
 
   Buffers pending;         // built by buildPending, consumed by swapPending
   Buffers retired;         // produced by swapPending, freed by freeRetired
-  bool pendingValid;
+  bool pendingReserved;    // pending holds buffers (filled or not)
+  bool pendingValid;       // pending is filled and ready to swap
 };
 
 #endif // FIR_ENGINE_H

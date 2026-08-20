@@ -307,6 +307,13 @@ export const usePresetStore = defineStore('preset', () => {
         if (msg.firPool) preset.value.firPool = msg.firPool;
         if (msg.template) preset.value.template = msg.template;
         break;
+      case 'firPoolChanged':
+        // A load just cleared the slate on the device. Replace the pool
+        // wholesale, errors included, so a filter that loads again stops
+        // being reported - merging (below) can only ever add. Any failures
+        // from this load arrive as firLoadError messages right after.
+        if (msg.firPool) preset.value.firPool = msg.firPool;
+        break;
       case 'firLoadError': {
         // A channel is running without the filter it is configured for.
         // Merge rather than replace: a load reports one line per failure.

@@ -3,10 +3,14 @@
     <!-- Top bar: brand always, links on desktop only -->
     <nav class="bg-vybes-dark-element border-b border-vybes-dark-input">
       <div class="container mx-auto px-4 py-3 sm:py-4 flex items-center justify-between gap-3">
-        <div class="flex items-center gap-2 min-w-0">
+        <!-- The status pills come and go with live state, and on a narrow
+             phone they squeezed the brand onto two lines: the bar grew and the
+             whole page jumped. The brand never wraps and the pills scroll
+             instead, so the bar keeps one height whatever is lit. -->
+        <div class="flex items-center gap-2 min-w-0 overflow-x-auto nav-status">
           <router-link
             to="/"
-            class="text-xl sm:text-2xl font-bold text-vybes-accent hover:text-vybes-accent-light transition-colors"
+            class="flex-none whitespace-nowrap text-xl sm:text-2xl font-bold text-vybes-accent hover:text-vybes-accent-light transition-colors"
           >
             Vybes DSP
           </router-link>
@@ -56,12 +60,20 @@
       </div>
     </nav>
 
-    <!-- Device connectivity banner -->
+    <!-- Device connectivity banner. Overlaid rather than in-flow: it comes and
+         goes on its own while the page is in use, and taking layout space made
+         the whole page jump each time. -->
     <div
       v-if="showOfflineBanner"
-      class="bg-amber-500/15 border-b border-amber-500/30 text-amber-200 text-sm text-center px-4 py-2"
+      class="fixed z-50 top-[3.5rem] sm:top-[4.25rem] inset-x-0 flex justify-center px-4 pointer-events-none"
+      role="status"
     >
-      Device offline — reconnecting…
+      <div
+        class="flex items-center gap-2 rounded-full border border-amber-500/40 bg-vybes-dark-element text-amber-200 text-sm px-4 py-1.5 shadow-lg shadow-black/40"
+      >
+        <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+        Device offline — reconnecting…
+      </div>
     </div>
 
     <!-- Main Content -->
@@ -182,6 +194,16 @@ onUnmounted(() => {
 
 <style scoped>
 @reference "./style.css";
+
+/* Swipeable when several pills are lit at once, without a scrollbar
+   thickening the bar. */
+.nav-status {
+  scrollbar-width: none;
+}
+
+.nav-status::-webkit-scrollbar {
+  display: none;
+}
 
 .dim-pill {
   @apply flex-none flex items-center gap-1.5 rounded-full px-2 py-0.5

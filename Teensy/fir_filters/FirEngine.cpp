@@ -15,6 +15,8 @@ FirEngine::FirEngine()
     numTaps(0),
     useFastConvolution(false),
     loadedFast(false),
+    loadedOwned(false),
+    pendingReserved(false),
     pendingValid(false)
 {
   // Build the FFT instance by hand instead of calling arm_rfft_fast_init_f32:
@@ -30,14 +32,13 @@ FirEngine::FirEngine()
 
 // Destructor implementation
 FirEngine::~FirEngine() {
-  delete[] firCoeffs;
-  delete[] firState;
-  delete[] partSpectra;
-  delete[] fdl;
-  delete[] pending.coeffs;
-  delete[] pending.state;
-  delete[] pending.partSpectra;
-  delete[] pending.fdl;
+  if (loadedOwned) {
+    delete[] firCoeffs;
+    delete[] firState;
+    delete[] partSpectra;
+    delete[] fdl;
+  }
+  discardPending();
   freeRetired();
 }
 
@@ -55,77 +56,196 @@ bool FirEngine::loadCoefficients(const float* coeffs, uint16_t newNumTaps) {
   return true;
 }
 
-// Phase 1: allocate and build the new engine's buffers (interrupts enabled).
+bool FirEngine::loadCoefficients(CoeffFeed& feed, uint16_t newNumTaps) {
+  if (!buildPending(feed, newNumTaps)) {
+    return false;
+  }
+  swapPending();
+  freeRetired();
+  return true;
+}
+
+// Adapter so the array-taking entry points share the one build path below.
+namespace {
+class ArrayCoeffFeed : public CoeffFeed {
+public:
+  ArrayCoeffFeed(const float* src, uint16_t taps) : src(src), left(taps) {}
+  uint16_t read(float* dst, uint16_t count) override {
+    if (count > left) count = left;
+    if (count == 0) return 0; // src may be null for a clear
+    memcpy(dst, src, (size_t)count * sizeof(float));
+    src += count;
+    left -= count;
+    return count;
+  }
+private:
+  const float* src;
+  uint16_t left;
+};
+} // namespace
+
 bool FirEngine::buildPending(const float* coeffs, uint16_t newNumTaps) {
-  bool fast = useFastConvolution;
+  // A null array is a clear, whatever tap count came with it.
+  if (coeffs == nullptr) newNumTaps = 0;
+  ArrayCoeffFeed feed(coeffs, newNumTaps);
+  return buildPending(feed, newNumTaps);
+}
 
-  float* newCoeffs = nullptr;
-  float* newState = nullptr;
-  float* newPartSpectra = nullptr;
-  float* newFdl = nullptr;
-  uint16_t newPartitions = 0;
+// Phase 1: allocate and build the new engine's buffers (interrupts enabled).
+// Reserve-then-fill in one call; see the header on why a caller loading a
+// whole set of filters should use the two halves separately instead.
+bool FirEngine::buildPending(CoeffFeed& feed, uint16_t newNumTaps) {
+  if (!reservePending(newNumTaps)) {
+    return false;
+  }
+  return fillPending(feed);
+}
 
-  // All allocations must be nothrow: the Teensy core's operator new is a
-  // plain malloc wrapper that returns nullptr, but the compiler assumes a
-  // throwing new never does - with `new float[n]()` it zeroes the "result"
-  // before any null check can run (memset to address 0 = hard fault, the
-  // crash 82b8bd8 tried to fix). nothrow makes the checks below real; the
-  // zeroing that value-init used to do is explicit instead.
-  if (newNumTaps > 0 && coeffs != nullptr) {
-    if (fast) {
-      newPartitions = (newNumTaps + BLOCK_SAMPLES - 1) / BLOCK_SAMPLES;
-      newPartSpectra = new (std::nothrow) float[(size_t)newPartitions * FFT_SIZE];
-      newFdl = new (std::nothrow) float[(size_t)newPartitions * FFT_SIZE];
-      if (!newPartSpectra || !newFdl) {
-        // Allocation failed - keep the current filter.
-        delete[] newPartSpectra;
-        delete[] newFdl;
+// Phase 1a: allocation only. Nothing here reads, opens or formats anything,
+// so a caller can put every filter's reservation back-to-back and have the
+// partition arrays land in one contiguous stretch of heap.
+bool FirEngine::reservePending(uint16_t newNumTaps) {
+  discardPending();
+
+  pending.fast = useFastConvolution;
+  pending.taps = newNumTaps;
+  pending.owned = true;
+
+  if (newNumTaps > 0) {
+    // nothrow: the Teensy core's operator new returns nullptr rather than
+    // throwing, but the compiler assumes throwing-new can't - without
+    // std::nothrow these null checks are dead code (memset to address 0 =
+    // hard fault, the crash 82b8bd8 tried to fix). The zeroing that
+    // value-init used to do is explicit instead.
+    if (pending.fast) {
+      pending.partitions = (newNumTaps + BLOCK_SAMPLES - 1) / BLOCK_SAMPLES;
+      size_t span = (size_t)pending.partitions * FFT_SIZE;
+      pending.partSpectra = new (std::nothrow) float[span];
+      pending.fdl = new (std::nothrow) float[span];
+      if (!pending.partSpectra || !pending.fdl) {
+        discardPending(); // Allocation failed - keep the current filter
         return false;
       }
-      memset(newFdl, 0, (size_t)newPartitions * FFT_SIZE * sizeof(float));
-      // Pre-transform each 128-tap partition, zero-padded to FFT_SIZE.
-      // (arm_rfft_fast_f32 clobbers its input, hence the scratch buffer.)
-      float scratch[FFT_SIZE];
-      for (uint16_t p = 0; p < newPartitions; p++) {
-        uint32_t offset = (uint32_t)p * BLOCK_SAMPLES;
-        uint16_t count = newNumTaps - offset;
-        if (count > BLOCK_SAMPLES) count = BLOCK_SAMPLES;
-        memset(scratch, 0, sizeof(scratch));
-        memcpy(scratch, coeffs + offset, count * sizeof(float));
-        arm_rfft_fast_f32(&rfft, scratch, newPartSpectra + (size_t)p * FFT_SIZE, 0);
-      }
+      memset(pending.fdl, 0, span * sizeof(float));
     } else {
-      newCoeffs = new (std::nothrow) float[newNumTaps];
-      if (!newCoeffs) {
-        // Allocation failed - keep the current filter.
+      pending.coeffs = new (std::nothrow) float[newNumTaps];
+      pending.state = new (std::nothrow) float[newNumTaps + BLOCK_SAMPLES - 1];
+      if (!pending.coeffs || !pending.state) {
+        discardPending(); // Allocation failed - keep the current filter
         return false;
       }
-      // CMSIS arm_fir expects its coefficient array in time-reversed order
-      // ({b[numTaps-1], ..., b[0]}), so reverse the copy: the loaded impulse
-      // response is then applied exactly as designed, matching the fast
-      // convolution engine. (Symmetric linear-phase filters masked this.)
-      for (uint16_t i = 0; i < newNumTaps; i++) {
-        newCoeffs[i] = coeffs[newNumTaps - 1 - i];
-      }
-
-      newState = new (std::nothrow) float[newNumTaps + BLOCK_SAMPLES - 1];
-      if (!newState) {
-        delete[] newCoeffs; // Clean up partial allocation
-        return false;
-      }
-      memset(newState, 0, (size_t)(newNumTaps + BLOCK_SAMPLES - 1) * sizeof(float));
+      memset(pending.state, 0,
+             (size_t)(newNumTaps + BLOCK_SAMPLES - 1) * sizeof(float));
     }
   }
 
-  pending.coeffs = newCoeffs;
-  pending.state = newState;
-  pending.partSpectra = newPartSpectra;
-  pending.fdl = newFdl;
-  pending.partitions = newPartitions;
+  pendingReserved = true;
+  return true;
+}
+
+size_t FirEngine::pendingFloats(uint16_t numTaps) const {
+  if (numTaps == 0) return 0;
+  if (useFastConvolution) {
+    uint16_t parts = (numTaps + BLOCK_SAMPLES - 1) / BLOCK_SAMPLES;
+    return (size_t)parts * FFT_SIZE * 2; // partition spectra + delay line
+  }
+  return (size_t)numTaps                      // coefficients
+       + (size_t)numTaps + BLOCK_SAMPLES - 1; // filter state
+}
+
+// Phase 1a against storage the caller owns. Same layout as reservePending,
+// carved out of one block instead of allocated per buffer.
+bool FirEngine::reservePendingIn(float* storage, uint16_t newNumTaps) {
+  discardPending();
+
+  pending.fast = useFastConvolution;
   pending.taps = newNumTaps;
-  pending.fast = fast;
+  pending.owned = false;
+
+  if (newNumTaps > 0) {
+    if (storage == nullptr) {
+      discardPending();
+      return false;
+    }
+    if (pending.fast) {
+      pending.partitions = (newNumTaps + BLOCK_SAMPLES - 1) / BLOCK_SAMPLES;
+      size_t span = (size_t)pending.partitions * FFT_SIZE;
+      pending.partSpectra = storage;
+      pending.fdl = storage + span;
+      memset(pending.fdl, 0, span * sizeof(float));
+    } else {
+      pending.coeffs = storage;
+      pending.state = storage + newNumTaps;
+      memset(pending.state, 0,
+             (size_t)(newNumTaps + BLOCK_SAMPLES - 1) * sizeof(float));
+    }
+  }
+
+  pendingReserved = true;
+  return true;
+}
+
+// Phase 1b: pull the coefficients into the reserved buffers. Exactly one
+// pass over the feed, in order, so nothing filter-sized is needed on the
+// side: the fast engine transforms each 128-tap partition straight out of
+// the stack scratch it already used for zero-padding, and the direct engine
+// reads into the array it had to allocate anyway.
+bool FirEngine::fillPending(CoeffFeed& feed) {
+  if (!pendingReserved) {
+    return false;
+  }
+
+  if (pending.taps > 0) {
+    if (pending.fast) {
+      // Pre-transform each 128-tap partition, zero-padded to FFT_SIZE.
+      // (arm_rfft_fast_f32 clobbers its input, hence the scratch buffer.)
+      float scratch[FFT_SIZE];
+      for (uint16_t p = 0; p < pending.partitions; p++) {
+        uint32_t offset = (uint32_t)p * BLOCK_SAMPLES;
+        uint16_t count = pending.taps - offset;
+        if (count > BLOCK_SAMPLES) count = BLOCK_SAMPLES;
+        memset(scratch, 0, sizeof(scratch));
+        if (feed.read(scratch, count) != count) {
+          // The feed ran dry mid-filter: a half-built filter is not a
+          // shorter one, so keep the current one and let the caller report
+          // a read failure rather than an allocation failure.
+          discardPending();
+          return false;
+        }
+        arm_rfft_fast_f32(&rfft, scratch, pending.partSpectra + (size_t)p * FFT_SIZE, 0);
+      }
+    } else {
+      if (feed.read(pending.coeffs, pending.taps) != pending.taps) {
+        discardPending(); // See the fast engine's short-feed note above
+        return false;
+      }
+      // CMSIS arm_fir expects its coefficient array in time-reversed order
+      // ({b[numTaps-1], ..., b[0]}), so reverse in place: the loaded impulse
+      // response is then applied exactly as designed, matching the fast
+      // convolution engine. (Symmetric linear-phase filters masked this.)
+      for (uint16_t i = 0; i < pending.taps / 2; i++) {
+        float t = pending.coeffs[i];
+        pending.coeffs[i] = pending.coeffs[pending.taps - 1 - i];
+        pending.coeffs[pending.taps - 1 - i] = t;
+      }
+    }
+  }
+
   pendingValid = true;
   return true;
+}
+
+// Release a reservation that will not be swapped in.
+void FirEngine::discardPending() {
+  if (pending.owned) {
+    delete[] pending.coeffs;
+    delete[] pending.state;
+    delete[] pending.partSpectra;
+    delete[] pending.fdl;
+  }
+  memset(&pending, 0, sizeof(pending));
+  pendingReserved = false;
+  pendingValid = false;
 }
 
 // Phase 2: swap pointers and re-initialize the filter. Fast (no allocation),
@@ -140,6 +260,7 @@ void FirEngine::swapPending() {
   retired.state = firState;
   retired.partSpectra = partSpectra;
   retired.fdl = fdl;
+  retired.owned = loadedOwned;
 
   // Point to the new data
   firCoeffs = pending.coeffs;
@@ -150,9 +271,11 @@ void FirEngine::swapPending() {
   fdlIndex = 0;
   numTaps = pending.taps;
   loadedFast = pending.fast;
+  loadedOwned = pending.owned;
   memset(prevBlock, 0, sizeof(prevBlock));
 
   memset(&pending, 0, sizeof(pending));
+  pendingReserved = false;
   pendingValid = false;
 
   // Re-initialize the CMSIS FIR instance with the new data
@@ -163,10 +286,12 @@ void FirEngine::swapPending() {
 
 // Phase 3: free the replaced buffers (interrupts enabled).
 void FirEngine::freeRetired() {
-  delete[] retired.coeffs;
-  delete[] retired.state;
-  delete[] retired.partSpectra;
-  delete[] retired.fdl;
+  if (retired.owned) {
+    delete[] retired.coeffs;
+    delete[] retired.state;
+    delete[] retired.partSpectra;
+    delete[] retired.fdl;
+  }
   memset(&retired, 0, sizeof(retired));
 }
 

@@ -3,6 +3,7 @@
 #include "templates.h"
 #include "teensy_comm.h"
 #include "compare_mode.h"
+#include "api_fir.h"
 #include "screen.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
@@ -725,6 +726,10 @@ void loadFirFilters() {
     // Stale failures must not outlive the load that caused them; the Teensy
     // re-reports any that still apply as FIRERR lines during this load.
     clearFirLoadErrors();
+    // Clients keep their own copy and merge failures into it, so clearing
+    // ours is not enough - tell them too. This goes out before the load
+    // command, so it always precedes that load's FIRERR lines on the socket.
+    broadcastFirPool(*activePreset);
     if (activePreset->firEnabled) {
         sendToTeensy(CMD_LOAD_FIR_FILES, nullptr);
     }

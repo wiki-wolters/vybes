@@ -28,9 +28,31 @@ public:
   // if buffer allocation failed (the previous filter stays loaded).
   bool loadCoefficients(const float* coeffs, uint16_t numTaps);
 
+  // Same, streaming the coefficients in from a feed - what SD loads use, so
+  // no filter-sized copy exists alongside the engine's buffers. Also returns
+  // false if the feed came up short (see FirEngine::buildPending).
+  bool loadCoefficients(CoeffFeed& feed, uint16_t numTaps);
+
+  // The same load split in two, so a caller loading several filters can
+  // claim every buffer before any file I/O happens - see the header note on
+  // FirEngine::reservePending. reserveCoefficients allocates; fillReserved
+  // reads the feed in and commits; discardReservation drops an unused one.
+  bool reserveCoefficients(uint16_t numTaps);
+  bool fillReserved(CoeffFeed& feed);
+  void discardReservation();
+
+  // Floats reserveCoefficientsIn needs for numTaps, and the reservation
+  // itself against caller-owned storage - see FirEngine::reservePendingIn.
+  size_t reservedFloats(uint16_t numTaps) const;
+  bool reserveCoefficientsIn(float* storage, uint16_t numTaps);
+
   volatile unsigned long max_update_us = 0;
 
 private:
+  // Phases 2 and 3 of a load: swap the freshly built buffers in with the
+  // audio interrupt held off, then free the replaced ones.
+  void commitLoad();
+
   audio_block_t *inputQueueArray[1];
 
   FirEngine engine;

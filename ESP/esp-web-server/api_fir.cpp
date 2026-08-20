@@ -146,6 +146,18 @@ void firPoolErrorsToJson(bool isActive, JsonObject pool) {
     }
 }
 
+// See the header: the counterpart to broadcastFirLoadError, for the
+// transition nothing else reports - a load starting clean.
+void broadcastFirPool(const Preset& preset) {
+    JsonDocument doc;
+    doc["messageType"] = "firPoolChanged";
+    doc["presetName"] = preset.name;
+    firPoolToJson(preset, true, doc.createNestedObject("firPool"));
+    String out;
+    serializeJson(doc, out);
+    broadcastWebSocket(out.c_str());
+}
+
 // GET /preset/fir/pool - tap pool status for a preset
 esp_err_t handleGetPresetFirPool(PsychicRequest *request) {
     if (!request->hasParam("preset_name")) {

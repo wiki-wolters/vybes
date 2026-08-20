@@ -31,7 +31,47 @@ bool AudioFilterFIRFloat::loadCoefficients(const float* coeffs, uint16_t newNumT
   if (!engine.buildPending(coeffs, newNumTaps)) {
     return false;
   }
+  commitLoad();
+  return true;
+}
 
+bool AudioFilterFIRFloat::loadCoefficients(CoeffFeed& feed, uint16_t newNumTaps) {
+  // Step 1, streamed: the feed is read while interrupts are still enabled,
+  // so an SD read never happens inside the critical section below.
+  if (!engine.buildPending(feed, newNumTaps)) {
+    return false;
+  }
+  commitLoad();
+  return true;
+}
+
+bool AudioFilterFIRFloat::reserveCoefficients(uint16_t newNumTaps) {
+  return engine.reservePending(newNumTaps);
+}
+
+size_t AudioFilterFIRFloat::reservedFloats(uint16_t numTaps) const {
+  return engine.pendingFloats(numTaps);
+}
+
+bool AudioFilterFIRFloat::reserveCoefficientsIn(float* storage, uint16_t newNumTaps) {
+  return engine.reservePendingIn(storage, newNumTaps);
+}
+
+bool AudioFilterFIRFloat::fillReserved(CoeffFeed& feed) {
+  // The feed is read with interrupts enabled, so an SD read never happens
+  // inside the critical section commitLoad() takes.
+  if (!engine.fillPending(feed)) {
+    return false;
+  }
+  commitLoad();
+  return true;
+}
+
+void AudioFilterFIRFloat::discardReservation() {
+  engine.discardPending();
+}
+
+void AudioFilterFIRFloat::commitLoad() {
   // Step 2: Atomically swap pointers and re-initialize the filter.
   __disable_irq();
   engine.swapPending();
@@ -40,8 +80,6 @@ bool AudioFilterFIRFloat::loadCoefficients(const float* coeffs, uint16_t newNumT
 
   // Step 3: Free the old buffers with interrupts enabled.
   engine.freeRetired();
-
-  return true;
 }
 
 // update() method implementation

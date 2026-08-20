@@ -468,6 +468,128 @@ static void test_max_taps_limits_load(void) {
     delete[] coeffs;
 }
 
+// --- Stream: the incremental path the FIR engine loads through ---
+// Same parse, same coefficients, but handed out a few at a time, so a
+// partition-sized pull off the SD card never needs the filter in RAM.
+
+// Drains a Stream in fixed-size bites and returns everything it produced.
+static std::vector<float> drain(FIRLoader::Stream& stream, long taps, uint16_t bite) {
+    std::vector<float> out;
+    std::vector<float> buf(bite);
+    long left = taps;
+    while (left > 0) {
+        uint16_t want = (uint16_t)((left < (long)bite) ? left : (long)bite);
+        uint16_t n = stream.read(buf.data(), want);
+        out.insert(out.end(), buf.begin(), buf.begin() + n);
+        if (n < want) break; // starved - let the caller assert on it
+        left -= n;
+    }
+    return out;
+}
+
+// Every fixture must stream to exactly what a whole-file load produces, at
+// any bite size - including bites that split WAV frames and TXT tokens.
+static void assertStreamMatchesWholeFile(const std::vector<uint8_t>& bytes, const char* name) {
+    uint16_t taps = 0;
+    std::unique_ptr<float[]> whole(load(bytes, name, taps));
+    TEST_ASSERT_NOT_NULL_MESSAGE(whole.get(), name);
+    TEST_ASSERT_GREATER_THAN_UINT16(0, taps);
+
+    for (uint16_t bite : {(uint16_t)1, (uint16_t)3, (uint16_t)taps}) {
+        MemorySource src(bytes);
+        FIRLoader::Stream stream;
+        TEST_ASSERT_EQUAL_INT32(taps, stream.begin(src, String(name)));
+        TEST_ASSERT_TRUE(stream.prepare());
+        std::vector<float> streamed = drain(stream, taps, bite);
+        TEST_ASSERT_FALSE(stream.starved());
+        TEST_ASSERT_EQUAL_UINT32(taps, streamed.size());
+        for (uint16_t i = 0; i < taps; i++) {
+            TEST_ASSERT_EQUAL_FLOAT(whole[i], streamed[i]);
+        }
+    }
+}
+
+static void test_stream_float32_wav_matches_whole_file(void) {
+    std::vector<uint8_t> data;
+    for (int i = 0; i < 9; i++) putFloat(data, (float)i * 0.125f - 0.5f);
+    assertStreamMatchesWholeFile(buildWav(data), "stream.wav");
+}
+
+static void test_stream_multichannel_wav_matches_whole_file(void) {
+    std::vector<uint8_t> data;
+    for (int i = 0; i < 7; i++) {
+        putFloat(data, (float)i * 0.1f);
+        putFloat(data, -9.0f); // right channel, must be skipped
+    }
+    WavOptions opt;
+    opt.channels = 2;
+    assertStreamMatchesWholeFile(buildWav(data, opt), "stereo-stream.wav");
+}
+
+static void test_stream_pcm16_wav_matches_whole_file(void) {
+    std::vector<uint8_t> data;
+    for (int i = 0; i < 6; i++) put16(data, (uint16_t)(int16_t)(i * 4096));
+    WavOptions opt;
+    opt.format = 1;
+    opt.bitsPerSample = 16;
+    assertStreamMatchesWholeFile(buildWav(data, opt), "pcm-stream.wav");
+}
+
+static void test_stream_bin_matches_whole_file(void) {
+    std::vector<uint8_t> data;
+    for (int i = 0; i < 5; i++) putFloat(data, (float)i - 2.0f);
+    assertStreamMatchesWholeFile(data, "stream.bin");
+}
+
+// The one case a chunked reader can get wrong on its own: a coefficient's
+// digits split across two read() calls.
+static void test_stream_txt_token_split_across_bites(void) {
+    std::string text = "0.125\n-0.25\n0.5\n0.03125\n1.5";
+    std::vector<uint8_t> bytes(text.begin(), text.end());
+    assertStreamMatchesWholeFile(bytes, "stream.txt");
+}
+
+static void test_stream_rejects_unknown_extension(void) {
+    MemorySource src(std::string("0.5 0.25"));
+    FIRLoader::Stream stream;
+    TEST_ASSERT_EQUAL_INT32(0, stream.begin(src, String("coeffs.dat")));
+    TEST_ASSERT_FALSE(stream.prepare());
+    float dst[4];
+    TEST_ASSERT_EQUAL_UINT16(0, stream.read(dst, 4));
+}
+
+// A count the header can give but the reader can't honour: prepare() is
+// where that is caught, after the pool has already sized the file.
+static void test_stream_prepare_rejects_unsupported_encoding(void) {
+    std::vector<uint8_t> data;
+    for (int i = 0; i < 4; i++) put16(data, (uint16_t)i);
+    WavOptions opt;
+    opt.format = 2; // neither PCM nor IEEE float
+    opt.bitsPerSample = 16;
+    std::vector<uint8_t> bytes = buildWav(data, opt);
+
+    MemorySource src(bytes);
+    FIRLoader::Stream stream;
+    TEST_ASSERT_EQUAL_INT32(4, stream.begin(src, String("adpcm.wav")));
+    TEST_ASSERT_FALSE(stream.prepare());
+}
+
+// Reading past the end flags starvation rather than inventing coefficients,
+// so the caller can tell a broken file from an exhausted heap.
+static void test_stream_read_past_end_starves(void) {
+    std::vector<uint8_t> data;
+    for (int i = 0; i < 3; i++) putFloat(data, (float)i);
+
+    MemorySource src(data);
+    FIRLoader::Stream stream;
+    TEST_ASSERT_EQUAL_INT32(3, stream.begin(src, String("short.bin")));
+    TEST_ASSERT_TRUE(stream.prepare());
+
+    float dst[8];
+    TEST_ASSERT_EQUAL_UINT16(3, stream.read(dst, 8));
+    TEST_ASSERT_TRUE(stream.starved());
+}
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -503,5 +625,13 @@ int main(int, char**) {
     RUN_TEST(test_empty_bin_fails_cleanly);
     RUN_TEST(test_max_taps_limits_load);
     RUN_TEST(test_reject_over_limit_returns_requested_taps);
+    RUN_TEST(test_stream_float32_wav_matches_whole_file);
+    RUN_TEST(test_stream_multichannel_wav_matches_whole_file);
+    RUN_TEST(test_stream_pcm16_wav_matches_whole_file);
+    RUN_TEST(test_stream_bin_matches_whole_file);
+    RUN_TEST(test_stream_txt_token_split_across_bites);
+    RUN_TEST(test_stream_rejects_unknown_extension);
+    RUN_TEST(test_stream_prepare_rejects_unsupported_encoding);
+    RUN_TEST(test_stream_read_past_end_starves);
     return UNITY_END();
 }
