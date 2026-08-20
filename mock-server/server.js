@@ -197,16 +197,6 @@ wss.on('connection', (ws) => {
         console.log(`Output solo -> ${ch}`);
       }
     }
-    // Sweep (EQ tuning) mode: the device just floors its headroom pads, so
-    // the mock only logs the transitions.
-    if (text === 'sweep:keepalive') {
-      if (Date.now() - sweepLastKeepaliveAt > 5000) console.log('Sweep mode on');
-      sweepLastKeepaliveAt = Date.now();
-    }
-    if (text === 'sweep:off') {
-      if (Date.now() - sweepLastKeepaliveAt <= 5000) console.log('Sweep mode off');
-      sweepLastKeepaliveAt = 0;
-    }
   });
 
   ws.on('close', () => {
@@ -265,10 +255,6 @@ setInterval(() => {
   if (Date.now() - grmLastKeepaliveAt > 5000) return;
   broadcast({ type: 'grm', d: mockGrmFrameHex(Date.now()) });
 }, 100);
-
-// --- Mock sweep mode ---
-// Sweep needs no feedback: the device just floors its headroom pads.
-let sweepLastKeepaliveAt = 0;
 
 // Helper functions
 function getSetting(key) {

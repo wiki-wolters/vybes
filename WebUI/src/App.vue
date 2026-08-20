@@ -19,16 +19,6 @@
           <span v-if="system.dimmed" class="dim-pill" title="Volume is dimmed">
             <span class="dim-dot"></span>Dimmed
           </span>
-
-          <!-- Sweep silently changes levels, so it stays visible from every
-               page: forgetting it on costs SNR without a symptom -->
-          <span
-            v-if="sweep.enabled"
-            class="dim-pill"
-            title="Sweep mode: headroom pads frozen at a 12 dB reserve for EQ tuning"
-          >
-            <span class="dim-dot"></span>Sweep
-          </span>
         </div>
 
         <div class="hidden sm:flex space-x-6 items-center">
@@ -125,13 +115,11 @@ import { useRoute } from 'vue-router';
 import apiClient from './api-client.js';
 import { useSystemStore } from './stores/system.js';
 import { useGeneratorStore } from './stores/generator.js';
-import { useSweepStore } from './stores/sweep.js';
 import GeneratorDock from './components/GeneratorDock.vue';
 
 const route = useRoute();
 const system = useSystemStore();
 const generator = useGeneratorStore();
-const sweep = useSweepStore();
 
 const HOME_TAB = {
   name: 'Home',

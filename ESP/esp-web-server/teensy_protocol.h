@@ -127,12 +127,6 @@
 // the audible reality, so nothing is forced to a probe level.
 #define CMD_SOLO_OUTPUT "soloOutput"
 
-// EQ sweep/tuning mode: "setSweepMode <0|1>", same keepalive scheme as
-// setRta. While on, the Teensy floors its input and output headroom pads at
-// a fixed reserve so EQ edits can't move the baseline level - a boosted
-// band swept across the spectrum pokes out of an otherwise steady mix.
-#define CMD_SET_SWEEP_MODE "setSweepMode"
-
 // Probe chirp/schedule contract, shared by ProbeSource (Teensy), the
 // /probe/delay API (ESP) and delay-align.js (web UI reference generator).
 // Chirp k starts at sample PROBE_PRE_ROLL_SAMPLES + k * PROBE_SPACING_SAMPLES.

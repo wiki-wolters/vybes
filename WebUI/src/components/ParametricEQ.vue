@@ -155,22 +155,7 @@
       <button type="button" class="point-chip chip-ghost" @click="openImport">
         Import REW
       </button>
-      <button
-        type="button"
-        class="point-chip chip-sweep"
-        :class="{ active: sweep.enabled }"
-        title="Freeze the auto-gain pads at a 12 dB reserve so a boosted band can be swept across the spectrum without the baseline level moving"
-        @click="sweep.toggle()"
-      >
-        {{ sweep.enabled ? '◉ Sweep on' : '◎ Sweep' }}
-      </button>
     </div>
-    <p v-if="sweep.enabled && !isFullscreen" class="sweep-hint">
-      Sweep mode: baseline padded by 12 dB and frozen — boost a band and drag
-      its frequency to hunt resonances; turn the volume up to taste for the
-      session.
-    </p>
-
     <!-- Selected band controls -->
     <div
       v-if="!isFullscreen && selectedPoint !== null && localEqPoints[selectedPoint]"
@@ -272,9 +257,7 @@ import RangeSlider from './shared/RangeSlider.vue';
 import ModalDialog from './shared/ModalDialog.vue';
 import VybesAPI from '../api-client';
 import { peakingBellDb } from '../eq-math.js';
-import { useSweepStore } from '../stores/sweep.js';
 
-const sweep = useSweepStore();
 
 const props = defineProps({
   peqPoints: {
@@ -1108,21 +1091,6 @@ onUnmounted(() => {
 .point-chip.chip-ghost {
   border-style: dashed;
   font-family: inherit;
-}
-
-.point-chip.chip-sweep {
-  font-family: inherit;
-}
-
-.point-chip.chip-sweep.active {
-  color: var(--vybes-accent);
-  border-color: var(--vybes-accent);
-}
-
-.sweep-hint {
-  margin: 6px 2px 0;
-  font-size: 11px;
-  color: var(--vybes-accent);
 }
 
 .point-chip:focus-visible {

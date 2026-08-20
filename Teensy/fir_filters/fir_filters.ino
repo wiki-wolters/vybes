@@ -340,23 +340,12 @@ int    probeLastSlot = -1;
 int outputSolo = -1;
 unsigned long outputSoloLastKeepaliveAt = 0;
 
-// --- Sweep mode (EQ tuning) ---
-// Keepalive-driven like the RTA. While active, the input pre-EQ pad and the
-// shared output pad are floored at SWEEP_RESERVE_DB, so dialing a boost into
-// any EQ and sweeping it never moves the baseline level: the swept band
-// rises above the rest of the mix (console-style) and still can't clip,
-// because the reserve is spent up front instead of tracking each edit.
-#define SWEEP_KEEPALIVE_TIMEOUT_MS 7000
-#define SWEEP_RESERVE_DB 12.0f
-bool sweepMode = false;
-unsigned long sweepLastKeepaliveAt = 0;
-
 // --- Shared output headroom pad ---
 // The per-output chains have no per-channel compensation stage (a per-output
 // pad would skew the balance between drivers and wreck crossover summing),
 // so one shared pad - the largest active output-EQ boost across all
-// channels, floored at the sweep reserve while sweep mode is on - is folded
-// into every source mixer's gains. Recomputed once per loop() pass when
+// channels - is folded into every source mixer's gains. Recomputed once
+// per loop() pass when
 // marked dirty, so a burst of EQ edits (the boot sync) costs one 8-channel
 // curve sweep, not eighty.
 float outputPadLin = 1.0f;
@@ -624,7 +613,6 @@ void loop() {
   grmLoop();
   probeLoop();
   outputSoloLoop();
-  sweepLoop();
   outputPadLoop();
 }
 
@@ -635,15 +623,6 @@ void outputSoloLoop() {
     outputSolo = -1;
     updateRtaSource(); // fall back to the L+R mix if RTA is still streaming
     Serial.println("Output solo timed out");
-  }
-}
-
-// Drop sweep mode once its keepalives stop arriving.
-void sweepLoop() {
-  if (!sweepMode) return;
-  if (millis() - sweepLastKeepaliveAt > SWEEP_KEEPALIVE_TIMEOUT_MS) {
-    Serial.println("Sweep mode timed out");
-    setSweepMode(false);
   }
 }
 
@@ -1017,15 +996,12 @@ void probeLoop() {
 
 // Attenuate the pre-EQ amps to compensate for the maximum boost of the
 // current EQ curve, so boosted bands can't clip. Unity while the EQ is
-// bypassed ("Pure Direct" - no wasted headroom). Sweep mode floors the pad
-// at the reserve instead, so EQ edits and toggles can't move the baseline
-// while a band is being swept.
+// bypassed ("Pure Direct" - no wasted headroom).
 void applyPreEQGainCompensation() {
   float padDb = 0.0f;
   if (state.inputEqEnabled) {
     padDb = peqLeft.calculateMaxEqBoost(state.inputEqBands, MAX_PEQ_BANDS);
   }
-  if (sweepMode && padDb < SWEEP_RESERVE_DB) padDb = SWEEP_RESERVE_DB;
   peqLeft.applyPreEQGain(padDb, Left_Pre_EQ_amp, Right_Pre_EQ_amp);
 }
 
@@ -1047,7 +1023,7 @@ void setInputEqEnabled(bool enabled) {
     // EQ is enabled, so apply the filters and the gain compensation
     applyInputEqFilters(EQ_MORPH_MS);
   } else {
-    // Unity pad while off - unless sweep mode is holding the floor
+    // Unity pad while off
     applyPreEQGainCompensation();
   }
 }
@@ -1076,7 +1052,7 @@ void applySourceMixerGains(int ch) {
 // and push it into every source mixer when it changed.
 void refreshOutputPad() {
   outputPadDirty = false;
-  float padDb = sweepMode ? SWEEP_RESERVE_DB : 0.0f;
+  float padDb = 0.0f;
   for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
     if (!state.outputs[ch].eqEnabled) continue;
     float boost = outputPeq[ch].calculateMaxEqBoost(state.outputs[ch].peq, MAX_OUTPUT_PEQ);
@@ -1093,17 +1069,6 @@ void refreshOutputPad() {
 
 void outputPadLoop() {
   if (outputPadDirty) refreshOutputPad();
-}
-
-// Enter/leave sweep mode. Keepalive-refreshed by the ESP while a web client
-// holds the mode; sweepLoop() clears it when the refreshes stop.
-void setSweepMode(bool enabled) {
-  sweepLastKeepaliveAt = millis();
-  if (enabled == sweepMode) return;
-  sweepMode = enabled;
-  Serial.println(enabled ? "Sweep mode on" : "Sweep mode off");
-  applyPreEQGainCompensation();
-  refreshOutputPad();
 }
 
 // Morph the output's PEQ to the bands in state. animateToBands disables
@@ -1734,14 +1699,6 @@ void handleSoloOutput(const String& command, String* args, int argCount, OutputS
   } else if (outputSolo != -1) {
     outputSolo = -1;
     updateRtaSource();
-  }
-}
-
-// "setSweepMode <0|1>": keepalive-refreshed while a web client holds the
-// EQ sweep/tuning mode; sweepLoop() drops it when the refreshes stop.
-void handleSetSweepMode(const String& command, String* args, int argCount, OutputStream& stream) {
-  if (argCount == 1) {
-    setSweepMode(args[0].toInt() == 1);
   }
 }
 
