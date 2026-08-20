@@ -1507,28 +1507,28 @@ async function applyGeneratedEq() {
   applyState.message = '';
   const points = generatedPoints.value.map((p, id) => ({ id, freq: p.freq, gain: p.gain, q: p.q }));
   try {
-    // Re-enable a bypassed target EQ: the correction was fitted against
-    // what the mic heard (EQ bypassed = raw response), so enabling on apply
-    // is exactly what makes the prediction come true - and bands saved into
-    // a bypassed EQ would be inaudible.
-    const reEnabled = scopeEqBypassed.value;
+    // Always enable the target EQ on apply: the correction was fitted against
+    // what the mic heard (EQ bypassed = raw response), so enabling is exactly
+    // what makes the prediction come true - and bands saved into a bypassed EQ
+    // would be inaudible. Enable unconditionally rather than gating on our
+    // cached enabled-state, which can be stale (e.g. toggled off elsewhere
+    // before the broadcast refresh landed, or over a dropped socket) and would
+    // otherwise leave the EQ off after apply. `wasBypassed` only tunes the
+    // status wording.
+    const wasBypassed = scopeEqBypassed.value;
     if (scopeIsOutput.value) {
       await apiClient.saveOutputEq(activePresetName.value, Number(scope.value), points);
-      if (reEnabled) {
-        await apiClient.setOutputEqEnabled(activePresetName.value, Number(scope.value), true);
-        const o = scopeOutput.value;
-        if (o) o.eqEnabled = true;
-      }
+      await apiClient.setOutputEqEnabled(activePresetName.value, Number(scope.value), true);
+      const o = scopeOutput.value;
+      if (o) o.eqEnabled = true;
       applyState.error = false;
-      applyState.message = `Saved ${points.length} band${points.length === 1 ? '' : 's'} to the “${scopeOutput.value?.label}” output EQ${reEnabled ? ' and re-enabled it' : ''}.`;
+      applyState.message = `Saved ${points.length} band${points.length === 1 ? '' : 's'} to the “${scopeOutput.value?.label}” output EQ${wasBypassed ? ' and re-enabled it' : ''}.`;
     } else {
       await apiClient.savePrefEqSet(activePresetName.value, points);
-      if (reEnabled) {
-        await apiClient.setEQEnabled(activePresetName.value, 'pref', true);
-        inputEqEnabled.value = true;
-      }
+      await apiClient.setEQEnabled(activePresetName.value, 'pref', true);
+      inputEqEnabled.value = true;
       applyState.error = false;
-      applyState.message = `Saved ${points.length} band${points.length === 1 ? '' : 's'} to “${activePresetName.value}”${reEnabled ? ' and enabled the EQ' : ''}.`;
+      applyState.message = `Saved ${points.length} band${points.length === 1 ? '' : 's'} to “${activePresetName.value}”${wasBypassed ? ' and enabled the EQ' : ''}.`;
     }
     // The preset editor trusts the store's cached copy; resync it or the
     // applied bands stay invisible there until a full page reload.
