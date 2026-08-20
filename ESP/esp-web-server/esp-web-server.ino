@@ -4,7 +4,6 @@
 #include "websocket.h"
 #include "file_system.h"
 #include "teensy_comm.h"
-#include "compare_mode.h"
 #include "utilities.h"
 #include "i2c.h"
 #include "screen.h"
@@ -106,7 +105,6 @@ void loop() {
     remoteControl.loop();
     teensyCommLoop();     // Drain queued Teensy commands, read replies/events
     websocketLoop();      // RTA keepalive relay to the Teensy
-    compareModeLoop();    // A/B level matching: loudness math + trim relay
     handleDebounceWrite();
     handleButton();
     loopScreen();

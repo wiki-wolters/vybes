@@ -2,7 +2,6 @@
 #include "websocket.h"
 #include "web_server.h"
 #include "teensy_comm.h"
-#include "compare_mode.h"
 #include "config.h" // NUM_OUTPUTS, for solo channel validation
 #include <ArduinoJson.h>
 #include <atomic>
@@ -86,14 +85,6 @@ static void setupHandler(PsychicWebSocketHandler &handler, std::atomic<int> &cli
             }
             if (frame->len == 9 && strncmp((const char*)frame->payload, "sweep:off", 9) == 0) {
                 sweepLastClientKeepaliveAt = 0; // explicit clear, like "solo:-1"
-                return ESP_OK;
-            }
-            if (frame->len == 17 && strncmp((const char*)frame->payload, "compare:keepalive", 17) == 0) {
-                compareModeKeepalive();
-                return ESP_OK;
-            }
-            if (frame->len == 11 && strncmp((const char*)frame->payload, "compare:off", 11) == 0) {
-                compareModeRelease();
                 return ESP_OK;
             }
             if (frame->len >= 6 && frame->len <= 8 &&

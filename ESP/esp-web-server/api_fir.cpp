@@ -6,7 +6,6 @@
 #include "web_server.h"
 #include "websocket.h"
 #include "teensy_comm.h"
-#include "compare_mode.h"
 #include "utilities.h"
 #include "api_helpers.h"
 #include "api_fir.h"
@@ -219,7 +218,6 @@ esp_err_t handlePutPresetFirEnabled(PsychicRequest *request) {
         if (enabled) {
             loadFirFilters();
         }
-        compareOnStateChanged();
     }
 
     // Prepare and send response

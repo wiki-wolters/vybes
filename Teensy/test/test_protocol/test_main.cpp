@@ -125,8 +125,6 @@ static const ProtocolCase kProtocolCases[] = {
     {CMD_STOP_DELAY_PROBE, nullptr, nullptr, nullptr, nullptr, nullptr, 0},
     {CMD_SOLO_OUTPUT, "3", nullptr, nullptr, nullptr, nullptr, 1},
     {CMD_SET_SWEEP_MODE, "1", nullptr, nullptr, nullptr, nullptr, 1},
-    {CMD_SET_COMPARE_TRIM, "-250", nullptr, nullptr, nullptr, nullptr, 1},
-    {CMD_GET_FIR_GAINS, nullptr, nullptr, nullptr, nullptr, nullptr, 0},
     {CMD_SET_MUTE, "1", nullptr, nullptr, nullptr, nullptr, 1},
     {CMD_SET_MUTE_PERCENT, "50.00", nullptr, nullptr, nullptr, nullptr, 1},
     {CMD_PING, nullptr, nullptr, nullptr, nullptr, nullptr, 0},

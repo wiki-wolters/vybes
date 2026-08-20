@@ -172,10 +172,6 @@ function broadcast(data) {
       client.send(message);
     }
   });
-  // Emulate the ESP's comparison-mode trim reacting to audible changes
-  if (data.messageType !== 'compareMode') {
-    compareOnAudibleChange(data.messageType);
-  }
 }
 
 // WebSocket connection handler
@@ -210,14 +206,6 @@ wss.on('connection', (ws) => {
     if (text === 'sweep:off') {
       if (Date.now() - sweepLastKeepaliveAt <= 5000) console.log('Sweep mode off');
       sweepLastKeepaliveAt = 0;
-    }
-    // Comparison mode: level-matched A/B. The mock emulates the ESP's trim
-    // engine with a canned trim cycle (see compareOnAudibleChange).
-    if (text === 'compare:keepalive') {
-      compareLastKeepaliveAt = Date.now();
-    }
-    if (text === 'compare:off') {
-      compareLastKeepaliveAt = 0;
     }
   });
 
@@ -278,44 +266,9 @@ setInterval(() => {
   broadcast({ type: 'grm', d: mockGrmFrameHex(Date.now()) });
 }, 100);
 
-// --- Mock sweep + comparison modes ---
-// Sweep needs no feedback (the device just pads); comparison mode emulates
-// the ESP's trim engine: activation/expiry transitions broadcast the
-// compareMode shape, and every audible-state broadcast while active cycles
-// through a canned set of plausible trims so the UI's readout exercises.
+// --- Mock sweep mode ---
+// Sweep needs no feedback: the device just floors its headroom pads.
 let sweepLastKeepaliveAt = 0;
-let compareLastKeepaliveAt = 0;
-let compareActive = false;
-let compareTrimDb = 0;
-const MOCK_TRIM_CYCLE = [0, -1.8, -3.2, -0.9];
-let mockTrimIndex = 0;
-
-function broadcastCompareMode() {
-  broadcast({ messageType: 'compareMode', active: compareActive, trimDb: compareTrimDb });
-}
-
-setInterval(() => {
-  const wantActive = Date.now() - compareLastKeepaliveAt <= 5000;
-  if (wantActive === compareActive) return;
-  compareActive = wantActive;
-  compareTrimDb = 0;
-  mockTrimIndex = 0;
-  console.log(compareActive ? 'Comparison mode on' : 'Comparison mode off');
-  broadcastCompareMode();
-}, 500);
-
-// Audible-state broadcasts advance the canned trim while comparing
-const AUDIBLE_MESSAGE_TYPES = new Set([
-  'outputChanged', 'outputEqChanged', 'eqPointsChanged', 'eqEnabledChanged',
-  'firEnabledChanged', 'activePresetChanged',
-]);
-
-function compareOnAudibleChange(messageType) {
-  if (!compareActive || !AUDIBLE_MESSAGE_TYPES.has(messageType)) return;
-  mockTrimIndex = (mockTrimIndex + 1) % MOCK_TRIM_CYCLE.length;
-  compareTrimDb = MOCK_TRIM_CYCLE[mockTrimIndex];
-  broadcastCompareMode();
-}
 
 // Helper functions
 function getSetting(key) {

@@ -47,8 +47,6 @@
   X(stopDelayProbe, handleStopDelayProbe) \
   X(soloOutput, handleSoloOutput) \
   X(setSweepMode, handleSetSweepMode) \
-  X(setCompareTrim, handleSetCompareTrim) \
-  X(getFirGains, handleGetFirGains) \
   X(setMute, handleSetMute) \
   X(setMutePercent, handleSetMutePercent) \
   X(ping, handlePing)

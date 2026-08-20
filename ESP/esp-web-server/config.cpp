@@ -2,7 +2,6 @@
 #include "config.h"
 #include "templates.h"
 #include "teensy_comm.h"
-#include "compare_mode.h"
 #include "api_fir.h"
 #include "screen.h"
 #include <ArduinoJson.h>
@@ -729,10 +728,6 @@ void updateTeensyWithActivePresetParameters() {
     // Whole preset is now in flight ahead of this in the queue; the Teensy
     // ramps the outputs back up when it reaches this and the FIR load done.
     sendOnOffToTeensy(CMD_SET_CONFIG_HOLD, false);
-
-    // Every full sync is a potential audible-state change (preset switches
-    // from the API, button, remote and Teensy reboots all land here)
-    compareOnStateChanged();
 }
 
 void loadFirFilters() {

@@ -7,7 +7,7 @@
  * mixing console. Turn the volume up to taste for the session - entering
  * the mode drops the overall level by the reserve.
  *
- * Keepalive-driven like comparison mode: closing the tab ends it on its own.
+ * Keepalive-driven like the RTA: closing the tab ends the mode on its own.
  */
 import { defineStore } from 'pinia';
 import { ref } from 'vue';

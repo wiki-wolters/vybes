@@ -351,15 +351,6 @@ unsigned long outputSoloLastKeepaliveAt = 0;
 bool sweepMode = false;
 unsigned long sweepLastKeepaliveAt = 0;
 
-// --- Comparison trim (A/B level matching) ---
-// The ESP computes a loudness delta between the states being A/B'd and
-// sends "setCompareTrim <centi-dB>" (always <= 0). The trim multiplies into
-// outputTargetGain so it rides the amp ramp, and it is keepalive-guarded so
-// a dropped connection can't leave the system quietly trimmed down.
-#define COMPARE_KEEPALIVE_TIMEOUT_MS 7000
-float compareTrimLin = 1.0f;
-unsigned long compareLastKeepaliveAt = 0;
-
 // --- Shared output headroom pad ---
 // The per-output chains have no per-channel compensation stage (a per-output
 // pad would skew the balance between drivers and wreck crossover summing),
@@ -634,7 +625,6 @@ void loop() {
   probeLoop();
   outputSoloLoop();
   sweepLoop();
-  compareTrimLoop();
   outputPadLoop();
 }
 
@@ -654,15 +644,6 @@ void sweepLoop() {
   if (millis() - sweepLastKeepaliveAt > SWEEP_KEEPALIVE_TIMEOUT_MS) {
     Serial.println("Sweep mode timed out");
     setSweepMode(false);
-  }
-}
-
-// Clear a stale comparison trim once its keepalives stop arriving.
-void compareTrimLoop() {
-  if (compareTrimLin == 1.0f) return;
-  if (millis() - compareLastKeepaliveAt > COMPARE_KEEPALIVE_TIMEOUT_MS) {
-    compareTrimLin = 1.0f; // picked up by the amp ramp
-    Serial.println("Compare trim timed out");
   }
 }
 
@@ -823,7 +804,7 @@ static float outputTargetGain(int ch, const OutputState& o) {
   // the soloed one keeps its normal product so the mic measures reality.
   if (outputSolo >= 0 && ch != outputSolo) return 0.0f;
   if (o.mute) return 0.0f;
-  float gain = powf(10.0f, o.gainDb / 20.0f) * state.targetVolume * compareTrimLin;
+  float gain = powf(10.0f, o.gainDb / 20.0f) * state.targetVolume;
   return o.invert ? -gain : gain;
 }
 
@@ -1182,104 +1163,6 @@ void applyDelays() {
   }
 }
 
-// Pink-weighted gain of each loaded FIR filter in dB (0 = none): the mean
-// power of its response sampled log-uniformly 20Hz-20kHz, i.e. its loudness
-// effect on pink-ish program material. Computed once per load and reported
-// as "FIRGAIN <ch> <centi-dB>" lines so the ESP's comparison mode can
-// level-match FIR on/off states without ever reading the taps itself.
-float firPinkGainDb[NUM_OUTPUTS] = {0.0f};
-
-// The filter is never in RAM all at once (loadFirFiles streams it straight
-// into the engine), so the sum is accumulated as the coefficients go past:
-// one phasor per probe frequency is carried between chunks, each coefficient
-// is visited once in file order, and the result is what a single pass over a
-// full array would have produced. The phasor state is ~4.7KB, parked in RAM2
-// (DMAMEM) rather than RAM1: it buys back 4 bytes/tap of the RAM2 heap at
-// load time, so paying for it out of the same pot still nets ~20KB at the
-// pool limit, and RAM1's remaining headroom is the stack's.
-class FirPinkGain {
-public:
-  void begin() {
-    for (int i = 0; i < SAMPLES; i++) {
-      float freq = 20.0f * powf(1000.0f, (float)i / (SAMPLES - 1)); // 20Hz..20kHz
-      double w = 2.0 * M_PI * (double)freq / AUDIO_SAMPLE_RATE_EXACT;
-      // DTFT via phasor recurrence; double precision keeps the rotation
-      // stable over pool-sized tap counts.
-      bins[i].cr = cos(w);
-      bins[i].ci = -sin(w);
-      bins[i].pr = 1.0;
-      bins[i].pi = 0.0;
-      bins[i].re = 0.0;
-      bins[i].im = 0.0;
-    }
-    taps = 0;
-  }
-
-  void add(const float* h, uint16_t n) {
-    if (h == nullptr || n == 0) return;
-    for (int i = 0; i < SAMPLES; i++) {
-      Bin& b = bins[i];
-      const double cr = b.cr, ci = b.ci;
-      double pr = b.pr, pi = b.pi, re = b.re, im = b.im;
-      for (uint16_t k = 0; k < n; k++) {
-        re += h[k] * pr;
-        im += h[k] * pi;
-        double t = pr * cr - pi * ci;
-        pi = pr * ci + pi * cr;
-        pr = t;
-      }
-      b.pr = pr; b.pi = pi; b.re = re; b.im = im;
-    }
-    taps += n;
-  }
-
-  float db() const {
-    if (taps == 0) return 0.0f;
-    double powerSum = 0.0;
-    for (int i = 0; i < SAMPLES; i++) {
-      powerSum += bins[i].re * bins[i].re + bins[i].im * bins[i].im;
-    }
-    double meanPower = powerSum / SAMPLES;
-    if (meanPower < 1e-20) return -100.0f;
-    return (float)(10.0 * log10(meanPower));
-  }
-
-private:
-  static const int SAMPLES = 100;
-  struct Bin { double cr, ci, pr, pi, re, im; };
-  Bin bins[SAMPLES];
-  uint32_t taps;
-};
-
-// DMAMEM is not cleared at boot and takes no constructor, hence the plain
-// members above - begin() is what puts the accumulator in a known state, and
-// every load calls it before the first add().
-DMAMEM static FirPinkGain firPinkGain;
-
-// Couples the two: the engine pulls partitions from the file through here,
-// and every coefficient is weighed on its way past. This is the only place
-// coefficients exist outside the engine's buffers - one partition of the
-// engine's own stack scratch, not a copy of the filter.
-class FirGainTap : public CoeffFeed {
-public:
-  FirGainTap(FIRLoader::Stream& src, FirPinkGain& gain) : src(src), gain(gain) {}
-  uint16_t read(float* dst, uint16_t count) override {
-    uint16_t n = src.read(dst, count);
-    gain.add(dst, n);
-    return n;
-  }
-  bool starved() const { return src.starved(); }
-private:
-  FIRLoader::Stream& src;
-  FirPinkGain& gain;
-};
-
-static void reportFirGains(Print& out) {
-  for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
-    out.printf("FIRGAIN %d %d\n", ch, (int)lroundf(firPinkGainDb[ch] * 100.0f));
-  }
-}
-
 // sdCardInitialized only records what happened at boot. The card can be
 // pulled at runtime, and SdFat then keeps answering from a stale mount: a
 // removed card listed one garbage filename and failed every FIR open, with
@@ -1323,17 +1206,15 @@ static void releaseFirBuffers() {
   for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
     firFilter[ch].loadCoefficients(nullptr, 0);
     state.outputs[ch].firTaps = 0;
-    firPinkGainDb[ch] = 0.0f;
   }
   delete[] firArena;
   firArena = nullptr;
 }
 
-// Streams one output's file into the buffers already reserved for it,
-// weighing the coefficients for the pink gain as they pass. The engine pulls
-// one 128-tap partition at a time, so this is the only place coefficients
-// exist outside its buffers - 512 bytes of its own stack scratch, never a
-// copy of the filter. 'taps' is the count the sizing pass accepted.
+// Streams one output's file into the buffers already reserved for it. The
+// engine pulls one 128-tap partition at a time, so coefficients never exist
+// outside its buffers as more than 512 bytes of its own stack scratch, never
+// a copy of the filter. 'taps' is the count the sizing pass accepted.
 static bool fillFirChannel(int ch, uint16_t taps) {
   OutputState& o = state.outputs[ch];
 
@@ -1355,9 +1236,7 @@ static bool fillFirChannel(int ch, uint16_t taps) {
     return false;
   }
 
-  firPinkGain.begin();
-  FirGainTap feed(stream, firPinkGain);
-  bool loaded = firFilter[ch].fillReserved(feed);
+  bool loaded = firFilter[ch].fillReserved(stream);
   file.close();
   if (!loaded) {
     Serial1.printf("ERROR FIR load failed: unreadable file %s (output %d)\n", o.firFile, ch);
@@ -1365,7 +1244,6 @@ static bool fillFirChannel(int ch, uint16_t taps) {
     return false;
   }
 
-  firPinkGainDb[ch] = firPinkGain.db();
   o.firTaps = taps;
   return true;
 }
@@ -1383,7 +1261,6 @@ void loadFirFiles() {
       }
     }
     applyDelays();
-    reportFirGains(Serial1);
     return;
   }
 
@@ -1499,9 +1376,9 @@ void loadFirFiles() {
     int ch = order[n];
     if (fillFirChannel(ch, orderTaps[n])) {
       poolUsed += orderTaps[n];
-      Serial.printf("Output %d FIR loaded: %s (%u taps, pool %lu/%u, pink gain %.2f dB)\n",
+      Serial.printf("Output %d FIR loaded: %s (%u taps, pool %lu/%u)\n",
                     ch, state.outputs[ch].firFile, orderTaps[n], (unsigned long)poolUsed,
-                    FIR_TAP_POOL, firPinkGainDb[ch]);
+                    FIR_TAP_POOL);
     }
   }
 
@@ -1509,7 +1386,6 @@ void loadFirFiles() {
 
   // FIR latencies may have changed - realign the channels
   applyDelays();
-  reportFirGains(Serial1);
 }
 
 /*
@@ -1867,23 +1743,6 @@ void handleSetSweepMode(const String& command, String* args, int argCount, Outpu
   if (argCount == 1) {
     setSweepMode(args[0].toInt() == 1);
   }
-}
-
-// "setCompareTrim <centi-dB>": A/B level-matching trim, <= 0 (0 clears).
-// Keepalive-refreshed by the ESP while comparison mode is active.
-void handleSetCompareTrim(const String& command, String* args, int argCount, OutputStream& stream) {
-  if (argCount != 1) return;
-  long centiDb = args[0].toInt();
-  if (centiDb > 0) centiDb = 0;
-  if (centiDb < -3000) centiDb = -3000;
-  compareTrimLin = powf(10.0f, (float)centiDb / 2000.0f);
-  compareLastKeepaliveAt = millis();
-}
-
-// "getFirGains": re-emit the FIRGAIN lines (e.g. after an ESP reboot, whose
-// cache of them is otherwise stale until the next FIR load).
-void handleGetFirGains(const String& command, String* args, int argCount, OutputStream& stream) {
-  reportFirGains(stream);
 }
 
 // --- Mixed-input multiband compressor ---

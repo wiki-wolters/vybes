@@ -2,7 +2,6 @@
 #include "teensy_comm.h"
 #include "config.h"
 #include "websocket.h"
-#include "compare_mode.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
@@ -350,18 +349,6 @@ static void handleTeensyLine(const char* line) {
         return;
     }
 
-    // "FIRGAIN <ch> <centi-dB>": pink-weighted gain of a loaded FIR filter,
-    // sent after every loadFirFiles (and on getFirGains). Comparison mode
-    // uses these to level-match FIR on/off states.
-    if (strncmp(line, "FIRGAIN ", 8) == 0) {
-        char* end = nullptr;
-        long ch = strtol(line + 8, &end, 10);
-        if (end != nullptr && *end == ' ') {
-            compareSetFirGain((int)ch, (int)strtol(end + 1, nullptr, 10));
-        }
-        return;
-    }
-
     // "FIRERR <ch> <code> <file>": a channel's FIR filter did not load. Record
     // it and tell the UI immediately - silently running an uncorrected channel
     // is the worst possible failure mode for a room-correction box.
@@ -456,10 +443,9 @@ void initTeensyComm() {
     memset(cmdQueue, 0, sizeof(cmdQueue));
     queueMutex = xSemaphoreCreateMutex();
     firCacheMutex = xSemaphoreCreateMutex();
-    // Ask for the file list and FIR gains in case the Teensy was already
-    // running when we booted (its boot event would have been missed).
+    // Ask for the file list in case the Teensy was already running when we
+    // booted (its boot event would have been missed).
     requestFirFilesRefresh();
-    sendToTeensy(CMD_GET_FIR_GAINS, nullptr);
 }
 
 void teensyCommLoop() {

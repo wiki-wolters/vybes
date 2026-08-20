@@ -3,7 +3,6 @@
 #include "websocket.h"
 #include "utilities.h"
 #include "teensy_comm.h"
-#include "compare_mode.h"
 #include "config.h"
 #include "api_helpers.h"
 #include <string.h>
@@ -335,7 +334,6 @@ esp_err_t handlePutPresetEQPoints(PsychicRequest *request, JsonVariant &json) {
         char fromIndex[8];
         snprintf(fromIndex, sizeof(fromIndex), "%d", count);
         sendToTeensy(CMD_RESET_INPUT_EQ, fromIndex);
-        compareOnStateChanged();
     }
 
     JsonDocument responseDoc;
@@ -401,7 +399,6 @@ esp_err_t handlePutPresetEQPoint(PsychicRequest *request, JsonVariant &json) {
 
     if (presetIndex == current_config.active_preset_index) {
         sendInputEqPointToTeensy(id, target_set->points[id]);
-        compareOnStateChanged();
     }
 
     return request->reply(204);
@@ -437,7 +434,6 @@ esp_err_t handlePutPresetEQEnabled(PsychicRequest *request) {
 
     if (presetIndex == current_config.active_preset_index) {
         sendOnOffToTeensy(CMD_SET_INPUT_EQ_ENABLED, enabled);
-        compareOnStateChanged();
     }
 
     JsonDocument doc;

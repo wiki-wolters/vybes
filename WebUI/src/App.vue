@@ -20,15 +20,8 @@
             <span class="dim-dot"></span>Dimmed
           </span>
 
-          <!-- These modes silently change levels, so they stay visible from
-               every page: forgetting one on costs SNR without a symptom -->
-          <span
-            v-if="compare.enabled || compare.active"
-            class="dim-pill"
-            title="Comparison mode: A/B states are loudness-matched by trimming the louder one"
-          >
-            <span class="dim-dot"></span>Matched {{ compare.trimDb.toFixed(1) }} dB
-          </span>
+          <!-- Sweep silently changes levels, so it stays visible from every
+               page: forgetting it on costs SNR without a symptom -->
           <span
             v-if="sweep.enabled"
             class="dim-pill"
@@ -132,14 +125,12 @@ import { useRoute } from 'vue-router';
 import apiClient from './api-client.js';
 import { useSystemStore } from './stores/system.js';
 import { useGeneratorStore } from './stores/generator.js';
-import { useCompareStore } from './stores/compare.js';
 import { useSweepStore } from './stores/sweep.js';
 import GeneratorDock from './components/GeneratorDock.vue';
 
 const route = useRoute();
 const system = useSystemStore();
 const generator = useGeneratorStore();
-const compare = useCompareStore();
 const sweep = useSweepStore();
 
 const HOME_TAB = {
