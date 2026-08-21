@@ -17,17 +17,40 @@
 // internal heap ~131KB, and TWO concurrent TLS connections plus a browser
 // websocket drove minFreeInternal to 20,420 and minLargestFreeBlock to
 // 15,348. Steady-state readings badly understate the risk - the danger is the
-// transient peak inside a handshake, which only the watermarks reveal - so
-// both floors sit under even that transient, and both need the fault
+// transient peak inside a handshake, which only the watermarks reveal. The
+// heap floor sits under even that transient; the fragmentation floor cannot
+// (see below), so it leans on its grace period instead. Both need the fault
 // *sustained* before acting. Retune once there is long-uptime data.
 static const uint32_t HEAP_FLOOR_BYTES = 12 * 1024;
 static const uint32_t HEAP_FLOOR_GRACE_MS = 15000;
 // A TLS handshake needs a 16KB contiguous buffer. Free heap can read a healthy
 // 130KB while the largest block has fragmented below that - the RTA streams
 // ~10Hz of String/JSON churn whenever the analyzer is open - at which point
-// HTTPS is dead even though nothing looks wrong. Two minutes under 10KB is
-// pathological, not a busy moment.
-static const uint32_t FRAG_FLOOR_BYTES = 10 * 1024;
+// HTTPS is dead even though nothing looks wrong.
+//
+// This floor must sit ABOVE the 16KB a handshake needs, not below it. The old
+// 10KB left a blind band: a largest block anywhere in 10-16KB is too small to
+// hand out a handshake buffer yet too large to trip the check, so HTTPS would
+// be dead with every test here satisfied - loop() beating, WiFi connected,
+// freeInternal a healthy 120KB. 20KB clears the handshake requirement with
+// room for the allocator's own overhead.
+//
+// What was actually measured, though, is dips rather than a park. Polled every
+// 15s on 2026-08-20 (steady largest ~53KB, freeInternal ~120KB) the watermarks
+// reached minLargestFreeBlock=2,292 and minFreeInternal=11,680 - the latter
+// under HEAP_FLOOR_BYTES - with no restart and uptime climbing unbroken. So
+// both floors are being breached transiently and recovering. The 250ms sampler
+// misses most of it; those watermarks come from healthLargestFreeBlock()
+// folding one in on every call, including GET /status. A handshake unlucky
+// enough to land inside a dip fails on its own, which reads as intermittent
+// HTTPS rather than a wedge - worth separating from the blind band above when
+// diagnosing, because raising this floor does nothing for it.
+//
+// Sitting above the transient is still safe: sustained() zeroes `since` the
+// moment the fault clears, so tripping this needs the largest block
+// continuously under 20KB for the whole 120s grace (~480 consecutive 250ms
+// samples). Millisecond dips cannot accumulate; a stuck state will.
+static const uint32_t FRAG_FLOOR_BYTES = 20 * 1024;
 static const uint32_t FRAG_FLOOR_GRACE_MS = 120000;
 static const uint32_t WIFI_DOWN_GRACE_MS = 120000;
 // loop() is non-blocking throughout (teensyCommLoop drains a queue, the FIR
