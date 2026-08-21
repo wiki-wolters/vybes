@@ -45,6 +45,20 @@ static char firFilesPending[FIR_CACHE_MAX];
 static size_t firFilesPendingLen = 0;
 static bool collectingFiles = false;
 
+// Recordings list cache, same scheme, from "RECFILES <sd> ... EOT" replies.
+// Guarded by firCacheMutex like everything else the RX path caches.
+#define REC_CACHE_MAX 1024
+static char recFilesCache[REC_CACHE_MAX] = {0};
+static char recFilesPending[REC_CACHE_MAX];
+static size_t recFilesPendingLen = 0;
+static bool collectingRecordings = false;
+static bool recSdPresent = false;
+static bool recSdPending = false;
+
+// Mirror of the Teensy's last "REC STATE" line; recorderState.recording is
+// what locks preset switching. Guarded by firCacheMutex.
+static RecorderState recorderState;
+
 // Per-output result of the last FIR load, from the Teensy's "FIRERR ch code
 // file" lines. A failed load used to be visible only on the Teensy's debug
 // console, so the UI happily showed a channel as FIR-corrected while it was
@@ -297,6 +311,53 @@ void requestFirFilesRefresh() {
     sendToTeensy(CMD_GET_FILES, nullptr);
 }
 
+// --- SD recorder / player state ---
+
+void getRecorderState(RecorderState& out) {
+    xSemaphoreTake(firCacheMutex, portMAX_DELAY);
+    out = recorderState;
+    xSemaphoreGive(firCacheMutex);
+}
+
+bool isRecordingActive() {
+    xSemaphoreTake(firCacheMutex, portMAX_DELAY);
+    const bool active = recorderState.recording;
+    xSemaphoreGive(firCacheMutex);
+    return active;
+}
+
+size_t copyCachedRecordings(char* dst, size_t dstSize) {
+    xSemaphoreTake(firCacheMutex, portMAX_DELAY);
+    size_t len = strlcpy(dst, recFilesCache, dstSize);
+    xSemaphoreGive(firCacheMutex);
+    return len;
+}
+
+bool recordingsSdPresent() {
+    xSemaphoreTake(firCacheMutex, portMAX_DELAY);
+    const bool present = recSdPresent;
+    xSemaphoreGive(firCacheMutex);
+    return present;
+}
+
+void requestRecordingsRefresh() {
+    sendToTeensy(CMD_GET_RECORDINGS, nullptr);
+}
+
+// The Teensy rebooted: whatever was recording or playing died with it. Clear
+// the mirrored state (and with it the preset-switch lock) and tell the UI.
+static void resetRecorderStateAfterReboot() {
+    xSemaphoreTake(firCacheMutex, portMAX_DELAY);
+    const bool wasActive = recorderState.recording || recorderState.playing;
+    recorderState = RecorderState();
+    const RecorderState copy = recorderState;
+    xSemaphoreGive(firCacheMutex);
+    if (wasActive) {
+        broadcastRecorderState(copy);
+    }
+    requestRecordingsRefresh();
+}
+
 // --- FIR load errors ---
 
 void clearFirLoadErrors() {
@@ -381,6 +442,56 @@ static void handleTeensyLine(const char* line) {
         return;
     }
 
+    // "REC ..." recorder/player lines (state, errors, warnings) - see the
+    // recorder section of teensy_protocol.h.
+    if (strncmp(line, "REC ", 4) == 0) {
+        const char* rest = line + 4;
+        if (strncmp(rest, "STATE ", 6) == 0) {
+            int sd = 0, rec = 0, play = 0;
+            char recFile[48], playFile[48];
+            unsigned long recSecs = 0, playSecs = 0, playLen = 0;
+            if (sscanf(rest + 6, "%d %d %47s %lu %d %47s %lu %lu",
+                       &sd, &rec, recFile, &recSecs, &play, playFile,
+                       &playSecs, &playLen) == 8) {
+                xSemaphoreTake(firCacheMutex, portMAX_DELAY);
+                recorderState.sdPresent = sd == 1;
+                recorderState.recording = rec == 1;
+                strlcpy(recorderState.recordFile,
+                        strcmp(recFile, "-") == 0 ? "" : recFile,
+                        sizeof(recorderState.recordFile));
+                recorderState.recordSeconds = recSecs;
+                recorderState.playing = play == 1;
+                strlcpy(recorderState.playFile,
+                        strcmp(playFile, "-") == 0 ? "" : playFile,
+                        sizeof(recorderState.playFile));
+                recorderState.playSeconds = playSecs;
+                recorderState.playLength = playLen;
+                const RecorderState copy = recorderState;
+                xSemaphoreGive(firCacheMutex);
+                broadcastRecorderState(copy);
+            }
+            return;
+        }
+        if (strncmp(rest, "ERR ", 4) == 0) {
+            char code[16] = {0};
+            const char* file = "";
+            const char* space = strchr(rest + 4, ' ');
+            size_t codeLen = space ? (size_t)(space - (rest + 4)) : strlen(rest + 4);
+            if (codeLen >= sizeof(code)) codeLen = sizeof(code) - 1;
+            memcpy(code, rest + 4, codeLen);
+            if (space != nullptr && strcmp(space + 1, "-") != 0) file = space + 1;
+            DebugSerial.printf("Recorder error: %s %s\n", code, file);
+            broadcastRecorderError(code, file);
+            return;
+        }
+        if (strncmp(rest, "WARN ", 5) == 0) {
+            DebugSerial.printf("Recorder warning: %s\n", rest + 5);
+            broadcastRecorderWarning(rest + 5);
+            return;
+        }
+        // Unknown REC line: fall through to the debug log below
+    }
+
     if (collectingFiles) {
         if (strcmp(line, "EOT") == 0) {
             xSemaphoreTake(firCacheMutex, portMAX_DELAY);
@@ -400,9 +511,47 @@ static void handleTeensyLine(const char* line) {
         return;
     }
 
+    if (collectingRecordings) {
+        if (strcmp(line, "EOT") == 0) {
+            xSemaphoreTake(firCacheMutex, portMAX_DELAY);
+            // Only announce actual changes: every GET /recorder triggers a
+            // refresh, and announcing an identical list would make clients
+            // refetch (and so refresh) forever.
+            const bool changed = recSdPresent != recSdPending ||
+                                 strlen(recFilesCache) != recFilesPendingLen ||
+                                 memcmp(recFilesCache, recFilesPending, recFilesPendingLen) != 0;
+            memcpy(recFilesCache, recFilesPending, recFilesPendingLen);
+            recFilesCache[recFilesPendingLen] = '\0';
+            recSdPresent = recSdPending;
+            // The list reply is also the freshest word on card presence
+            recorderState.sdPresent = recSdPending;
+            xSemaphoreGive(firCacheMutex);
+            collectingRecordings = false;
+            if (changed) {
+                broadcastRecordingsChanged();
+                DebugSerial.println("Recordings list updated");
+            }
+        } else {
+            size_t len = strlen(line);
+            if (recFilesPendingLen + len + 1 < sizeof(recFilesPending)) {
+                memcpy(recFilesPending + recFilesPendingLen, line, len);
+                recFilesPendingLen += len;
+                recFilesPending[recFilesPendingLen++] = '\n';
+            }
+        }
+        return;
+    }
+
     if (strcmp(line, "FILES") == 0) {
         collectingFiles = true;
         firFilesPendingLen = 0;
+        return;
+    }
+
+    if (strncmp(line, "RECFILES", 8) == 0 && (line[8] == '\0' || line[8] == ' ')) {
+        collectingRecordings = true;
+        recFilesPendingLen = 0;
+        recSdPending = line[8] == ' ' && line[9] == '1';
         return;
     }
 
@@ -416,6 +565,7 @@ static void handleTeensyLine(const char* line) {
         teensyLastUptime = 0;
         updateTeensyWithActivePresetParameters();
         requestFirFilesRefresh();
+        resetRecorderStateAfterReboot();
         return;
     }
 
@@ -428,6 +578,7 @@ static void handleTeensyLine(const char* line) {
             DebugSerial.println("Teensy reboot detected - re-syncing DSP state");
             updateTeensyWithActivePresetParameters();
             requestFirFilesRefresh();
+            resetRecorderStateAfterReboot();
         }
         lastUptime = uptime;
         return;
@@ -443,9 +594,10 @@ void initTeensyComm() {
     memset(cmdQueue, 0, sizeof(cmdQueue));
     queueMutex = xSemaphoreCreateMutex();
     firCacheMutex = xSemaphoreCreateMutex();
-    // Ask for the file list in case the Teensy was already running when we
+    // Ask for the file lists in case the Teensy was already running when we
     // booted (its boot event would have been missed).
     requestFirFilesRefresh();
+    requestRecordingsRefresh();
 }
 
 void teensyCommLoop() {

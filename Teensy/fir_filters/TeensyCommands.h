@@ -46,6 +46,12 @@
   X(startDelayProbe, handleStartDelayProbe) \
   X(stopDelayProbe, handleStopDelayProbe) \
   X(soloOutput, handleSoloOutput) \
+  X(startRecording, handleStartRecording) \
+  X(stopRecording, handleStopRecording) \
+  X(getRecordings, handleGetRecordings) \
+  X(playRecording, handlePlayRecording) \
+  X(stopPlayback, handleStopPlayback) \
+  X(deleteRecording, handleDeleteRecording) \
   X(setMute, handleSetMute) \
   X(setMutePercent, handleSetMutePercent) \
   X(ping, handlePing)

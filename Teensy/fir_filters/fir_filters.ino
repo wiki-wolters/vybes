@@ -16,6 +16,9 @@
 #include "RtaFFT4096.h"
 #include "ProbeSource.h"
 #include "AsyncAudioInputUSB.h"
+#include "SdRecorder.h"
+#include "SdWavPlayer.h"
+#include "WavFormat.h"
 
 // The .ino prototype generator injects generated prototypes for the sketch's
 // functions partway down the globals below - above where OutputState is
@@ -164,6 +167,16 @@ AudioOutputI2SOct        Analog_Out;
 AudioMixer4              RTA_mixer;
 RtaFFT4096               RTA_fft;
 
+// SD recorder taps (the full mixed stereo input, pre input-EQ, so recordings
+// are independent of preset EQ and master volume) and the SD WAV player,
+// which feeds the aux mixers' input 2 and so plays through the whole input
+// chain like any other source. Mutual exclusion (never record and play at
+// once) is enforced in the handlers; both only ever touch the card from
+// loop() context.
+AudioRecordQueue         recordQueueL;
+AudioRecordQueue         recordQueueR;
+SdWavPlayer              sdPlayer;
+
 // Connections (input stage - fixed, so wired at construction)
 
 // Generator connections
@@ -194,6 +207,14 @@ AudioConnection          patchCord_RightMixerToRTA(Right_mixer, 0, RTA_mixer, 1)
 AudioConnection          patchCord_RTAMixerToFFT(RTA_mixer, 0, RTA_fft, 0);
 AudioConnection          patchCord_SoloToFFT; // bound to xover[solo] on demand
 
+// Recorder tap and player injection points
+AudioConnection          patchCord_LeftMixerToRec(Left_mixer, 0, recordQueueL, 0);
+AudioConnection          patchCord_RightMixerToRec(Right_mixer, 0, recordQueueR, 0);
+AudioConnection          patchCord_PlayerToLeftAux(sdPlayer, 0, Left_Aux_mixer, 2);
+AudioConnection          patchCord_PlayerToRightAux(sdPlayer, 1, Right_Aux_mixer, 2);
+
+SdRecorder               sdRecorder(recordQueueL, recordQueueR);
+
 // Input EQ patchcords
 AudioConnection patchCord_LeftMixerToPreEQ(Left_mixer, 0, Left_Pre_EQ_amp, 0);
 AudioConnection patchCord_RightMixerToPreEQ(Right_mixer, 0, Right_Pre_EQ_amp, 0);
@@ -212,6 +233,11 @@ AudioConnection spdifCords[2];              // outputs 0/1 -> SPDIF
 const int CURRENT_VERSION = 4;
 bool sdCardInitialized = false;
 bool firFilesPending = false;
+
+// Set by the recorder/player command handlers so recorderStatusLoop() sends
+// a fresh "REC STATE" line on its next pass instead of waiting for the 1Hz
+// change poll.
+bool recStateDirty = false;
 
 // --- audio hold (see CMD_SET_CONFIG_HOLD in teensy_protocol.h) ---
 // Two independent sources; audio is silent while either is asserted.
@@ -428,6 +454,14 @@ void setup() {
   Generator_mixer.gain(2, 0.0f);
   Generator_mixer.gain(3, 0.0f);
 
+  // Aux mixer input 2 carries the SD player at unity (it transmits nothing
+  // while idle); input 3 is unused. Both default to 1.0 and must be set
+  // explicitly.
+  Left_Aux_mixer.gain(2, 1.0f);
+  Left_Aux_mixer.gain(3, 0.0f);
+  Right_Aux_mixer.gain(2, 1.0f);
+  Right_Aux_mixer.gain(3, 0.0f);
+
   // RTA tap: equal L+R mix, idle until the UI asks for it
   RTA_mixer.gain(0, 0.5);
   RTA_mixer.gain(1, 0.5);
@@ -614,6 +648,9 @@ void loop() {
   probeLoop();
   outputSoloLoop();
   outputPadLoop();
+  sdRecorder.service();
+  sdPlayer.service();
+  recorderStatusLoop();
 }
 
 // Clear a stale output solo once the ESP's keepalives stop arriving.
@@ -920,6 +957,13 @@ void startDelayProbe(int mask, float levelPercent) {
     return;
   }
   if (probeActive) probeCleanup(nullptr); // implicit clean restart
+
+  // The probe needs silence between chirps; SD playback rides the aux
+  // mixer's input 2, which the probe's input muting leaves open.
+  if (sdPlayer.isActive()) {
+    sdPlayer.stop();
+    recStateDirty = true;
+  }
 
   probeChirps = 2 * count;
   for (int i = 0; i < count; i++) {
@@ -1531,6 +1575,15 @@ void handleSetFIREnabled(const String& command, String* args, int argCount, Outp
 }
 
 void handleLoadFirFiles(const String& command, String* args, int argCount, OutputStream& stream) {
+  // The ESP locks preset switches and FIR edits while a recording runs, so
+  // this only fires if something bypassed that lock. A FIR load stalls
+  // loop() longer than the record queues can buffer - stop the recording
+  // cleanly instead of shipping a glitched file.
+  if (sdRecorder.isActive()) {
+    sdRecorder.stop();
+    Serial1.print("REC WARN stopped firload\n");
+    recStateDirty = true;
+  }
   firFilesPending = true;
   // The load itself happens in loop() and reads from SD, which can take
   // seconds. Stay silent across it rather than play the new preset's gains
@@ -1764,4 +1817,186 @@ void handlePing(const String& command, String* args, int argCount, OutputStream&
   char buffer[24];
   int len = snprintf(buffer, sizeof(buffer), "PONG %lu\n", (unsigned long)millis());
   stream.write(buffer, len);
+}
+
+// --- SD recorder / player ---
+// Protocol (teensy_protocol.h): unsolicited status goes to the ESP as
+//   REC STATE <sd> <rec> <recFile|-> <recSecs> <play> <playFile|-> <pos> <len>
+//   REC ERR <code> <file|->     (nosd, busy, badname, mkdir, full, create,
+//                                write, notfound, format, delete)
+//   REC WARN <what>             (overrun, stopped firload)
+// and the recordings list as "RECFILES <sd>" ... "EOT".
+
+// The recordings list, one "name bytes seconds" line per file. Sent in reply
+// to getRecordings and unsolicited whenever the set changes (a recording
+// finished, a file was deleted) so the ESP's cache stays fresh.
+void sendRecordingsList() {
+  const bool sd = sdReady();
+  Serial1.printf("RECFILES %d\n", sd ? 1 : 0);
+  if (sd) {
+    File dir = SD.open(RECORDINGS_DIR);
+    if (dir && dir.isDirectory()) {
+      File f = dir.openNextFile();
+      while (f) {
+        // Skip dotfiles for the same reason handleGetFiles does (macOS
+        // AppleDouble sidecars on removable media)
+        if (!f.isDirectory() && f.name()[0] != '.') {
+          unsigned long size = (unsigned long)f.size();
+          // Seconds assume our own canonical 44-byte header; foreign WAVs
+          // dropped into the directory come out approximate, which the
+          // player's own parse corrects at play time.
+          unsigned long secs = 0;
+          if (size > WavFormat::HEADER_BYTES) {
+            secs = (size - WavFormat::HEADER_BYTES) /
+                   (4UL * (unsigned long)AUDIO_SAMPLE_RATE);
+          }
+          Serial1.printf("%s %lu %lu\n", f.name(), size, secs);
+        }
+        f.close();
+        f = dir.openNextFile();
+      }
+    }
+    if (dir) dir.close();
+  }
+  Serial1.print("EOT\n");
+}
+
+// One "REC STATE" line on every state change, which includes the once-a-
+// second tick of a running recording's or playback's position. Idle, this
+// sends only when the SD card comes or goes.
+void recorderStatusLoop() {
+  static bool lastSd = false, lastRec = false, lastPlay = false;
+  static uint32_t lastRecSec = 0, lastPlaySec = 0;
+  static unsigned long lastPollMs = 0;
+
+  if (sdPlayer.consumeFinishedEvent()) recStateDirty = true;
+  const char* err = sdRecorder.consumeError();
+  if (err != nullptr) {
+    // A write failure has already ended the recording (finalized as far as
+    // the card allowed)
+    Serial1.printf("REC ERR %s %s\n", err,
+                   sdRecorder.fileName()[0] ? sdRecorder.fileName() : "-");
+    recStateDirty = true;
+  }
+  if (sdRecorder.consumeOverrunWarning()) {
+    Serial1.print("REC WARN overrun\n");
+  }
+
+  if (!recStateDirty && millis() - lastPollMs < 1000) return;
+  lastPollMs = millis();
+
+  const bool sd = sdReady();
+  const bool rec = sdRecorder.isActive();
+  const bool play = sdPlayer.isActive();
+  const uint32_t recSec = rec ? sdRecorder.seconds() : 0;
+  const uint32_t playSec = play ? sdPlayer.positionSeconds() : 0;
+
+  if (!recStateDirty && sd == lastSd && rec == lastRec && play == lastPlay &&
+      recSec == lastRecSec && playSec == lastPlaySec) {
+    return;
+  }
+
+  // A recording that just ended - stopped, failed, or bumped by a FIR load -
+  // put a new file on the card
+  if (lastRec && !rec) sendRecordingsList();
+
+  lastSd = sd;
+  lastRec = rec;
+  lastPlay = play;
+  lastRecSec = recSec;
+  lastPlaySec = playSec;
+  recStateDirty = false;
+
+  Serial1.printf("REC STATE %d %d %s %lu %d %s %lu %lu\n",
+                 sd ? 1 : 0, rec ? 1 : 0,
+                 rec && sdRecorder.fileName()[0] ? sdRecorder.fileName() : "-",
+                 (unsigned long)recSec, play ? 1 : 0,
+                 play && sdPlayer.fileName()[0] ? sdPlayer.fileName() : "-",
+                 (unsigned long)playSec,
+                 (unsigned long)(play ? sdPlayer.lengthSeconds() : 0));
+}
+
+// A recording name from the ESP must be a bare filename - no paths, no
+// dotfiles. Filenames can't contain spaces (the router splits on them), so
+// a valid name always arrives as exactly one argument.
+static bool validRecordingName(const String& n) {
+  if (n.length() == 0 || n.length() >= 48) return false;
+  if (n[0] == '.') return false;
+  if (n.indexOf('/') >= 0 || n.indexOf('\\') >= 0) return false;
+  return true;
+}
+
+void handleStartRecording(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (!sdReady()) {
+    Serial1.print("REC ERR nosd -\n");
+    return;
+  }
+  // Recording and playback both stream the card; one at a time
+  if (sdPlayer.isActive()) sdPlayer.stop();
+  const char* err = sdRecorder.start();
+  if (err != nullptr) {
+    Serial1.printf("REC ERR %s -\n", err);
+  }
+  recStateDirty = true;
+}
+
+void handleStopRecording(const String& command, String* args, int argCount, OutputStream& stream) {
+  sdRecorder.stop();
+  recStateDirty = true; // recorderStatusLoop sends the fresh list on the rec->idle edge
+}
+
+void handleGetRecordings(const String& command, String* args, int argCount, OutputStream& stream) {
+  sendRecordingsList();
+}
+
+void handlePlayRecording(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount != 1 || !validRecordingName(args[0])) {
+    Serial1.print("REC ERR badname -\n");
+    return;
+  }
+  if (sdRecorder.isActive()) {
+    Serial1.printf("REC ERR busy %s\n", args[0].c_str());
+    return;
+  }
+  if (!sdReady()) {
+    Serial1.print("REC ERR nosd -\n");
+    return;
+  }
+  char path[80];
+  snprintf(path, sizeof(path), RECORDINGS_DIR "/%s", args[0].c_str());
+  const char* err = nullptr;
+  if (!sdPlayer.play(path, &err)) {
+    Serial1.printf("REC ERR %s %s\n", err, args[0].c_str());
+  }
+  recStateDirty = true;
+}
+
+void handleStopPlayback(const String& command, String* args, int argCount, OutputStream& stream) {
+  sdPlayer.stop();
+  recStateDirty = true;
+}
+
+void handleDeleteRecording(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount != 1 || !validRecordingName(args[0])) {
+    Serial1.print("REC ERR badname -\n");
+    return;
+  }
+  if (sdRecorder.isActive()) {
+    Serial1.printf("REC ERR busy %s\n", args[0].c_str());
+    return;
+  }
+  if (!sdReady()) {
+    Serial1.print("REC ERR nosd -\n");
+    return;
+  }
+  if (sdPlayer.isActive() && strcmp(sdPlayer.fileName(), args[0].c_str()) == 0) {
+    sdPlayer.stop();
+  }
+  char path[80];
+  snprintf(path, sizeof(path), RECORDINGS_DIR "/%s", args[0].c_str());
+  if (!SD.remove(path)) {
+    Serial1.printf("REC ERR delete %s\n", args[0].c_str());
+  }
+  sendRecordingsList();
+  recStateDirty = true;
 }

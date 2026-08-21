@@ -141,6 +141,32 @@
 #define PROBE_F0_HZ 60.0
 #define PROBE_F1_HZ 8000.0
 
+// SD recorder / player. Recordings live in /recordings on the Teensy's SD
+// card as 16-bit 44.1kHz stereo WAVs named rec-NNN.wav; filenames on the
+// wire are bare names (no paths). Only available while a card is present,
+// and never both directions at once (the handlers enforce it).
+//   startRecording               starts a new auto-named recording
+//   stopRecording                finalizes and closes it
+//   getRecordings                replies "RECFILES <sd 0|1>", one
+//                                "name bytes seconds" line per file, "EOT"
+//   playRecording <name>         plays through the input chain (aux input 2)
+//   stopPlayback
+//   deleteRecording <name>
+// Unsolicited status lines (also sent in reply to the commands above):
+//   REC STATE <sd> <rec> <recFile|-> <recSecs> <play> <playFile|-> <pos> <len>
+//     - on every change, which includes a 1Hz position tick while active
+//   REC ERR <code> <file|->      nosd, busy, badname, mkdir, full, create,
+//                                write, notfound, format, delete
+//   REC WARN <what>              overrun (loop stalled past the ~150ms the
+//                                record queues buffer), stopped firload
+// A fresh RECFILES list follows any change to the set of recordings.
+#define CMD_START_RECORDING "startRecording"
+#define CMD_STOP_RECORDING "stopRecording"
+#define CMD_GET_RECORDINGS "getRecordings"
+#define CMD_PLAY_RECORDING "playRecording"
+#define CMD_STOP_PLAYBACK "stopPlayback"
+#define CMD_DELETE_RECORDING "deleteRecording"
+
 // System Commands
 #define CMD_SET_MUTE "setMute"
 #define CMD_SET_MUTE_PERCENT "setMutePercent"

@@ -71,4 +71,33 @@ long getCachedFirFileSize(const char* name);
 // call from any task.
 long getCachedFirFileTaps(const char* name);
 
+// --- SD recorder / player (see the recorder section of teensy_protocol.h) ---
+
+// Mirror of the Teensy's last "REC STATE" line. Recording names are
+// "rec-NNN.wav"; 48 covers anything the Teensy accepts on the wire.
+struct RecorderState {
+    bool sdPresent = false;
+    bool recording = false;
+    char recordFile[48] = "";
+    uint32_t recordSeconds = 0;
+    bool playing = false;
+    char playFile[48] = "";
+    uint32_t playSeconds = 0;
+    uint32_t playLength = 0;
+};
+
+// Copy the current recorder state under the cache lock. Safe from any task.
+void getRecorderState(RecorderState& out);
+
+// True while a recording is running - the gate for preset switches, FIR
+// edits and restores (a FIR load stalls the Teensy's loop() longer than its
+// record queues can buffer). Safe from any task.
+bool isRecordingActive();
+
+// The cached recordings list ("name bytes seconds" lines, like the FIR
+// cache) and its SD flag, refreshed asynchronously from "RECFILES" replies.
+size_t copyCachedRecordings(char* dst, size_t dstSize);
+bool recordingsSdPresent();
+void requestRecordingsRefresh();
+
 #endif // TEENSY_COMM_H

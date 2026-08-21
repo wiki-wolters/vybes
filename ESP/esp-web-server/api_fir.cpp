@@ -205,6 +205,12 @@ esp_err_t handlePutPresetFirEnabled(PsychicRequest *request) {
         return request->reply(404, "text/plain", "Preset not found");
     }
 
+    // Toggling FIR on the active preset triggers a FIR load on the Teensy,
+    // whose SD reads would glitch a running recording.
+    if (presetIndex == current_config.active_preset_index && isRecordingActive()) {
+        return request->reply(409, "text/plain", "FIR changes are locked while recording");
+    }
+
     // Update the FIR filter enabled state
     bool enabled = (state == "on");
     {

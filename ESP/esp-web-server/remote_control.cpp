@@ -6,6 +6,7 @@
 #include "api_presets.h"
 #include "utilities.h"
 #include "websocket.h"
+#include "teensy_comm.h"
 #include <ArduinoJson.h>
 #include <IRremoteESP8266.h>
 #include <IRrecv.h>
@@ -199,6 +200,10 @@ static int findAdjacentPreset(int from, int step) {
 }
 
 void RemoteControl::next_preset() {
+    if (isRecordingActive()) {
+        writeToScreen("Presets locked\nwhile recording", 2000);
+        return;
+    }
     int index = findAdjacentPreset(_selected_preset_index, +1);
     if (index == -1) {
         return; // no presets in use
@@ -209,6 +214,10 @@ void RemoteControl::next_preset() {
 }
 
 void RemoteControl::previous_preset() {
+    if (isRecordingActive()) {
+        writeToScreen("Presets locked\nwhile recording", 2000);
+        return;
+    }
     int index = findAdjacentPreset(_selected_preset_index, -1);
     if (index == -1) {
         return; // no presets in use
@@ -219,6 +228,12 @@ void RemoteControl::previous_preset() {
 }
 
 void RemoteControl::apply_preset() {
+    // A recording may have started while a selection was pending
+    if (isRecordingActive()) {
+        _selected_preset_index = current_config.active_preset_index;
+        _preset_selection_time = 0;
+        return;
+    }
     if (_selected_preset_index != current_config.active_preset_index) {
         current_config.active_preset_index = _selected_preset_index;
         updateTeensyWithActivePresetParameters();

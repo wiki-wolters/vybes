@@ -4,6 +4,7 @@
 #include "screen.h"
 #include "websocket.h"
 #include "utilities.h"
+#include "teensy_comm.h"
 #include <Wire.h>
 #include <ArduinoJson.h>
 #include <string.h>
@@ -61,6 +62,12 @@ void handleShortPress() {
             lastButtonScreenUpdateTime = millis();
         }
     } else {
+        // Preset switching is locked while a recording runs (a switch's FIR
+        // load would glitch it) - show why instead of cycling
+        if (isRecordingActive()) {
+            writeToScreen("Presets locked\nwhile recording", 2000);
+            return;
+        }
         // Backlight is on, so cycle to next preset
         nextPreset(); // Update the preset index
         if (millis() - lastButtonScreenUpdateTime > BUTTON_SCREEN_UPDATE_INTERVAL) {
@@ -103,6 +110,12 @@ void handleButton() {
     }
 
     if (lastButtonPressTime > 0 && millis() - lastButtonPressTime > 1000) {
+        // A recording may have started while a cycled selection was pending
+        if (isRecordingActive()) {
+            currentPresetIndex = current_config.active_preset_index;
+            lastButtonPressTime = 0;
+            return;
+        }
         if (currentPresetIndex != current_config.active_preset_index) {
             current_config.active_preset_index = currentPresetIndex;
             updateTeensyWithActivePresetParameters();

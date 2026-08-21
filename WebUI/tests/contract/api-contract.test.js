@@ -763,6 +763,98 @@ describe('FIR filters', () => {
   })
 })
 
+// ===== SD recorder / player =====
+// State changes are asynchronous on the device (commands are acknowledged
+// immediately, the new state arrives as recorderState broadcasts), so the
+// mutation tests assert the broadcasts. Mutations are mock-only: against a
+// real device they would write its SD card and lock its presets.
+
+describe('SD recorder', () => {
+  let ws
+
+  beforeAll(async () => {
+    ws = await connectWs(t.wsUrl)
+  })
+
+  afterAll(async () => {
+    if (ws) ws.close()
+    // Never leave a mock recording running: it would lock preset switching
+    // for every later test in the suite
+    await POST('/recorder/record/stop')
+    await POST('/recorder/play/stop')
+  })
+
+  it('GET /recorder returns the state + files shape', async () => {
+    const res = await GET('/recorder')
+    expect(res.status).toBe(200)
+    expect(typeof res.json.sdPresent).toBe('boolean')
+    expect(typeof res.json.recording.active).toBe('boolean')
+    expect(typeof res.json.playback.active).toBe('boolean')
+    expect(Array.isArray(res.json.files)).toBe(true)
+    for (const f of res.json.files) {
+      expect(typeof f.name).toBe('string')
+      expect(typeof f.size).toBe('number')
+      expect(typeof f.seconds).toBe('number')
+    }
+  })
+
+  itMockOnly('record start/stop broadcasts state and grows the list', async () => {
+    const started = ws.expect((m) => m.messageType === 'recorderState' && m.recording.active)
+    expect((await POST('/recorder/record/start')).status).toBe(200)
+    const state = await started
+    expect(state.recording.file).toMatch(/^rec-\d{3}\.wav$/)
+    const newFile = state.recording.file
+
+    // The lock: preset switches and deletes refuse while recording
+    expect((await PUT(`/preset/active?name=${enc(P)}`)).status).toBe(409)
+    expect((await DEL(`/preset?name=${enc(P)}`)).status).toBe(409)
+    expect((await POST(`/recorder/play?name=${enc('rec-001.wav')}`)).status).toBe(409)
+    expect((await DEL(`/recorder/file?name=${enc('rec-001.wav')}`)).status).toBe(409)
+
+    const stopped = ws.expect((m) => m.messageType === 'recorderState' && !m.recording.active)
+    const changed = ws.expect((m) => m.messageType === 'recordingsChanged')
+    expect((await POST('/recorder/record/stop')).status).toBe(200)
+    await stopped
+    await changed
+
+    const files = (await GET('/recorder')).json.files
+    expect(files.some((f) => f.name === newFile)).toBe(true)
+  })
+
+  itMockOnly('playback runs a position and stops on demand', async () => {
+    const playing = ws.expect((m) => m.messageType === 'recorderState' && m.playback.active)
+    expect((await POST(`/recorder/play?name=${enc('rec-001.wav')}`)).status).toBe(200)
+    const state = await playing
+    expect(state.playback.file).toBe('rec-001.wav')
+    expect(state.playback.length).toBeGreaterThan(0)
+
+    const stopped = ws.expect((m) => m.messageType === 'recorderState' && !m.playback.active)
+    expect((await POST('/recorder/play/stop')).status).toBe(200)
+    await stopped
+  })
+
+  itMockOnly('delete removes the file and announces the change', async () => {
+    // Record something disposable first
+    const started = ws.expect((m) => m.messageType === 'recorderState' && m.recording.active)
+    await POST('/recorder/record/start')
+    const name = (await started).recording.file
+    const stopped = ws.expect((m) => m.messageType === 'recorderState' && !m.recording.active)
+    await POST('/recorder/record/stop')
+    await stopped
+
+    const changed = ws.expect((m) => m.messageType === 'recordingsChanged')
+    expect((await DEL(`/recorder/file?name=${enc(name)}`)).status).toBe(200)
+    await changed
+    const files = (await GET('/recorder')).json.files
+    expect(files.some((f) => f.name === name)).toBe(false)
+  })
+
+  it('missing name is 400 on play and delete', async () => {
+    expect((await POST('/recorder/play')).status).toBe(400)
+    expect((await DEL('/recorder/file')).status).toBe(400)
+  })
+})
+
 // ===== V1: templates =====
 
 describe('GET /templates', () => {

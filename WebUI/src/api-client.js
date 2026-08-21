@@ -460,6 +460,37 @@ class VybesAPI {
     return this.request('PUT', `/gains/input`, gains);
   }
 
+  // ===== SD RECORDER / PLAYER =====
+  // Commands are asynchronous: the device replies "requested" immediately
+  // and the resulting state arrives as recorderState websocket messages.
+
+  /** Full recorder state + recordings list (served from the ESP's cache) */
+  async getRecorder() {
+    return this.request('GET', '/recorder');
+  }
+
+  /** Start recording the stereo input to a new auto-named file */
+  async startRecording() {
+    return this.request('POST', '/recorder/record/start');
+  }
+
+  async stopRecording() {
+    return this.request('POST', '/recorder/record/stop');
+  }
+
+  /** Play a recording through the input chain */
+  async playRecording(name) {
+    return this.request('POST', `/recorder/play?name=${encodeURIComponent(name)}`);
+  }
+
+  async stopRecordingPlayback() {
+    return this.request('POST', '/recorder/play/stop');
+  }
+
+  async deleteRecording(name) {
+    return this.request('DELETE', `/recorder/file?name=${encodeURIComponent(name)}`);
+  }
+
   // ===== WEBSOCKET LIVE UPDATES =====
 
   _setConnectionState(state) {

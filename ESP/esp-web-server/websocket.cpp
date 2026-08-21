@@ -194,6 +194,53 @@ void broadcastFirLoadError(const char* presetName, int output,
     broadcastWebSocket(out.c_str());
 }
 
+// Full recorder/player snapshot, sent on every Teensy REC STATE line (at
+// most 1Hz while a recording or playback runs).
+void broadcastRecorderState(const RecorderState& state) {
+    if (totalClients() == 0) return;
+    JsonDocument doc;
+    doc["messageType"] = "recorderState";
+    doc["sdPresent"] = state.sdPresent;
+    JsonObject rec = doc.createNestedObject("recording");
+    rec["active"] = state.recording;
+    rec["file"] = state.recordFile;
+    rec["seconds"] = state.recordSeconds;
+    JsonObject play = doc.createNestedObject("playback");
+    play["active"] = state.playing;
+    play["file"] = state.playFile;
+    play["seconds"] = state.playSeconds;
+    play["length"] = state.playLength;
+    String out;
+    serializeJson(doc, out);
+    broadcastWebSocket(out.c_str());
+}
+
+void broadcastRecorderError(const char* code, const char* file) {
+    if (totalClients() == 0) return;
+    JsonDocument doc;
+    doc["messageType"] = "recorderError";
+    doc["code"] = code;
+    doc["file"] = file;
+    String out;
+    serializeJson(doc, out);
+    broadcastWebSocket(out.c_str());
+}
+
+void broadcastRecorderWarning(const char* detail) {
+    if (totalClients() == 0) return;
+    JsonDocument doc;
+    doc["messageType"] = "recorderWarning";
+    doc["detail"] = detail;
+    String out;
+    serializeJson(doc, out);
+    broadcastWebSocket(out.c_str());
+}
+
+void broadcastRecordingsChanged() {
+    if (totalClients() == 0) return;
+    broadcastWebSocket("{\"messageType\":\"recordingsChanged\"}");
+}
+
 // Forward one GRM frame (the hex payload after "GRM ") to all clients.
 // Called from teensyCommLoop at ~10Hz while meters are streaming.
 void broadcastGrmFrame(const char* hexData) {

@@ -33,6 +33,15 @@ void broadcastProbeEvent(const char* line);
 void broadcastFirLoadError(const char* presetName, int output,
                            const char* code, const char* file);
 
+// SD recorder/player updates (mirrored from the Teensy's REC lines):
+// the full state snapshot, a one-shot error (code per teensy_protocol.h),
+// a warning, and "the set of recordings changed - refetch the list".
+struct RecorderState; // teensy_comm.h
+void broadcastRecorderState(const RecorderState& state);
+void broadcastRecorderError(const char* code, const char* file);
+void broadcastRecorderWarning(const char* detail);
+void broadcastRecordingsChanged();
+
 // Tracks client interest in RTA frames and relays it to the Teensy.
 // Call from loop().
 void websocketLoop();

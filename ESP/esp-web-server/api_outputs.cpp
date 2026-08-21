@@ -530,6 +530,12 @@ esp_err_t handlePutOutputFir(PsychicRequest *request) {
     esp_err_t result;
     if (!getOutputRequest(request, ctx, result)) return result;
 
+    // Changing the active preset's FIR files triggers a FIR load on the
+    // Teensy, whose SD reads would glitch a running recording.
+    if (isActivePreset(ctx) && isRecordingActive()) {
+        return request->reply(409, "text/plain", "FIR changes are locked while recording");
+    }
+
     if (!request->hasParam("file")) {
         return request->reply(400, "text/plain", "Missing file parameter");
     }

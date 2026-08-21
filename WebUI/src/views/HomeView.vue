@@ -29,9 +29,12 @@
               v-for="preset in presets"
               :key="preset.name"
               @click="setActivePreset(preset.name)"
+              :disabled="recorder.isRecording && !preset.isCurrent"
+              :title="recorder.isRecording && !preset.isCurrent ? 'Preset switching is locked while recording' : undefined"
               :class="[
                 'preset-button',
-                preset.isCurrent ? 'preset-active' : 'preset-inactive'
+                preset.isCurrent ? 'preset-active' : 'preset-inactive',
+                recorder.isRecording && !preset.isCurrent ? 'preset-locked' : ''
               ]"
             >
               {{ preset.name }}
@@ -161,6 +164,9 @@
 
         <!-- Mixed-input multiband compressor -->
         <DynamicsCard />
+
+        <!-- SD recorder (only rendered while the device has a card) -->
+        <RecorderCard />
       </div>
 
       <!-- Device configuration: whole-device backup, not per-preset -->
@@ -172,7 +178,14 @@
           </p>
           <div class="flex flex-wrap gap-3">
             <button @click="backupConfiguration" class="btn-secondary">Backup</button>
-            <button @click="restoreConfiguration" class="btn-secondary">Restore</button>
+            <button
+              @click="restoreConfiguration"
+              class="btn-secondary"
+              :disabled="recorder.isRecording"
+              :title="recorder.isRecording ? 'Locked while recording' : undefined"
+            >
+              Restore
+            </button>
           </div>
         </CardSection>
       </div>
@@ -208,11 +221,15 @@ import ModalDialog from '../components/shared/ModalDialog.vue';
 import ToggleSwitch from '../components/shared/ToggleSwitch.vue';
 import TemplateSelect from '../components/shared/TemplateSelect.vue';
 import DynamicsCard from '../components/DynamicsCard.vue';
+import RecorderCard from '../components/RecorderCard.vue';
 import { useSystemStore } from '../stores/system.js';
+import { useRecorderStore } from '../stores/recorder.js';
 
 const router = useRouter();
 // Dim lives in the shared store so the top bar can show it from any page
 const system = useSystemStore();
+// Recording locks the preset buttons (a switch's FIR load would glitch it)
+const recorder = useRecorderStore();
 
 // State
 const isLoading = ref(true);
@@ -329,6 +346,9 @@ function updateVolume(newValue) {
 
 // Preset management
 async function setActivePreset(presetName) {
+  // The device refuses this with 409 while recording; the disabled buttons
+  // make the lock visible, this guard just avoids a pointless request.
+  if (recorder.isRecording) return;
   try {
     await apiClient.setActivePreset(presetName);
     // Update local state
@@ -548,6 +568,10 @@ function restoreConfiguration() {
 
 .preset-add {
   @apply bg-transparent text-vybes-text-secondary border-2 border-dashed border-vybes-border hover:border-vybes-accent hover:text-vybes-accent;
+}
+
+.preset-locked {
+  @apply opacity-40 cursor-not-allowed hover:bg-vybes-dark-card;
 }
 
 .preset-controls {

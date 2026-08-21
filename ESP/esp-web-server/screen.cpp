@@ -2,6 +2,8 @@
 #include <Wire.h>
 #include <Arduino.h>
 #include <LiquidCrystal_PCF8574.h>
+#include "config.h"
+#include "teensy_comm.h"
 
 // Screen is 1602 LCD via I2C with PCF8574 backpack
 LiquidCrystal_PCF8574 lcd(0x27); // Default I2C address 0x27
@@ -13,16 +15,25 @@ unsigned long messageDuration = 0;
 unsigned long backlightStart = 0;
 String currentMessage = "";
 
-void setupScreen() {    
+// Custom glyph slot for the recording dot ("\x01" in messages; slot 0 would
+// terminate the String).
+#define REC_DOT_CHAR 1
+
+void setupScreen() {
     // Try to initialize the LCD
     lcd.begin(16, 2);  // Initialize for 16x2 display
     lcd.setBacklight(0);  // Turn off backlight initially
     lcd.clear();
-    
+
+    // Recording dot glyph
+    byte recDot[8] = {0b00000, 0b01110, 0b11111, 0b11111,
+                      0b11111, 0b01110, 0b00000, 0b00000};
+    lcd.createChar(REC_DOT_CHAR, recDot);
+
     // Display a test message
     lcd.setCursor(0, 0);
     lcd.print("Vybes starting"); // 16x2 display: keep within 16 chars
-    
+
     // Store empty string as current message
     currentMessage = "";
 }
@@ -64,7 +75,41 @@ void restartBacklightTimer() {
     }
 }
 
+// While a recording runs, hold "<dot> REC mm:ss" + filename as the
+// persistent message. Rewriting it on each elapsed-seconds tick also feeds
+// the backlight timer, so the display stays lit for the whole recording;
+// timed messages (volume changes, lock notices) still overlay it and fall
+// back to it when they expire.
+static void updateRecordingMessage() {
+    static bool wasRecording = false;
+    static uint32_t lastShownSeconds = UINT32_MAX;
+
+    RecorderState rs;
+    getRecorderState(rs);
+
+    if (rs.recording) {
+        wasRecording = true;
+        if (messageDuration == 0 && rs.recordSeconds != lastShownSeconds) {
+            lastShownSeconds = rs.recordSeconds;
+            char line[40];
+            uint32_t mins = rs.recordSeconds / 60;
+            uint32_t secs = rs.recordSeconds % 60;
+            snprintf(line, sizeof(line), "\x01 REC %lu:%02lu\n%s",
+                     (unsigned long)mins, (unsigned long)secs, rs.recordFile);
+            writeToScreen(String(line));
+        }
+    } else if (wasRecording) {
+        // Recording ended: fall back to the active preset name, then let the
+        // normal backlight timeout run its course
+        wasRecording = false;
+        lastShownSeconds = UINT32_MAX;
+        writeToScreen(current_config.presets[current_config.active_preset_index].name);
+    }
+}
+
 void loopScreen() {
+    updateRecordingMessage();
+
     // This function handles timed messages
     if (messageDuration > 0 && (millis() - messageStart) > messageDuration) {
         // Only clear and rewrite if we have a current message

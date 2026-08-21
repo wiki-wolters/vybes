@@ -754,6 +754,129 @@ app.put('/gains/input', async (req, res) => {
   }
 });
 
+// ===== SD recorder / player — api_recorder.cpp =====
+// In-memory only: recordings "grow" a second at a time and playback runs a
+// mock position. Set MOCK_NO_SD=1 to simulate a device without a card (the
+// UI should hide the recorder card entirely).
+
+const recorder = {
+  sdPresent: process.env.MOCK_NO_SD !== '1',
+  recording: { active: false, file: '', seconds: 0 },
+  playback: { active: false, file: '', seconds: 0, length: 0 },
+  files: [
+    { name: 'rec-001.wav', size: 10584044, seconds: 60 },
+    { name: 'rec-002.wav', size: 3175244, seconds: 18 },
+  ],
+  nextIndex: 3,
+  timer: null,
+};
+
+function broadcastRecorderState() {
+  broadcast({
+    messageType: 'recorderState',
+    sdPresent: recorder.sdPresent,
+    recording: { ...recorder.recording },
+    playback: { ...recorder.playback },
+  });
+}
+
+// 1Hz position tick while recording or playing, like the Teensy's REC STATE
+function ensureRecorderTimer() {
+  const active = recorder.recording.active || recorder.playback.active;
+  if (active && !recorder.timer) {
+    recorder.timer = setInterval(() => {
+      if (recorder.recording.active) recorder.recording.seconds += 1;
+      if (recorder.playback.active) {
+        recorder.playback.seconds += 1;
+        if (recorder.playback.seconds >= recorder.playback.length) {
+          recorder.playback = { active: false, file: '', seconds: 0, length: 0 };
+        }
+      }
+      broadcastRecorderState();
+      ensureRecorderTimer();
+    }, 1000);
+  } else if (!active && recorder.timer) {
+    clearInterval(recorder.timer);
+    recorder.timer = null;
+  }
+}
+
+app.get('/recorder', (req, res) => {
+  res.json({
+    sdPresent: recorder.sdPresent,
+    recording: { ...recorder.recording },
+    playback: { ...recorder.playback },
+    files: recorder.files.map(f => ({ ...f })),
+  });
+});
+
+app.post('/recorder/record/start', (req, res) => {
+  if (!recorder.sdPresent) {
+    return res.status(409).send('No SD card in the Teensy');
+  }
+  if (!recorder.recording.active) {
+    // Recording and playback both stream the card; one at a time
+    recorder.playback = { active: false, file: '', seconds: 0, length: 0 };
+    const name = `rec-${String(recorder.nextIndex++).padStart(3, '0')}.wav`;
+    recorder.recording = { active: true, file: name, seconds: 0 };
+    ensureRecorderTimer();
+    broadcastRecorderState();
+  }
+  res.json({ status: 'requested' });
+});
+
+app.post('/recorder/record/stop', (req, res) => {
+  if (recorder.recording.active) {
+    const { file, seconds } = recorder.recording;
+    recorder.files.push({ name: file, size: 44 + seconds * 176400, seconds });
+    recorder.recording = { active: false, file: '', seconds: 0 };
+    ensureRecorderTimer();
+    broadcastRecorderState();
+    broadcast({ messageType: 'recordingsChanged' });
+  }
+  res.json({ status: 'requested' });
+});
+
+app.post('/recorder/play', (req, res) => {
+  const name = req.query.name;
+  if (!name) return res.status(400).send('Missing name parameter');
+  if (recorder.recording.active) {
+    return res.status(409).send('Recording in progress');
+  }
+  const file = recorder.files.find(f => f.name === name);
+  if (!file) {
+    broadcast({ messageType: 'recorderError', code: 'notfound', file: name });
+    return res.json({ status: 'requested' });
+  }
+  recorder.playback = { active: true, file: name, seconds: 0, length: file.seconds };
+  ensureRecorderTimer();
+  broadcastRecorderState();
+  res.json({ status: 'requested' });
+});
+
+app.post('/recorder/play/stop', (req, res) => {
+  recorder.playback = { active: false, file: '', seconds: 0, length: 0 };
+  ensureRecorderTimer();
+  broadcastRecorderState();
+  res.json({ status: 'requested' });
+});
+
+app.delete('/recorder/file', (req, res) => {
+  const name = req.query.name;
+  if (!name) return res.status(400).send('Missing name parameter');
+  if (recorder.recording.active) {
+    return res.status(409).send('Recording in progress');
+  }
+  if (recorder.playback.active && recorder.playback.file === name) {
+    recorder.playback = { active: false, file: '', seconds: 0, length: 0 };
+    ensureRecorderTimer();
+    broadcastRecorderState();
+  }
+  recorder.files = recorder.files.filter(f => f.name !== name);
+  broadcast({ messageType: 'recordingsChanged' });
+  res.json({ status: 'requested' });
+});
+
 // ===== Templates =====
 
 app.get('/templates', (req, res) => {
@@ -896,6 +1019,11 @@ app.put('/preset', wrap(async (req, res) => {
 app.delete('/preset', wrap(async (req, res) => {
   const name = req.query.name;
 
+  // Deleting re-syncs the active preset (with its FIR load) unconditionally
+  if (recorder.recording.active) {
+    return res.status(409).send('Presets are locked while recording');
+  }
+
   if (!name) {
     return res.status(400).json({ error: 'Missing required parameters' });
   }
@@ -927,6 +1055,11 @@ app.delete('/preset', wrap(async (req, res) => {
 // Active preset - api_presets.cpp handlePutActivePreset
 app.put('/preset/active', wrap(async (req, res) => {
   const name = req.query.name;
+
+  // A preset switch triggers a FIR load, which would glitch a recording
+  if (recorder.recording.active) {
+    return res.status(409).send('Presets are locked while recording');
+  }
 
   if (!name) {
     return res.status(400).json({ error: 'Missing required parameters' });

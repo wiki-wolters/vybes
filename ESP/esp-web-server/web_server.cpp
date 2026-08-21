@@ -11,6 +11,7 @@
 #include "api_preset_config.h"
 #include "api_outputs.h"
 #include "api_volume.h"
+#include "api_recorder.h"
 #include "api_helpers.h"
 #include "teensy_comm.h"
 #include "config.h"
@@ -121,6 +122,12 @@ static esp_err_t handleRestoreUpload(PsychicRequest *request, const String& file
 static esp_err_t finishRestore(PsychicRequest *request) {
     if (restoreError) {
         return request->reply(500, "text/plain", "Error writing uploaded configuration");
+    }
+
+    // Applying a restored config triggers a FIR load on the Teensy, whose SD
+    // reads would stall its loop() past what the record queues can buffer.
+    if (isRecordingActive()) {
+        return request->reply(409, "text/plain", "Restore is locked while recording");
     }
 
     // Validate by loading it. On failure the previous config file is
@@ -248,6 +255,14 @@ static void registerRoutes(PsychicHttpServer &s, PsychicWebSocketHandler *ws) {
         }
         return request->reply(400, "text/plain", "Missing or unknown action");
     });
+
+    // API Routes - SD recorder / player
+    s.on("/recorder/record/start", HTTP_POST, handlePostRecordStart);
+    s.on("/recorder/record/stop", HTTP_POST, handlePostRecordStop);
+    s.on("/recorder/play/stop", HTTP_POST, handlePostRecorderPlayStop);
+    s.on("/recorder/play", HTTP_POST, handlePostRecorderPlay);
+    s.on("/recorder/file", HTTP_DELETE, handleDeleteRecording);
+    s.on("/recorder", HTTP_GET, handleGetRecorder);
 
     // API Routes - Backup and Restore
     s.on("/backup", HTTP_GET, handleBackup);

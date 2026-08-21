@@ -19,6 +19,15 @@
           <span v-if="system.dimmed" class="dim-pill" title="Volume is dimmed">
             <span class="dim-dot"></span>Dimmed
           </span>
+
+          <!-- Recording to SD: visible everywhere, like the LCD's REC dot -->
+          <span
+            v-if="recorder.isRecording"
+            class="rec-pill tabular-nums"
+            title="Recording the stereo input to SD — preset switching is locked"
+          >
+            <span class="rec-pill-dot animate-pulse"></span>Rec {{ recTime }}
+          </span>
         </div>
 
         <div class="hidden sm:flex space-x-6 items-center">
@@ -115,11 +124,18 @@ import { useRoute } from 'vue-router';
 import apiClient from './api-client.js';
 import { useSystemStore } from './stores/system.js';
 import { useGeneratorStore } from './stores/generator.js';
+import { useRecorderStore } from './stores/recorder.js';
 import GeneratorDock from './components/GeneratorDock.vue';
 
 const route = useRoute();
 const system = useSystemStore();
 const generator = useGeneratorStore();
+const recorder = useRecorderStore();
+
+const recTime = computed(() => {
+  const s = Math.max(0, Math.floor(recorder.recording.seconds ?? 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+});
 
 const HOME_TAB = {
   name: 'Home',
@@ -183,12 +199,14 @@ onMounted(() => {
   setTimeout(() => { graceOver.value = true; }, 2500);
   system.connect();
   generator.connect();
+  recorder.connect();
 });
 
 onUnmounted(() => {
   if (unsubscribeStatus) unsubscribeStatus();
   system.disconnect();
   generator.disconnect();
+  recorder.disconnect();
 });
 </script>
 
@@ -213,6 +231,16 @@ onUnmounted(() => {
 
 .dim-dot {
   @apply w-1.5 h-1.5 rounded-full bg-vybes-accent;
+}
+
+.rec-pill {
+  @apply flex-none flex items-center gap-1.5 rounded-full px-2 py-0.5
+         text-[11px] sm:text-xs font-semibold uppercase tracking-wide
+         bg-red-500/15 text-red-400 border border-red-500/40;
+}
+
+.rec-pill-dot {
+  @apply w-1.5 h-1.5 rounded-full bg-red-500;
 }
 
 .nav-link {

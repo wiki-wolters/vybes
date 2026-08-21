@@ -201,6 +201,10 @@ esp_err_t handlePutPresetRename(PsychicRequest *request) {
 }
 
 esp_err_t handleDeletePreset(PsychicRequest *request) {
+    // Deleting re-syncs the active preset (with its FIR load) unconditionally
+    if (isRecordingActive()) {
+        return request->reply(409, "text/plain", "Presets are locked while recording");
+    }
     if (!request->hasParam("name")) {
         return request->reply(400, "text/plain", "Missing required parameters");
     }
@@ -246,6 +250,11 @@ esp_err_t handleDeletePreset(PsychicRequest *request) {
 }
 
 esp_err_t handlePutActivePreset(PsychicRequest *request) {
+    // A preset switch triggers a FIR load on the Teensy, whose SD reads
+    // would stall its loop() past what the record queues can buffer.
+    if (isRecordingActive()) {
+        return request->reply(409, "text/plain", "Presets are locked while recording");
+    }
     if (!request->hasParam("name")) {
         return request->reply(400, "text/plain", "Missing required parameters");
     }
