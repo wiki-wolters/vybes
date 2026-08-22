@@ -32,6 +32,21 @@
       {{ rec.error }}
     </p>
 
+    <!-- Playback level into the input mix. 0dB replays a recording at the
+         exact captured level; back it off when other sources play at the
+         same time, or the summed bus clips (watch the input meter). -->
+    <div v-if="rec.files.length" class="mb-4">
+      <RangeSlider
+        :model-value="playbackGainDb"
+        label="Playback level"
+        :min="-40"
+        :max="0"
+        :step="0.1"
+        unit="dB"
+        @update:modelValue="updatePlaybackGain($event)"
+      />
+    </div>
+
     <!-- Recordings list -->
     <div v-if="rec.files.length" class="divide-y divide-vybes-border">
       <div
@@ -85,13 +100,40 @@
 </template>
 
 <script setup>
-import { onMounted } from 'vue';
+import { computed, onMounted, onUnmounted } from 'vue';
 import CardSection from './shared/CardSection.vue';
+import RangeSlider from './shared/RangeSlider.vue';
 import { useRecorderStore } from '../stores/recorder.js';
 
 const rec = useRecorderStore();
 
 onMounted(() => rec.connect());
+
+// --- Playback level (dB slider over the store's linear gain) ---
+
+const MIN_DB = -40;
+let gainTimer = null;
+
+const playbackGainDb = computed(() => {
+  const g = rec.playbackGain;
+  if (g <= 0) return MIN_DB;
+  return Math.max(MIN_DB, Math.min(0, 20 * Math.log10(g)));
+});
+
+function updatePlaybackGain(db) {
+  const linear = db <= MIN_DB ? 0 : 10 ** (db / 20);
+  rec.playbackGain = linear; // slider follows instantly
+  clearTimeout(gainTimer);
+  gainTimer = setTimeout(async () => {
+    try {
+      await rec.setPlaybackGain(linear);
+    } catch (error) {
+      rec.error = `Could not set playback level: ${error.message}`;
+    }
+  }, 250);
+}
+
+onUnmounted(() => clearTimeout(gainTimer));
 
 function isPlaying(name) {
   return rec.playback.active && rec.playback.file === name;

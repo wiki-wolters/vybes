@@ -24,6 +24,9 @@ void broadcastRtaFrame(const char* hexData);
 // Forward one Teensy GRM (gain-reduction meter) frame to all clients
 void broadcastGrmFrame(const char* hexData);
 
+// Forward one Teensy VU (input level meter) frame to all clients
+void broadcastVuFrame(const char* hexData);
+
 // Forward one Teensy delay-probe line (payload after "PROBE ") to all
 // clients as a probeEvent message
 void broadcastProbeEvent(const char* line);

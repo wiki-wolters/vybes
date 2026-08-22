@@ -64,6 +64,7 @@ esp_err_t handlePutInputGains(PsychicRequest* request, JsonVariant& json) {
     float usb = gains["usb"] | current_config.inputGains.usb;
     float tone = gains["tone"] | current_config.inputGains.tone;
     float analog = gains["analog"] | current_config.inputGains.analog;
+    float recorder = gains["recorder"] | current_config.inputGains.recorder;
 
     ConfigLock lock;
     current_config.inputGains.spdif = spdif;
@@ -71,8 +72,12 @@ esp_err_t handlePutInputGains(PsychicRequest* request, JsonVariant& json) {
     current_config.inputGains.usb = usb;
     current_config.inputGains.tone = tone;
     current_config.inputGains.analog = analog;
+    current_config.inputGains.recorder = recorder;
 
     scheduleConfigWrite();
     sendToTeensy(CMD_SET_INPUT_GAINS, String(bluetooth, 2), String(spdif, 2), String(usb, 2), String(tone, 2), String(analog, 2));
+    // SD playback level travels as its own command (the builder maxes out
+    // at five parameters); coalescing keeps repeats cheap
+    sendFloatToTeensy(CMD_SET_PLAYBACK_GAIN, recorder);
     return request->reply(200, "application/json", "{\"success\":true}");
 }

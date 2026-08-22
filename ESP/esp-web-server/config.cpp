@@ -426,6 +426,7 @@ bool load_config_from(const char* path) {
     current_config.inputGains.usb = inputGains["usb"] | 1.0f;
     current_config.inputGains.tone = inputGains["tone"] | 0.0f;
     current_config.inputGains.analog = inputGains["analog"] | 1.0f;
+    current_config.inputGains.recorder = inputGains["recorder"] | 1.0f;
 
     // Load presets. Every slot is reset first so fields absent from the file
     // (and stale state from a previous config, e.g. during a restore) don't
@@ -478,6 +479,7 @@ void save_config() {
     inputGains["usb"] = current_config.inputGains.usb;
     inputGains["tone"] = current_config.inputGains.tone;
     inputGains["analog"] = current_config.inputGains.analog;
+    inputGains["recorder"] = current_config.inputGains.recorder;
 
     // Save presets, preserving slot positions (active_preset_index and the
     // button/remote cycling are slot-based). Empty slots save name-only.
@@ -719,6 +721,10 @@ void updateTeensyWithActivePresetParameters() {
     snprintf(d, sizeof(d), "%.2f", current_config.inputGains.tone);
     snprintf(e, sizeof(e), "%.2f", current_config.inputGains.analog);
     sendToTeensy(CMD_SET_INPUT_GAINS, a, b, c, d, e);
+
+    // SD playback level (its own command - the builder maxes out at five
+    // parameters and setInputGains uses all of them)
+    sendFloatToTeensy(CMD_SET_PLAYBACK_GAIN, current_config.inputGains.recorder);
 
     // Queue the FIR reload before releasing, so the Teensy sees the load
     // request while still muted and can keep holding across the SD read.

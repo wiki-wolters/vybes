@@ -34,6 +34,9 @@ export const useRecorderStore = defineStore('recorder', () => {
   const playback = ref({ active: false, file: '', seconds: 0, length: 0 });
   const files = ref([]);
   const error = ref('');
+  // Playback level into the input mix (linear 0..1, device-wide like the
+  // other input gains; seeded from /status inputGains.recorder)
+  const playbackGain = ref(1);
 
   const isRecording = computed(() => recording.value.active);
 
@@ -90,10 +93,23 @@ export const useRecorderStore = defineStore('recorder', () => {
     await apiClient.deleteRecording(name);
   }
 
+  async function setPlaybackGain(linear) {
+    playbackGain.value = linear;
+    await apiClient.updateInputGains({ recorder: linear });
+  }
+
   /** Seed from the device and follow it from then on. Idempotent. */
   async function connect() {
     if (!unsubscribeLive) unsubscribeLive = apiClient.connectLiveUpdates(applyLiveMessage);
     await refresh();
+    try {
+      const status = await apiClient.getStatus();
+      if (typeof status?.inputGains?.recorder === 'number') {
+        playbackGain.value = status.inputGains.recorder;
+      }
+    } catch (e) {
+      // Offline; the slider keeps its default until reconnect
+    }
   }
 
   function disconnect() {
@@ -104,8 +120,8 @@ export const useRecorderStore = defineStore('recorder', () => {
   }
 
   return {
-    sdPresent, recording, playback, files, error, isRecording,
+    sdPresent, recording, playback, files, error, isRecording, playbackGain,
     refresh, applyLiveMessage, start, stop, play, stopPlayback, remove,
-    connect, disconnect,
+    setPlaybackGain, connect, disconnect,
   };
 });

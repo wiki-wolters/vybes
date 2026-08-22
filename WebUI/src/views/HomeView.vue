@@ -122,6 +122,12 @@
       <div>
         <!-- Input Source -->
         <CardSection title="Input Source">
+          <!-- Stereo peak meter on the summed input bus (all sources plus
+               SD playback) - the point that clips when sources stack up,
+               and exactly what the recorder captures -->
+          <div class="mb-5">
+            <LevelMeter />
+          </div>
           <div class="space-y-4">
             <RangeSlider
               :model-value="inputGainsDB.bluetooth"
@@ -222,6 +228,7 @@ import ToggleSwitch from '../components/shared/ToggleSwitch.vue';
 import TemplateSelect from '../components/shared/TemplateSelect.vue';
 import DynamicsCard from '../components/DynamicsCard.vue';
 import RecorderCard from '../components/RecorderCard.vue';
+import LevelMeter from '../components/LevelMeter.vue';
 import { useSystemStore } from '../stores/system.js';
 import { useRecorderStore } from '../stores/recorder.js';
 

@@ -35,6 +35,8 @@
   X(stopTone, handleStopTone) \
   X(setNoise, handleSetNoise) \
   X(setRta, handleSetRta) \
+  X(setVu, handleSetVu) \
+  X(setPlaybackGain, handleSetPlaybackGain) \
   X(setCompEnabled, handleSetCompEnabled) \
   X(setCompXover, handleSetCompXover) \
   X(setCompBand, handleSetCompBand) \

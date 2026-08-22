@@ -78,6 +78,17 @@
 // "setRta 0" stops. The Teensy replies with "RTA <hex>" frames.
 #define CMD_SET_RTA "setRta"
 
+// Input-bus level meter streaming: same keepalive scheme as setRta. The
+// Teensy replies with "VU llrrf" frames at 20Hz - one hex byte per channel
+// mapping peak dBFS -60..0 onto 0..255, plus a flag digit (bit0/bit1 =
+// left/right clipped: a flat-topped run of full-scale samples).
+#define CMD_SET_VU "setVu"
+
+// SD playback level into the input mix (aux input 2): "setPlaybackGain
+// <0..1>". Its own command because the message builder carries at most
+// five parameters and setInputGains already uses all five.
+#define CMD_SET_PLAYBACK_GAIN "setPlaybackGain"
+
 // Mixed-input multiband compressor (3 bands: 0 bass, 1 mid/voice, 2 treble)
 //   setCompEnabled       <0|1>
 //   setCompXover         <f1> <f2>

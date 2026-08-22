@@ -111,6 +111,8 @@ static const ProtocolCase kProtocolCases[] = {
     {CMD_STOP_TONE, nullptr, nullptr, nullptr, nullptr, nullptr, 0},
     {CMD_SET_NOISE, "25.00", nullptr, nullptr, nullptr, nullptr, 1},
     {CMD_SET_RTA, "1", nullptr, nullptr, nullptr, nullptr, 1},
+    {CMD_SET_VU, "1", nullptr, nullptr, nullptr, nullptr, 1},
+    {CMD_SET_PLAYBACK_GAIN, "0.80", nullptr, nullptr, nullptr, nullptr, 1},
     // setCompBand carries "<thr> <ratio> <atk> <rel> <mk>" as one builder
     // parameter (config.cpp sendDynamicsToTeensy), split back by the router
     {CMD_SET_COMP_ENABLED, "1", nullptr, nullptr, nullptr, nullptr, 1},

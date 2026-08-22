@@ -401,6 +401,11 @@ static void handleTeensyLine(const char* line) {
         broadcastGrmFrame(line + 4);
         return;
     }
+    // Input level meter frames stream at 20Hz while the home page is open
+    if (strncmp(line, "VU ", 3) == 0) {
+        broadcastVuFrame(line + 3);
+        return;
+    }
 
     // Delay-probe progress lines ("PROBE START ...", "PROBE CHIRP ...",
     // "PROBE DONE", ...) - relay to the web UI, which drives its alignment

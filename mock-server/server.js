@@ -145,6 +145,7 @@ db.serialize(() => {
         ['usb_gain', '1.0'],
         ['tone_gain', '0.0'],
         ['analog_gain', '1.0'],
+        ['recorder_gain', '1.0'],
         ['device_name', 'vybes']
       ];
 
@@ -187,6 +188,10 @@ wss.on('connection', (ws) => {
     // Any page showing the compressor meters sends this
     if (text === 'grm:keepalive') {
       grmLastKeepaliveAt = Date.now();
+    }
+    // The home page's input level bars send this
+    if (text === 'vu:keepalive') {
+      vuLastKeepaliveAt = Date.now();
     }
     // Per-output EQ measurement: the analyzer holds one output soloed with
     // "solo:<ch>" keepalives; "solo:-1" clears. The mock just logs it.
@@ -255,6 +260,32 @@ setInterval(() => {
   if (Date.now() - grmLastKeepaliveAt > 5000) return;
   broadcast({ type: 'grm', d: mockGrmFrameHex(Date.now()) });
 }, 100);
+
+// --- Mock VU (input level meter) streaming ---
+// "{type:'vu', d:'llrrf'}" at 20Hz: peak bytes map dBFS -60..0 onto 0..255,
+// the flag digit carries clip bits (1=L, 2=R). Music-ish movement with an
+// occasional lunge into the red so the clip LEDs are demonstrable; playback
+// or recording raises the floor.
+let vuLastKeepaliveAt = 0;
+
+function mockVuFrame(t) {
+  const active = recorder.recording.active || recorder.playback.active;
+  const base = active ? -10 : -22;
+  const wobble = 6 * Math.sin(t / 480) + 3.5 * Math.sin(t / 133);
+  const lunge = Math.max(0, 26 * Math.sin(t / 5100) - 18); // rare hot bursts
+  const dbL = base + wobble + lunge + 1.6 * Math.random();
+  const dbR = base + wobble * 0.9 + lunge + 1.6 * Math.random() - 0.8;
+  const byte = (db) => Math.max(0, Math.min(255, Math.round((db + 60) * (255 / 60))));
+  const flags = (dbL >= -0.2 ? 1 : 0) | (dbR >= -0.2 ? 2 : 0);
+  return byte(dbL).toString(16).padStart(2, '0')
+    + byte(dbR).toString(16).padStart(2, '0')
+    + flags.toString(16);
+}
+
+setInterval(() => {
+  if (Date.now() - vuLastKeepaliveAt > 5000) return;
+  broadcast({ type: 'vu', d: mockVuFrame(Date.now()) });
+}, 50);
 
 // Helper functions
 function getSetting(key) {
@@ -430,6 +461,7 @@ app.get('/status', async (req, res) => {
       usbGain,
       toneGain,
       analogGain,
+      recorderGain,
       deviceName
     ] = await Promise.all([
       getSetting('sub_gain'),
@@ -445,6 +477,7 @@ app.get('/status', async (req, res) => {
       getSetting('usb_gain'),
       getSetting('tone_gain'),
       getSetting('analog_gain'),
+      getSetting('recorder_gain'),
       getSetting('device_name')
     ]);
 
@@ -473,7 +506,8 @@ app.get('/status', async (req, res) => {
         bluetooth: bluetoothGain ? parseFloat(bluetoothGain) : 0,
         usb: usbGain ? parseFloat(usbGain) : 0,
         tone: toneGain ? parseFloat(toneGain) : 0,
-        analog: analogGain ? parseFloat(analogGain) : 0
+        analog: analogGain ? parseFloat(analogGain) : 0,
+        recorder: recorderGain ? parseFloat(recorderGain) : 1
       },
       mute: {
         muted: muteState === 'on',
@@ -739,7 +773,8 @@ app.put('/gains/input', async (req, res) => {
     bluetooth: 'bluetooth_gain',
     usb: 'usb_gain',
     tone: 'tone_gain',
-    analog: 'analog_gain'
+    analog: 'analog_gain',
+    recorder: 'recorder_gain'
   };
 
   try {

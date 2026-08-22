@@ -45,6 +45,11 @@ static bool rtaActive = false;
 static unsigned long grmLastClientKeepaliveAt = 0;
 static bool grmActive = false;
 
+// VU (input level meter) subscription: identical scheme, driven by
+// "vu:keepalive" from any page showing the level bars.
+static unsigned long vuLastClientKeepaliveAt = 0;
+static bool vuActive = false;
+
 // Output solo subscription: the analyzer sends "solo:<ch>" every couple of
 // seconds while it measures one output. Same keepalive scheme; "solo:-1"
 // (or any out-of-range channel) drops the interest so the loop clears the
@@ -71,6 +76,10 @@ static void setupHandler(PsychicWebSocketHandler &handler, std::atomic<int> &cli
             }
             if (frame->len == 13 && strncmp((const char*)frame->payload, "grm:keepalive", 13) == 0) {
                 grmLastClientKeepaliveAt = millis();
+                return ESP_OK;
+            }
+            if (frame->len == 12 && strncmp((const char*)frame->payload, "vu:keepalive", 12) == 0) {
+                vuLastClientKeepaliveAt = millis();
                 return ESP_OK;
             }
             if (frame->len >= 6 && frame->len <= 8 &&
@@ -252,6 +261,17 @@ void broadcastGrmFrame(const char* hexData) {
     broadcastToAllListeners(buf);
 }
 
+// Forward one VU frame (the hex payload after "VU ") to all clients.
+// Called from teensyCommLoop at ~20Hz while the level bars are showing.
+void broadcastVuFrame(const char* hexData) {
+    if (totalClients() == 0) return;
+    size_t len = strlen(hexData);
+    if (len == 0 || len > 5) return; // 2 peak bytes + 1 clip flag digit
+    char buf[48];
+    snprintf(buf, sizeof(buf), "{\"type\":\"vu\",\"d\":\"%s\"}", hexData);
+    broadcastToAllListeners(buf);
+}
+
 // Relay RTA/GRM interest to the Teensy: refresh each keepalive while a web
 // client wants frames, send a single stop when interest lapses.
 void websocketLoop() {
@@ -284,6 +304,21 @@ void websocketLoop() {
     } else if (grmActive) {
         grmActive = false;
         sendToTeensy(CMD_SET_GRM, "0");
+    }
+
+    bool wantVu = vuLastClientKeepaliveAt != 0 &&
+                  now - vuLastClientKeepaliveAt < RTA_CLIENT_TIMEOUT_MS &&
+                  totalClients() > 0;
+    static unsigned long lastVuRefreshAt = 0;
+    if (wantVu) {
+        vuActive = true;
+        if (now - lastVuRefreshAt >= RTA_TEENSY_REFRESH_MS) {
+            lastVuRefreshAt = now;
+            sendToTeensy(CMD_SET_VU, "1");
+        }
+    } else if (vuActive) {
+        vuActive = false;
+        sendToTeensy(CMD_SET_VU, "0");
     }
 
     bool wantSolo = soloLastClientKeepaliveAt != 0 &&

@@ -21,6 +21,7 @@ esp_err_t handleGetStatus(PsychicRequest *request) {
     inputGains["usb"] = current_config.inputGains.usb;
     inputGains["tone"] = current_config.inputGains.tone;
     inputGains["analog"] = current_config.inputGains.analog;
+    inputGains["recorder"] = current_config.inputGains.recorder;
     
     JsonObject mute = doc.createNestedObject("mute");
     mute["muted"] = current_config.muted;

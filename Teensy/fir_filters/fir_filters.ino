@@ -18,6 +18,7 @@
 #include "SdRecorder.h"
 #include "SdWavPlayer.h"
 #include "WavFormat.h"
+#include "PeakMeter.h"
 
 // The .ino prototype generator injects generated prototypes for the sketch's
 // functions partway down the globals below - above where OutputState is
@@ -176,6 +177,10 @@ AudioRecordQueue         recordQueueL;
 AudioRecordQueue         recordQueueR;
 SdWavPlayer              sdPlayer;
 
+// Stereo peak/clip meter on the input bus (drives the web UI's level bars
+// via "VU" frames; see vuLoop)
+PeakMeter                inputMeter;
+
 // Connections (input stage - fixed, so wired at construction)
 
 // Generator connections
@@ -211,6 +216,10 @@ AudioConnection          patchCord_LeftMixerToRec(Left_mixer, 0, recordQueueL, 0
 AudioConnection          patchCord_RightMixerToRec(Right_mixer, 0, recordQueueR, 0);
 AudioConnection          patchCord_PlayerToLeftAux(sdPlayer, 0, Left_Aux_mixer, 2);
 AudioConnection          patchCord_PlayerToRightAux(sdPlayer, 1, Right_Aux_mixer, 2);
+
+// Input bus meter taps
+AudioConnection          patchCord_LeftMixerToMeter(Left_mixer, 0, inputMeter, 0);
+AudioConnection          patchCord_RightMixerToMeter(Right_mixer, 0, inputMeter, 1);
 
 SdRecorder               sdRecorder(recordQueueL, recordQueueR);
 
@@ -325,6 +334,7 @@ struct State {
   float gainUSB = 1.0;
   float gainGenerator = 1.0;
   float gainAnalog = 1.0;
+  float gainPlayer = 1.0; // SD playback (aux input 2); setPlaybackGain
 
   // Master Volume
   float volume = 0.5; // User-set volume
@@ -458,12 +468,13 @@ void setup() {
   Generator_mixer.gain(2, 0.0f);
   Generator_mixer.gain(3, 0.0f);
 
-  // Aux mixer input 2 carries the SD player at unity (it transmits nothing
-  // while idle); input 3 is unused. Both default to 1.0 and must be set
-  // explicitly.
-  Left_Aux_mixer.gain(2, 1.0f);
+  // Aux mixer input 2 carries the SD player (it transmits nothing while
+  // idle); input 3 is unused. Both default to 1.0 and must be set
+  // explicitly. The player gain is re-applied by setInputGains, so the
+  // probe's restore path covers it too.
+  Left_Aux_mixer.gain(2, state.gainPlayer);
   Left_Aux_mixer.gain(3, 0.0f);
-  Right_Aux_mixer.gain(2, 1.0f);
+  Right_Aux_mixer.gain(2, state.gainPlayer);
   Right_Aux_mixer.gain(3, 0.0f);
 
   // RTA tap: equal L+R mix, idle until the UI asks for it
@@ -649,6 +660,7 @@ void loop() {
   updateAudioVolume(); // Call this frequently to smooth gain changes
   rtaLoop();
   grmLoop();
+  vuLoop();
   probeLoop();
   outputSoloLoop();
   outputPadLoop();
@@ -786,6 +798,47 @@ void grmLoop() {
   grmLastFrameAt = millis();
 }
 
+// --- VU (input bus peak meter) streaming ---
+// Same keepalive scheme as the RTA/GRM: the ESP refreshes "setVu 1" while a
+// web client shows the level bars; streaming stops on its own otherwise.
+// Frames go out at 20Hz as "VU llrrf\n": one byte per channel mapping peak
+// dBFS -60..0 onto 0..255 (0 = silence), plus one hex flag digit (bit0 =
+// left clipped, bit1 = right clipped - a flat-topped run of full-scale
+// samples, not just a peak touching 0dBFS; see PeakMeter.h). Peaks
+// accumulate max-wise in the meter between frames, so nothing is missed.
+#define VU_FRAME_INTERVAL_MS 50
+#define VU_KEEPALIVE_TIMEOUT_MS 7000
+bool vuEnabled = false;
+unsigned long vuLastKeepaliveAt = 0;
+unsigned long vuLastFrameAt = 0;
+
+static uint8_t vuByte(float peak) {
+  if (peak <= 0.001f) return 0; // below -60dBFS
+  float dB = 20.0f * log10f(peak);
+  int v = (int)roundf((dB + 60.0f) * (255.0f / 60.0f));
+  return (uint8_t)constrain(v, 0, 255);
+}
+
+void vuLoop() {
+  if (!vuEnabled) return;
+  if (millis() - vuLastKeepaliveAt > VU_KEEPALIVE_TIMEOUT_MS) {
+    vuEnabled = false;
+    return;
+  }
+  if (millis() - vuLastFrameAt < VU_FRAME_INTERVAL_MS) return;
+
+  PeakMeter::Reading r = inputMeter.read();
+  char frame[16];
+  int len = snprintf(frame, sizeof(frame), "VU %02x%02x%x\n",
+                     vuByte(r.peak[0]), vuByte(r.peak[1]),
+                     (r.clip[0] ? 1 : 0) | (r.clip[1] ? 2 : 0));
+
+  // Never block on the UART; skip the frame if the TX buffer is busy
+  if (Serial1.availableForWrite() < len) return;
+  Serial1.write((const uint8_t*)frame, len);
+  vuLastFrameAt = millis();
+}
+
 // Move 'current' toward 'target' with an exponential ramp whose speed is
 // independent of how fast loop() runs. Returns true if the value changed.
 static bool slewToward(float& current, float target, float alpha) {
@@ -905,6 +958,20 @@ void setInputGains(float bluetoothGain, float opticalGain, float usbGain, float 
   Right_Aux_mixer.gain(0, state.gainGenerator);
   Left_Aux_mixer.gain(1, state.gainAnalog);
   Right_Aux_mixer.gain(1, state.gainAnalog);
+  // SD playback rides the same aux stage; re-applied here so probeCleanup's
+  // setInputGains call restores it along with everything else
+  Left_Aux_mixer.gain(2, state.gainPlayer);
+  Right_Aux_mixer.gain(2, state.gainPlayer);
+}
+
+// SD playback level (linear 0..1, aux mixer input 2). Its own command
+// rather than a sixth setInputGains argument because the ESP's message
+// builder carries at most five parameters.
+void setPlaybackGain(float gain) {
+  state.gainPlayer = constrain(gain, 0.0f, 1.0f);
+  Serial.println("Set playback gain: " + String(state.gainPlayer));
+  Left_Aux_mixer.gain(2, state.gainPlayer);
+  Right_Aux_mixer.gain(2, state.gainPlayer);
 }
 
 void setTone(float frequency, float volumePercent) {
@@ -1818,6 +1885,22 @@ void handleSetGrm(const String& command, String* args, int argCount, OutputStrea
   if (argCount == 1) {
     grmLastKeepaliveAt = millis();
     grmEnabled = args[0].toInt() == 1;
+  }
+}
+
+// "setVu 1" enables input level meter streaming (and acts as the keepalive
+// while it repeats); "setVu 0" stops it immediately.
+void handleSetVu(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 1) {
+    vuLastKeepaliveAt = millis();
+    vuEnabled = args[0].toInt() == 1;
+  }
+}
+
+// "setPlaybackGain <0..1>": SD playback level into the input mix
+void handleSetPlaybackGain(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 1) {
+    setPlaybackGain(args[0].toFloat());
   }
 }
 

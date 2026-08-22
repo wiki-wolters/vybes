@@ -305,6 +305,20 @@ describe('PUT /gains/input', () => {
     expect(status.inputGains.tone).toBeCloseTo(0.125, 4)
     expect(status.inputGains.analog).toBeCloseTo(0.375, 4)
   })
+
+  it('carries the SD playback level as the recorder key', async () => {
+    const before = (await GET('/status')).json.inputGains
+    expect(typeof before.recorder).toBe('number') // reported like the others
+
+    const res = await PUT('/gains/input', { recorder: 0.5 })
+    expect(res.status).toBe(200)
+    const after = (await GET('/status')).json.inputGains
+    expect(after.recorder).toBeCloseTo(0.5, 4)
+    // Partial update: nothing else moved
+    expect(after.bluetooth).toBeCloseTo(before.bluetooth, 4)
+
+    await PUT('/gains/input', { recorder: before.recorder }) // restore
+  })
 })
 
 // ===== Signal generator =====

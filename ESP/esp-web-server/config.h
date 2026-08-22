@@ -176,6 +176,7 @@ struct InputGains {
     float usb = 1.0f;
     float tone = 0.0f;
     float analog = 1.0f;
+    float recorder = 1.0f; // SD playback level (CMD_SET_PLAYBACK_GAIN)
 };
 
 // Main configuration structure that holds everything
