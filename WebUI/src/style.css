@@ -4,12 +4,18 @@
 /* Single source of truth for the theme. Tailwind classes (vybes-*) map to
    the same palette via tailwind.config.js. */
 :root {
-  /* Blue = interactive (buttons, thumbs, selection).
-     Amber = currently in effect (active preset, enabled section, wordmark). */
-  --vybes-primary: #3b82f6;
-  --vybes-primary-dark: #2563eb;
+  /* One teal family (docs/brand) carries brand and interactive:
+     Teal 500 = interactive FILLS (buttons, thumbs, selection) — white text
+       on it is 4.7:1, but as text on dark it's only 3.7:1, so
+     Teal 300 (--vybes-brand) = wordmark, active-state TEXT, and thin chart
+       lines (6.6:1 on #161b22).
+     Amber = currently in effect (active preset, enabled section). */
+  --vybes-primary: #17808D;
+  --vybes-primary-dark: #136B77;
   --vybes-accent: #f5c04e;
   --vybes-accent-light: #f8d488;
+  --vybes-brand: #45AEBC;
+  --vybes-brand-light: #63C3CF;
   --vybes-dark: #10141a;
   --vybes-dark-element: #161b22;
   --vybes-dark-card: #1a2029;
@@ -40,11 +46,11 @@ body {
 @layer base {
   a {
     font-weight: 500;
-    @apply text-vybes-blue;
+    @apply text-vybes-brand;
     text-decoration: inherit;
   }
   a:hover {
-    @apply text-blue-400;
+    @apply text-vybes-brand-light;
   }
 }
 

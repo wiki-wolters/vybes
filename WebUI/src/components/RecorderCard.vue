@@ -62,7 +62,7 @@
           @click="togglePlay(file.name)"
         >
           <!-- stop square while this file plays, play triangle otherwise -->
-          <svg v-if="isPlaying(file.name)" class="w-5 h-5 text-vybes-primary" fill="currentColor" viewBox="0 0 24 24">
+          <svg v-if="isPlaying(file.name)" class="w-5 h-5 text-vybes-brand" fill="currentColor" viewBox="0 0 24 24">
             <rect x="7" y="7" width="10" height="10" rx="1" />
           </svg>
           <svg v-else class="w-5 h-5" :class="rec.recording.active ? 'text-vybes-text-secondary/40' : 'text-vybes-text-primary'" fill="currentColor" viewBox="0 0 24 24">

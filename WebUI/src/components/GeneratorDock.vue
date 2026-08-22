@@ -24,7 +24,7 @@
           :key="opt.id"
           class="py-1.5 text-sm font-medium transition-colors cursor-pointer"
           :class="gen.source === opt.id
-            ? 'bg-vybes-primary/20 text-vybes-primary'
+            ? 'bg-vybes-primary/20 text-vybes-brand'
             : 'text-vybes-text-secondary hover:text-vybes-text-primary'"
           @click="gen.setSource(opt.id)"
         >

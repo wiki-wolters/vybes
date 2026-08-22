@@ -194,7 +194,7 @@ input[type="range"]::-moz-range-track {
 }
 
 .value-display {
-  @apply flex-none -mx-1 px-1 rounded text-sm font-medium text-vybes-blue tabular-nums
+  @apply flex-none -mx-1 px-1 rounded text-sm font-medium text-vybes-brand tabular-nums
          cursor-pointer hover:bg-vybes-dark-input/70
          focus:outline-none focus:ring-2 focus:ring-vybes-blue/50
          disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent;

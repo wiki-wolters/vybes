@@ -188,7 +188,7 @@ const ECHO_SUPPRESS_MS = 1200;
 const METER_FULL_SCALE_DB = 12;
 const SPLIT_HEIGHT = 44;
 
-// Matches the analyzer's delta-bar palette: blue bass, green mid, amber treble
+// Matches the analyzer's delta-bar palette: teal bass, green mid, amber treble
 const BAND_COLORS = ['#38bdf8', '#4ade80', '#f5c04e'];
 
 const modes = DYNAMICS_MODES;

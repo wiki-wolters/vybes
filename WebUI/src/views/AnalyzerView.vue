@@ -22,7 +22,7 @@
         <!-- Legend / status -->
         <div class="flex flex-wrap items-center gap-x-5 gap-y-1 mb-3 text-xs">
           <span class="flex items-center gap-1.5">
-            <span class="inline-block w-3 h-0.5 rounded bg-vybes-primary"></span>
+            <span class="inline-block w-3 h-0.5 rounded bg-vybes-brand"></span>
             <span class="text-vybes-text-secondary">Source</span>
             <span :class="sourceLive ? 'text-vybes-live' : 'text-vybes-text-secondary'">
               {{ sourceLive ? 'live' : 'waiting for device…' }}
@@ -1649,7 +1649,7 @@ onUnmounted(() => {
 }
 
 .trace-source {
-  stroke: var(--vybes-primary);
+  stroke: var(--vybes-brand);
 }
 
 .trace-mic {
@@ -1677,7 +1677,7 @@ onUnmounted(() => {
 }
 
 .dot-source {
-  fill: var(--vybes-primary);
+  fill: var(--vybes-brand);
 }
 
 .dot-mic {

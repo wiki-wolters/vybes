@@ -40,7 +40,7 @@
       type: Boolean,
       default: false
     },
-    // 'primary' (blue) for ordinary controls; 'accent' (amber) where being on
+    // 'primary' (teal) for ordinary controls; 'accent' (amber) where being on
     // means "this processing is currently in effect"
     variant: {
       type: String,
