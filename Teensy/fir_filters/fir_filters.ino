@@ -1302,16 +1302,21 @@ static void reportFirError(int ch, const char* code, const char* file) {
 // same RAM2 a full pool always took and makes every set the pool check
 // accepts fit by construction - no allocation left to fail, no fallback.
 //
-// Worst case: fast convolution rounds each filter up to a whole 128-tap
-// partition and spends 2 x FFT_SIZE floats per partition, so a pool spread
-// across every output wastes at most one partial partition per channel. The
-// direct engine needs 2 taps + 127 floats per channel, far less, so sizing
-// for fast convolution covers both.
-// (Ceiling division, so the bound still holds if the pool ever stops being
-// a whole number of partitions.)
+// Sized in whole partitions because the pool is CHARGED in whole partitions
+// (FIR_POOL_CHARGE_QUANTUM in teensy_protocol.h, matched by the ESP's
+// accounting): fast convolution rounds each filter up to a 128-tap
+// partition costing 2 x FFT_SIZE floats, so with partition-quantized
+// charging the pool's partition count is exactly the arena's worst case -
+// no per-channel rounding waste can exceed what was charged. Sizing for the
+// raw tap count plus one partial partition per channel instead cost 14KB
+// more, and that 14KB was the RAM2 headroom whose loss made the RTA's boot
+// allocation fail (see RtaFFT4096.cpp). The direct engine needs far less
+// per channel, so sizing for fast convolution covers both.
+static_assert(FIR_POOL_CHARGE_QUANTUM == FirEngine::BLOCK_SAMPLES,
+              "pool charging quantum must match the engine partition size");
 static constexpr size_t FIR_ARENA_FLOATS =
-    (((size_t)FIR_TAP_POOL + FirEngine::BLOCK_SAMPLES - 1) / FirEngine::BLOCK_SAMPLES +
-     NUM_OUTPUTS - 1) * FirEngine::FFT_SIZE * 2;
+    (((size_t)FIR_TAP_POOL + FirEngine::BLOCK_SAMPLES - 1) / FirEngine::BLOCK_SAMPLES) *
+    FirEngine::FFT_SIZE * 2;
 DMAMEM static float firArena[FIR_ARENA_FLOATS];
 
 // Clears every filter, so the slices of firArena they hold go unreferenced
@@ -1417,17 +1422,22 @@ void loadFirFiles() {
       reportFirError(ch, "missing", o.firFile);
       continue;
     }
-    // A file that doesn't fit the remaining pool is rejected outright
-    // rather than truncated - a shortened impulse response is a different
-    // filter, not a smaller one.
-    if ((uint32_t)fileTaps > remaining) {
-      Serial1.printf("ERROR FIR pool exceeded: %s needs %ld taps, %lu of %u left (output %d)\n",
-                     o.firFile, fileTaps, (unsigned long)remaining, FIR_TAP_POOL, ch);
+    // Charged in whole partitions - what the arena actually spends (and how
+    // the ESP accounts the pool; see FIR_POOL_CHARGE_QUANTUM). A file that
+    // doesn't fit the remaining pool is rejected outright rather than
+    // truncated - a shortened impulse response is a different filter, not a
+    // smaller one.
+    uint32_t charged = ((uint32_t)fileTaps + FIR_POOL_CHARGE_QUANTUM - 1) /
+                       FIR_POOL_CHARGE_QUANTUM * FIR_POOL_CHARGE_QUANTUM;
+    if (charged > remaining) {
+      Serial1.printf("ERROR FIR pool exceeded: %s needs %lu taps (%ld padded to whole partitions), %lu of %u left (output %d)\n",
+                     o.firFile, (unsigned long)charged, fileTaps,
+                     (unsigned long)remaining, FIR_TAP_POOL, ch);
       reportFirError(ch, "toobig", o.firFile);
       continue;
     }
     wantTaps[ch] = fileTaps;
-    poolUsed += (uint32_t)fileTaps;
+    poolUsed += charged;
   }
 
   // Pass 2: carve the arena up in channel order. Nothing here can fail for

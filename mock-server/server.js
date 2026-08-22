@@ -85,7 +85,9 @@ function firPool(config) {
   const outputs = config.outputs.map((o, i) => ({ output: i, file: o.fir, taps: firTaps(o.fir) }));
   return {
     total: FIR_TAP_POOL,
-    used: outputs.reduce((sum, o) => sum + o.taps, 0),
+    // Charged in whole 128-tap partitions, matching the firmware's static
+    // coefficient arena (FIR_POOL_CHARGE_QUANTUM in teensy_protocol.h)
+    used: outputs.reduce((sum, o) => sum + Math.ceil(o.taps / 128) * 128, 0),
     outputs,
   };
 }

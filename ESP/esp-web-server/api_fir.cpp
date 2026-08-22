@@ -70,7 +70,11 @@ uint32_t firPoolUsed(const Preset& preset, int overrideOutput, const char* overr
     uint32_t used = 0;
     for (int i = 0; i < NUM_OUTPUTS; i++) {
         const char* file = (i == overrideOutput) ? overrideFile : preset.outputs[i].fir;
-        used += firFileTaps(file);
+        // Charged in whole partitions - what the Teensy's static coefficient
+        // arena actually spends (see FIR_POOL_CHARGE_QUANTUM)
+        uint32_t taps = firFileTaps(file);
+        used += (taps + FIR_POOL_CHARGE_QUANTUM - 1) / FIR_POOL_CHARGE_QUANTUM
+                * FIR_POOL_CHARGE_QUANTUM;
     }
     return used;
 }

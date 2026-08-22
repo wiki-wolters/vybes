@@ -56,6 +56,16 @@
 
 // FIR Filter Commands. setFir is channel-indexed: "setFir <ch> <file>",
 // bare "setFir <ch>" clears. setFirEnabled is preset-level.
+//
+// The shared tap pool is charged per file in whole partitions of this many
+// taps, because that is what the memory actually costs: the Teensy's fast-
+// convolution engine rounds every filter up to whole 128-tap partitions,
+// and its coefficient arena is statically sized as FIR_TAP_POOL /
+// FIR_POOL_CHARGE_QUANTUM partitions. Charging raw tap counts would admit
+// sets (many odd-length files) that overflow that arena. Both the ESP's
+// accounting (api_fir.cpp) and the Teensy's load-time check charge this
+// way; partition-aligned files (any multiple of 128 taps) are unaffected.
+#define FIR_POOL_CHARGE_QUANTUM 128
 #define CMD_SET_FIR "setFir"
 #define CMD_SET_FIR_ENABLED "setFirEnabled"
 #define CMD_LOAD_FIR_FILES "loadFirFiles"

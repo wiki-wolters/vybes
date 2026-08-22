@@ -1,16 +1,30 @@
 #include "RtaFFT4096.h"
 #include "RtaFftTables.h"
 
+// The working buffers are fixed DMAMEM statics, not heap allocations: they
+// live for the life of the device anyway, and an unchecked new here is
+// exactly how the analyzer once crashed the DSP - the static FIR arena
+// tightened the RAM2 heap, this constructor's fourth allocation (spectrum)
+// quietly returned nullptr at static-init, and the first analyze() stored
+// through it (DACCVIOL at 0x0, loud buzz until the auto-reboot). Static
+// reservation makes the RTA's memory a link-time fact instead of a boot-
+// order gamble. One RTA instance exists (fir_filters.ino).
+static DMAMEM int16_t rtaCapture[RtaFFT4096::FFT_SIZE];
+static DMAMEM float rtaWindow[RtaFFT4096::FFT_SIZE];
+static DMAMEM float rtaWork[RtaFFT4096::FFT_SIZE];
+static DMAMEM float rtaSpectrum[RtaFFT4096::FFT_SIZE];
+static DMAMEM float rtaPower[RtaFFT4096::NUM_BINS];
+
 RtaFFT4096::RtaFFT4096()
   : AudioStream(1, inputQueueArray),
     captureFill(0),
     captureReady(false)
 {
-  capture = new int16_t[FFT_SIZE];
-  window = new float[FFT_SIZE];
-  work = new float[FFT_SIZE];
-  spectrum = new float[FFT_SIZE];
-  power = new float[NUM_BINS];
+  capture = rtaCapture;
+  window = rtaWindow;
+  work = rtaWork;
+  spectrum = rtaSpectrum;
+  power = rtaPower;
 
   // Hanning window with the int16 -> float conversion and the FFT
   // normalization folded in. |X| of an amplitude-A sine after a Hanning
