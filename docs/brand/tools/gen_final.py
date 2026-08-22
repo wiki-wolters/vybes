@@ -15,16 +15,20 @@ DARK = "#10141a"       # UI background
 # Locked 2026-08-22 after the canvas studies: the display cut pairs the
 # 110-unit curve with Poppins Medium letters (114-unit stems), floats the dot
 # in a 65-unit negative-space halo, and pulls the lockup gap to -15 (the tail
-# nests over the "y"). The small cut keeps a solid dot (the halo goes
-# hairline below ~24 px) and SemiBold letters (matched to its 145 curve).
+# nests over the "y"). Every cut carries the halo, scaled with its stroke
+# (dot = 1.09x stroke, halo = 0.59x stroke) so the gap stays open at each
+# cut's working sizes; only the favicon uses the solid-dot icon cut — below
+# ~20 px the gap dies. Small cut keeps SemiBold letters (matched to its 145
+# curve).
 PRIMARY = dict(stroke=110, width=1080, tail_y=705, depth=860, sigma=180,
                dot=(0, 120), halo=65)
 FONT_DISPLAY = "Poppins-Medium.ttf"
-# small-size cut: stem-weight stroke, bigger solid dot, same skeleton
-SMALL = dict(PRIMARY, stroke=145, dot=(45, 178), halo=None)
-# icon cut: chunkier still, tighter bell, oversized solid dot for tiny squares
+# small-size cut: stem-weight stroke, proportionally larger halo dot
+SMALL = dict(PRIMARY, stroke=145, dot=(0, 158), halo=86)
+# icon cut: chunkier still, tighter bell, made for square tiles
 ICON = dict(stroke=160, width=1000, tail_y=690, depth=880, sigma=165,
-            dot=(45, 195))
+            dot=(45, 195))          # solid dot — favicon only
+ICON_HALO = dict(ICON, dot=(0, 174), halo=94)
 
 GAP = -15
 OUT = "out"
@@ -96,15 +100,16 @@ emit("vybes-wordmark-small-white.svg", wm_small["geom"], "#FFFFFF", pad=40,
     title="Vybes wordmark small cut, white")
 
 # ---- mark (icon cut) ------------------------------------------------------
-mk = L.vmark(ICON)
+mk = L.vmark(ICON_HALO)
+mk_solid = L.vmark(ICON)  # favicon only: the halo dies below ~20 px
 metrics["mark"] = emit("vybes-mark.svg", mk["geom"], TEAL, pad=40,
-    title="Vybes mark", desc="Standalone waveform-V mark, icon cut.")
+    title="Vybes mark", desc="Standalone bell-cut mark, icon cut with halo dot.")
 emit("vybes-mark-white.svg", mk["geom"], "#FFFFFF", pad=40, title="Vybes mark white")
 emit("vybes-mark-black.svg", mk["geom"], "#000000", pad=40, title="Vybes mark mono")
 
 # ---- app icons ------------------------------------------------------------
-def app_icon(name, tile, mark_fill, scale_frac, rounded, size=512):
-    g = mk["geom"]
+def app_icon(name, tile, mark_fill, scale_frac, rounded, size=512, geom=None):
+    g = geom if geom is not None else mk["geom"]
     minx, miny, maxx, maxy = g.bounds
     gw, gh = maxx - minx, maxy - miny
     s = size * scale_frac / max(gw, gh)
@@ -125,7 +130,8 @@ def app_icon(name, tile, mark_fill, scale_frac, rounded, size=512):
 app_icon("vybes-app-icon.svg", TEAL, "#FFFFFF", 0.62, rounded=True)
 app_icon("vybes-app-icon-maskable.svg", TEAL, "#FFFFFF", 0.52, rounded=False)  # motif inside 80% safe circle
 app_icon("vybes-app-icon-dark.svg", DARK, TEAL_LIGHT, 0.62, rounded=True)
-app_icon("vybes-favicon.svg", DARK, TEAL_LIGHT, 0.70, rounded=True, size=64)
+app_icon("vybes-favicon.svg", DARK, TEAL_LIGHT, 0.70, rounded=True, size=64,
+         geom=mk_solid["geom"])
 
 # ---- 3D print set ---------------------------------------------------------
 # Solid single-outline artwork, sized in mm at intended physical size.

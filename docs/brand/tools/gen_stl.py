@@ -4,7 +4,7 @@ import trimesh
 from shapely.geometry import box
 from shapely.affinity import translate, scale
 import logolib as L
-from gen_final import PRIMARY, ICON, GAP, FONT_DISPLAY
+from gen_final import PRIMARY, ICON_HALO, GAP, FONT_DISPLAY
 
 # Badge: 90 x 34 x 2 mm plate, logo raised 1.2 mm on top.
 # Uses the production display cut (Medium letters, halo dot): at 78 mm wide
@@ -42,7 +42,7 @@ print("badge:", badge.bounds.round(2).tolist(), "watertight parts:",
 COIN_D, COIN_T = 30.0, 2.4
 from shapely.geometry import Point
 coin = Point(COIN_D / 2, COIN_D / 2).buffer(COIN_D / 2, quad_segs=64)
-mk = L.vmark(ICON)["geom"]
+mk = L.vmark(ICON_HALO)["geom"]
 mb = mk.bounds
 ms = (COIN_D * 0.62) / max(mb[2] - mb[0], mb[3] - mb[1])
 mk2 = scale(mk, xfact=ms, yfact=ms, origin=(0, 0))
@@ -51,8 +51,12 @@ mk2 = translate(mk2,
                 xoff=(COIN_D - (mb2[2] - mb2[0])) / 2 - mb2[0],
                 yoff=(COIN_D - (mb2[3] - mb2[1])) / 2 - mb2[1])
 coin_mesh = trimesh.creation.extrude_polygon(coin, height=COIN_T)
-mark_mesh = trimesh.creation.extrude_polygon(mk2, height=1.0)
-mark_mesh.apply_translation([0, 0, COIN_T])
-coin_out = trimesh.util.concatenate([coin_mesh, mark_mesh])
+mark_polys = [mk2] if mk2.geom_type == "Polygon" else list(mk2.geoms)
+mark_meshes = []
+for p in mark_polys:
+    m = trimesh.creation.extrude_polygon(p, height=1.0)
+    m.apply_translation([0, 0, COIN_T])
+    mark_meshes.append(m)
+coin_out = trimesh.util.concatenate([coin_mesh] + mark_meshes)
 coin_out.export("out/vybes-coin.stl")
 print("coin:", coin_out.bounds.round(2).tolist())

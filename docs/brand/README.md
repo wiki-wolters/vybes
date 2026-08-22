@@ -12,9 +12,10 @@ no text elements), so they import cleanly into CAD, cutters, and print RIPs.
 
 | Token    | Hex       | Use                                            |
 |----------|-----------|------------------------------------------------|
-| Teal 500 | `#17808D` | Primary. Light backgrounds only (3.7:1 on dark UI — fails AA there). |
-| Teal 300 | `#45AEBC` | Wordmark/mark on dark UI surfaces (6.6:1 on `#161b22`). |
-| Teal 700 | `#0F5761` | Duotone accents, hover.                        |
+| Teal 500 | `#17808D` | Primary. Light backgrounds, and interactive FILLS in the UI (white text on it is 4.7:1). As text on dark it is only 3.7:1 — fails AA. |
+| Teal 300 | `#45AEBC` | Wordmark/mark, active-state text and thin chart lines on dark UI (6.6:1 on `#161b22`). |
+| Teal 600 | `#136B77` | Hover state for Teal 500 fills.                |
+| Teal 700 | `#0F5761` | Duotone accents.                               |
 
 CMYK for Teal 500 ≈ C84 M9 Y0 K45 (naive conversion — proof against the
 printer's profile before volume runs). Prefer the black mono files for
@@ -24,13 +25,14 @@ single-colour print.
 
 **Screen**
 - `vybes-wordmark.svg` — primary (Teal 500, light grounds), ≥ 32 px tall.
-- `vybes-wordmark-small.svg` — small-size cut (heavier curve, larger solid
-  dot — the halo closes below ~24 px) for 16–32 px tall. Below 16 px use
-  the mark alone.
+- `vybes-wordmark-small.svg` — small-size cut for 16–32 px tall (heavier
+  curve; the halo is scaled up with the stroke so it stays open at these
+  sizes). Below 16 px use the mark alone.
 - `vybes-wordmark-reversed.svg` / `-teal-light.svg` / `-black.svg` — white,
   dark-UI teal, and mono colourways of the primary cut.
 - `vybes-mark.svg` (+ `-white`, `-black`) — standalone icon-cut mark.
-- `vybes-favicon.svg` — 64 px tile, dark ground + Teal 300.
+- `vybes-favicon.svg` — 64 px tile, dark ground + Teal 300. The one solid-dot
+  file: below ~20 px the halo dies, so the favicon keeps the dot filled.
 - `vybes-app-icon.svg` — 512 rounded tile (purpose `any`).
 - `vybes-app-icon-maskable.svg` — full-bleed, mark inside the 80% safe
   circle (purpose `maskable`). Keep these two as separate manifest entries.
@@ -45,7 +47,7 @@ single-colour print.
 - `vybes-3d-wordmark-solid.svg` — sized 80 mm wide in the file; thinnest
   feature 2.0 mm and a 1.5 mm halo moat at that size (safe for a 0.4 mm
   nozzle down to ~34 mm wide).
-- `vybes-3d-mark-solid.svg` — sized 30 mm; thinnest feature 4.1 mm.
+- `vybes-3d-mark-solid.svg` — sized 30 mm; thinnest feature 3.5 mm.
 - `vybes-3d-wordmark-stencil.svg` — counters of b/e bridged (the halo dot
   needs no bridge — material connects through the halo openings); use for
   cut-through stencils or deep deboss moulds where islands would fall out.
