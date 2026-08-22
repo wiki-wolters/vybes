@@ -29,7 +29,7 @@
             </span>
           </span>
           <span class="flex items-center gap-1.5">
-            <span class="inline-block w-3 h-0.5 rounded bg-vybes-live"></span>
+            <span class="inline-block w-3 h-0.5 rounded bg-vybes-accent"></span>
             <span class="text-vybes-text-secondary">Microphone</span>
             <span :class="micActive ? 'text-vybes-live' : 'text-vybes-text-secondary'">
               {{ micActive ? (calPoints ? 'on (calibrated)' : 'on') : 'off' }}
@@ -39,6 +39,15 @@
             level aligned {{ offset >= 0 ? '+' : '' }}{{ offset.toFixed(1) }} dB
           </span>
         </div>
+        <p class="-mt-2 mb-3 text-[11px] text-vybes-text-secondary">
+          Bars show the fast level and the tick above each one is its decaying peak; the line is
+          the time average, and the average is what the deviation and EQ below are built from.
+          <template v-if="micActive">
+            Where the bars overlap they turn
+            <span class="legend-both">green</span> — the cap above that is the difference between
+            source and mic.
+          </template>
+        </p>
 
         <!-- Overlay chart -->
         <div ref="chartContainer" class="w-full rounded bg-black/30 overflow-hidden">
@@ -63,6 +72,14 @@
               <line class="grid-line" :x1="line.x" :y1="0" :x2="line.x" :y2="chartHeight - 14" />
               <text class="grid-label" :x="line.x" :y="chartHeight - 4" font-size="9" text-anchor="middle">{{ line.label }}</text>
             </g>
+            <!-- Bars (fast level) under the averaged traces: shared baseline, so
+                 the overlap colour is the level both agree on and the
+                 single-colour cap above it is the deviation between them. -->
+            <path v-if="barLayers.both" class="bar-both" :d="barLayers.both" />
+            <path v-if="barLayers.source" class="bar-source" :d="barLayers.source" />
+            <path v-if="barLayers.mic" class="bar-mic" :d="barLayers.mic" />
+            <path v-if="barLayers.sourcePeak" class="peak-source" :d="barLayers.sourcePeak" />
+            <path v-if="barLayers.micPeak" class="peak-mic" :d="barLayers.micPeak" />
             <path v-if="sourcePath" class="trace-source" :d="sourcePath" fill="none" stroke-width="2" opacity="0.9" />
             <path v-if="micPath" class="trace-mic" :d="micPath" fill="none" stroke-width="2" opacity="0.9" />
             <!-- Crosshair: nearest band under the pointer/finger -->
@@ -509,6 +526,8 @@ import {
   calCurveForGrid,
   medianOffset,
   averageDbArrays,
+  makePeakHold,
+  updatePeakHold,
   BUILTIN_CAL_PRESETS,
 } from '../rta.js';
 import { TARGET_CURVE_PRESETS, targetCurveForGrid } from '../target-curves.js';
@@ -556,6 +575,22 @@ const micError = ref('');
 const frozen = ref(false);
 const averagingSeconds = ref(2);
 const offset = ref(0);
+
+// --- Fast bars and peak hold ---
+// Three layers per trace: bars showing the fast level, a peak tick that
+// holds then falls back, and the existing time-averaged line. The bar layer
+// carries its own short time constant - the raw 1/12-octave bands strobe
+// several dB frame to frame - while the peak ticks track the raw frames,
+// which is the point of a peak. Both feeds arrive at 10Hz.
+// (See updatePeakHold in rta.js for why the hold stage is not optional.)
+const FAST_TC_SEC = 0.18;
+const PEAK_DECAY_DB_PER_S = 15;
+const PEAK_HOLD_MS = 800;
+
+const sourceFastDb = ref(null); // Float32Array on the device's native grid
+const sourcePeakDb = ref(null);
+const micFastDb = ref(null); // Float32Array on displayGrid
+const micPeakDb = ref(null);
 
 const calPoints = ref(null); // [[freq, gain], ...] from the cal file or preset
 const calName = ref('');
@@ -611,13 +646,17 @@ const sourceLive = computed(
   () => sourceDb.value && nowTick.value - lastSourceFrameAt.value < SOURCE_STALE_MS
 );
 
+// Shift applied to every mic layer so it sits on the source's scale. With no
+// live source there is nothing to align to, so the mic is drawn as measured.
+const micShift = computed(() => (sourceLive.value ? offset.value : 0));
+
 // --- Exponential averaging in the power domain ---
 // avg <- avg + alpha * (new - avg), alpha derived from elapsed time and the
 // selected time constant, computed on power (not dB) so loud moments don't
 // dominate the way dB-domain averaging would.
-function emaUpdate(avgPower, newDb, dtMs) {
-  // SelectGroup emits strings, hence the Number()
-  const alpha = Math.min(1, dtMs / 1000 / Number(averagingSeconds.value));
+function emaUpdate(avgPower, newDb, dtMs, tauSec = Number(averagingSeconds.value)) {
+  // SelectGroup emits strings, hence the Number() on the default
+  const alpha = Math.min(1, dtMs / 1000 / tauSec);
   for (let i = 0; i < newDb.length; i++) {
     const p = Math.pow(10, newDb[i] / 10);
     avgPower[i] = avgPower[i] <= 0 ? p : avgPower[i] + alpha * (p - avgPower[i]);
@@ -636,6 +675,8 @@ function powerToDb(avgPower) {
 let unsubscribeLive = null;
 let keepaliveTimer = null;
 let sourceAvgPower = new Float32Array(makeBandGrid(3).centers.length);
+let sourceFastPower = new Float32Array(makeBandGrid(3).centers.length);
+let sourcePeakHold = makePeakHold(makeBandGrid(3).centers.length);
 let lastSourceEmaAt = 0;
 
 // EQ/FIR edits made anywhere (preset editor, another client, our own Apply)
@@ -671,13 +712,22 @@ function onLiveMessage(data) {
   if (decoded.grid.bandsPerOctave !== sourceNativeBpo.value) {
     sourceNativeBpo.value = decoded.grid.bandsPerOctave;
     sourceAvgPower = new Float32Array(decoded.grid.centers.length);
+    sourceFastPower = new Float32Array(decoded.grid.centers.length);
+    sourcePeakHold = makePeakHold(decoded.grid.centers.length);
     lastSourceEmaAt = 0;
     sourceDb.value = null;
+    sourceFastDb.value = null;
+    sourcePeakDb.value = null;
   }
   if (frozen.value) return;
-  emaUpdate(sourceAvgPower, decoded.values, lastSourceEmaAt ? now - lastSourceEmaAt : 1000);
+  const dtMs = lastSourceEmaAt ? now - lastSourceEmaAt : 1000;
+  emaUpdate(sourceAvgPower, decoded.values, dtMs);
+  emaUpdate(sourceFastPower, decoded.values, dtMs, FAST_TC_SEC);
+  updatePeakHold(sourcePeakHold, decoded.values, now, dtMs, PEAK_DECAY_DB_PER_S, PEAK_HOLD_MS);
   lastSourceEmaAt = now;
   sourceDb.value = powerToDb(sourceAvgPower);
+  sourceFastDb.value = powerToDb(sourceFastPower);
+  sourcePeakDb.value = sourcePeakHold.values.slice();
 }
 
 // Source trace on the common grid (aggregated down when the display
@@ -693,6 +743,27 @@ const micCompareDb = computed(() =>
   micDb.value ? aggregateBands(micDb.value, displayGrid.value, compareGrid.value) : null
 );
 
+// Bar and peak layers on the common grid. The device streams 1/12 octave, so
+// in practice both feeds already sit on the display grid and these are
+// pass-throughs; the aggregation only does work if a future firmware streams
+// coarser than the display selection.
+const sourceFastCompareDb = computed(() =>
+  sourceFastDb.value
+    ? aggregateBands(sourceFastDb.value, makeBandGrid(sourceNativeBpo.value), compareGrid.value)
+    : null
+);
+const sourcePeakCompareDb = computed(() =>
+  sourcePeakDb.value
+    ? aggregateBands(sourcePeakDb.value, makeBandGrid(sourceNativeBpo.value), compareGrid.value)
+    : null
+);
+const micFastCompareDb = computed(() =>
+  micFastDb.value ? aggregateBands(micFastDb.value, displayGrid.value, compareGrid.value) : null
+);
+const micPeakCompareDb = computed(() =>
+  micPeakDb.value ? aggregateBands(micPeakDb.value, displayGrid.value, compareGrid.value) : null
+);
+
 // --- Microphone spectrum via Web Audio ---
 let micStream = null;
 let audioContext = null;
@@ -700,7 +771,20 @@ let analyser = null;
 let micPollTimer = null;
 let micFreqData = null;
 let micAvgPower = new Float32Array(displayGrid.value.centers.length);
+let micFastPower = new Float32Array(displayGrid.value.centers.length);
+let micPeakHold = makePeakHold(displayGrid.value.centers.length);
 let lastMicEmaAt = 0;
+
+// Restart every mic averaging buffer on the current display grid.
+function resetMicBuffers() {
+  micAvgPower = new Float32Array(displayGrid.value.centers.length);
+  micFastPower = new Float32Array(displayGrid.value.centers.length);
+  micPeakHold = makePeakHold(displayGrid.value.centers.length);
+  lastMicEmaAt = 0;
+  micDb.value = null;
+  micFastDb.value = null;
+  micPeakDb.value = null;
+}
 
 async function startMic() {
   micError.value = '';
@@ -730,8 +814,7 @@ async function startMic() {
   analyser.smoothingTimeConstant = 0; // we do our own time averaging
   audioContext.createMediaStreamSource(micStream).connect(analyser);
   micFreqData = new Float32Array(analyser.frequencyBinCount);
-  micAvgPower = new Float32Array(displayGrid.value.centers.length);
-  lastMicEmaAt = 0;
+  resetMicBuffers();
   micActive.value = true;
   settleAnchor.value = Date.now();
   // Fresh mic session: re-sample the noise floor
@@ -753,7 +836,7 @@ function stopMic() {
   }
   analyser = null;
   micActive.value = false;
-  micDb.value = null;
+  resetMicBuffers();
   floorSampling = false;
 }
 
@@ -780,9 +863,14 @@ function pollTick() {
   }
   if (floorSampling) sampleNoiseFloor(bands);
   const now = Date.now();
-  emaUpdate(micAvgPower, bands, lastMicEmaAt ? now - lastMicEmaAt : 1000);
+  const dtMs = lastMicEmaAt ? now - lastMicEmaAt : 1000;
+  emaUpdate(micAvgPower, bands, dtMs);
+  emaUpdate(micFastPower, bands, dtMs, FAST_TC_SEC);
+  updatePeakHold(micPeakHold, bands, now, dtMs, PEAK_DECAY_DB_PER_S, PEAK_HOLD_MS);
   lastMicEmaAt = now;
   micDb.value = powerToDb(micAvgPower);
+  micFastDb.value = powerToDb(micFastPower);
+  micPeakDb.value = micPeakHold.values.slice();
 
   // Level alignment: mic and source have unrelated absolute scales, so
   // shift the mic trace by the median difference before comparing - taken
@@ -845,9 +933,7 @@ const floorCompareDb = computed(() =>
 watch(resolution, (v) => {
   localStorage.setItem(RESOLUTION_STORAGE_KEY, String(Number(v)));
   frozen.value = false;
-  micAvgPower = new Float32Array(displayGrid.value.centers.length);
-  lastMicEmaAt = 0;
-  micDb.value = null;
+  resetMicBuffers();
   settleAnchor.value = Date.now();
   floorSampling = false;
 });
@@ -922,12 +1008,18 @@ const bandPixelWidth = (grid) =>
   (width.value - padLeft) / ((LOG_X_HI - LOG_X_LO) * grid.perDecade);
 
 // Y scale of the overlay chart: 70dB window that tracks the loudest band.
+// The peak layer is included, or the ticks would pin to the top edge exactly
+// when they have something to say.
 const topDb = computed(() => {
   let max = -60;
-  if (sourceCompareDb.value) for (const v of sourceCompareDb.value) max = Math.max(max, v);
-  if (micDb.value && sourceLive.value) {
-    for (const v of micDb.value) max = Math.max(max, v - offset.value);
-  }
+  const scan = (values, shift) => {
+    if (!values) return;
+    for (const v of values) max = Math.max(max, v - shift);
+  };
+  scan(sourceCompareDb.value, 0);
+  scan(sourcePeakCompareDb.value, 0);
+  scan(micDb.value, micShift.value);
+  scan(micPeakDb.value, micShift.value);
   return Math.ceil(max / 10) * 10 + 5;
 });
 const bottomDb = computed(() => topDb.value - 70);
@@ -968,8 +1060,76 @@ const sourcePath = computed(() =>
 );
 // The mic trace is drawn pre-shifted onto the source's scale
 const micPath = computed(() =>
-  micDb.value ? tracePath(micDb.value, displayGrid.value, sourceLive.value ? offset.value : 0) : ''
+  micDb.value ? tracePath(micDb.value, displayGrid.value, micShift.value) : ''
 );
+
+// --- Bar layers ---
+// Both traces grow from the bottom of the dB window and share a baseline, so
+// the shorter bar always sits inside the taller one: the overlap region is
+// the level the two agree on, and the single-colour cap above it is exactly
+// the deviation the delta chart plots below. Each layer is one <path> of
+// rect subpaths rather than a rect per band - at 1/12 octave that is 121
+// bands x 5 layers of DOM re-diffing at 10Hz, which this does not need to
+// cost on a phone.
+const BAR_WIDTH_FRACTION = 0.78;
+const BAR_FLOOR_DB = -110; // same "don't draw the floor" cut as the traces
+const PEAK_TICK_PX = 2;
+
+const barLayers = computed(() => {
+  const grid = compareGrid.value;
+  const baseY = chartHeight - 14;
+  const w = bandPixelWidth(grid) * BAR_WIDTH_FRACTION;
+  const clampY = (db) => Math.min(baseY, Math.max(0, dbToY(db)));
+  // Keep a tick inside the plot even when its band is pinned to the baseline
+  const tickY = (db) => Math.min(baseY - PEAK_TICK_PX, clampY(db));
+  const box = (x, top, bottom) =>
+    bottom - top > 0.5
+      ? `M${x.toFixed(1)} ${top.toFixed(1)}h${w.toFixed(1)}V${bottom.toFixed(1)}H${x.toFixed(1)}Z`
+      : '';
+
+  const shift = micShift.value;
+  const srcVals = sourceLive.value ? sourceFastCompareDb.value : null;
+  const micVals = micActive.value ? micFastCompareDb.value : null;
+  const srcPeaks = sourceLive.value ? sourcePeakCompareDb.value : null;
+  const micPeaks = micActive.value ? micPeakCompareDb.value : null;
+  const floor = floorCompareDb.value;
+
+  const layers = { both: '', source: '', mic: '', sourcePeak: '', micPeak: '' };
+  for (let i = 0; i < grid.centers.length; i++) {
+    const x = xForFreq(grid.centers[i]) - w / 2;
+    const s = srcVals && srcVals[i] > BAR_FLOOR_DB ? srcVals[i] : null;
+    // A mic band sitting in its own noise floor measures room ambience, not
+    // room response - the bands the delta chart already drops. Showing the
+    // source alone there beats drawing a bar built on noise.
+    const micGated =
+      !micVals ||
+      micVals[i] <= BAR_FLOOR_DB ||
+      (floor && micVals[i] < floor[i] + NOISE_FLOOR_MARGIN_DB);
+    const m = micGated ? null : micVals[i] - shift;
+
+    if (s !== null && m !== null) {
+      const lo = clampY(Math.min(s, m));
+      layers.both += box(x, lo, baseY);
+      const cap = box(x, clampY(Math.max(s, m)), lo);
+      if (s > m) layers.source += cap;
+      else layers.mic += cap;
+    } else if (s !== null) {
+      layers.source += box(x, clampY(s), baseY);
+    } else if (m !== null) {
+      layers.mic += box(x, clampY(m), baseY);
+    }
+
+    if (srcPeaks && srcPeaks[i] > BAR_FLOOR_DB) {
+      const y = tickY(srcPeaks[i]);
+      layers.sourcePeak += box(x, y, y + PEAK_TICK_PX);
+    }
+    if (!micGated && micPeaks && micPeaks[i] > BAR_FLOOR_DB) {
+      const y = tickY(micPeaks[i] - shift);
+      layers.micPeak += box(x, y, y + PEAK_TICK_PX);
+    }
+  }
+  return layers;
+});
 
 // --- Delta chart ---
 const deltaZeroY = deltaHeight / 2;
@@ -1147,7 +1307,7 @@ const spectrumHover = computed(() => {
     ? sourceCompareDb.value[gridIndexForFreq(compareGrid.value, freq)]
     : NaN;
   // Read the mic on the same shifted scale it's drawn at
-  const mic = micDb.value ? micDb.value[i] - (sourceLive.value ? offset.value : 0) : NaN;
+  const mic = micDb.value ? micDb.value[i] - micShift.value : NaN;
   const hasSrc = Number.isFinite(src) && src > -110;
   const hasMic = Number.isFinite(mic) && mic > -110;
   const parts = [];
@@ -1648,12 +1808,48 @@ onUnmounted(() => {
   fill: var(--vybes-text-secondary);
 }
 
+/* The bars are a muted mass (they fill most of the chart) and the averaged
+   line - the one the EQ is actually built from - is a bright tint over the
+   top. Peak ticks are near-white like the input meter's, because on a steady
+   signal a peak sits within a dB of the bar top and a same-hue tick would
+   just disappear into it; the tint says which trace it belongs to. The three
+   bar zones never overlap each other, so a flat fill-opacity is safe. */
+.bar-both,
+.bar-source,
+.bar-mic {
+  fill-opacity: 0.55;
+}
+
+.bar-both {
+  fill: var(--vybes-rta-both);
+}
+
+.bar-source {
+  fill: var(--vybes-brand);
+}
+
+.bar-mic {
+  fill: var(--vybes-accent);
+}
+
+.peak-source {
+  fill: #c2eff6; /* palest teal - the brand hue washed toward white */
+}
+
+.peak-mic {
+  fill: #ffe9bb; /* palest amber */
+}
+
+.legend-both {
+  color: var(--vybes-rta-both);
+}
+
 .trace-source {
-  stroke: var(--vybes-brand);
+  stroke: var(--vybes-brand-light);
 }
 
 .trace-mic {
-  stroke: var(--vybes-live);
+  stroke: var(--vybes-accent-light);
 }
 
 .trace-correction {
@@ -1681,7 +1877,7 @@ onUnmounted(() => {
 }
 
 .dot-mic {
-  fill: var(--vybes-live);
+  fill: var(--vybes-accent);
 }
 
 .hover-label-box {

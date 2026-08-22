@@ -32,6 +32,9 @@
   --vybes-text-primary: #e5ebf3;
   --vybes-text-secondary: #8b96a8;
   --vybes-live: #22c55e; /* semantic "live signal" green */
+  /* Analyzer bar overlay: where the source (teal) and mic (amber) bars cover
+     the same level. Deliberately pastel - it fills most of the chart. */
+  --vybes-rta-both: #7fc98c;
 }
 
 body {

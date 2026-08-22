@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { averageDbArrays, BUILTIN_CAL_PRESETS, makeBandGrid, aggregateBands, medianOffset } from '../../src/rta.js'
+import { averageDbArrays, BUILTIN_CAL_PRESETS, makeBandGrid, aggregateBands, medianOffset, makePeakHold, updatePeakHold } from '../../src/rta.js'
 
 describe('averageDbArrays', () => {
   it('returns null for an empty list', () => {
@@ -118,5 +118,88 @@ describe('aggregateBands with a noise-floor-shaped input', () => {
     for (let i = 1; i < out.length - 1; i++) {
       expect(out[i]).toBeCloseTo(-60 + 10 * Math.log10(4), 1)
     }
+  })
+})
+
+describe('updatePeakHold', () => {
+  const DECAY = 15 // dB/s
+  const HOLD = 800 // ms
+
+  // Drive one band with a constant level for a stretch of 100ms frames.
+  const run = (state, level, frames, startMs) => {
+    let t = startMs
+    for (let i = 0; i < frames; i++) {
+      t += 100
+      updatePeakHold(state, [level], t, 100, DECAY, HOLD)
+    }
+    return t
+  }
+
+  it('snaps up to the first frame from the initial floor', () => {
+    const state = makePeakHold(1)
+    expect(state.values[0]).toBe(-200)
+    updatePeakHold(state, [-30], 1000, 100, DECAY, HOLD)
+    expect(state.values[0]).toBeCloseTo(-30, 6)
+  })
+
+  it('holds the peak flat for holdMs after the level drops', () => {
+    const state = makePeakHold(1)
+    let t = run(state, -30, 1, 0)
+    // 700ms of a much quieter signal: still inside the hold window
+    t = run(state, -60, 7, t)
+    expect(state.values[0]).toBeCloseTo(-30, 6)
+  })
+
+  it('falls at decayDbPerSec once the hold expires', () => {
+    const state = makePeakHold(1)
+    let t = run(state, -30, 1, 0)
+    t = run(state, -60, 8, t) // hold expires on the 8th frame (800ms)
+    const afterHold = state.values[0]
+    expect(afterHold).toBeCloseTo(-31.5, 6) // one frame's decay: 15 dB/s * 0.1s
+    t = run(state, -60, 10, t)
+    expect(state.values[0]).toBeCloseTo(afterHold - 15, 6) // a further second
+  })
+
+  it('never falls below the current level', () => {
+    const state = makePeakHold(1)
+    let t = run(state, -30, 1, 0)
+    run(state, -40, 40, t) // 4s, far more decay than the 10 dB gap
+    expect(state.values[0]).toBeCloseTo(-40, 6)
+  })
+
+  it('re-arms the hold whenever a band is pushed back up', () => {
+    const state = makePeakHold(1)
+    let t = run(state, -30, 1, 0)
+    t = run(state, -60, 12, t) // decayed past the hold
+    expect(state.values[0]).toBeLessThan(-30)
+    t = run(state, -20, 1, t) // a louder frame
+    expect(state.values[0]).toBeCloseTo(-20, 6)
+    t = run(state, -60, 7, t) // pinned again for the full hold
+    expect(state.values[0]).toBeCloseTo(-20, 6)
+  })
+
+  it('separates from a steady signal whose jitter is under one frame of decay', () => {
+    // The reason the hold stage exists: with 1.5 dB of decay per frame and
+    // jitter smaller than that, a hold-less peak would sit exactly on the
+    // current level and show nothing.
+    const state = makePeakHold(1)
+    let t = 0
+    let last = 0
+    for (let i = 0; i < 60; i++) {
+      t += 100
+      last = -40 + (i % 4 === 0 ? 0.8 : -0.4) // ±~1 dB of band jitter
+      updatePeakHold(state, [last], t, 100, DECAY, HOLD)
+    }
+    expect(state.values[0]).toBeGreaterThan(last + 0.5)
+  })
+
+  it('tracks each band independently', () => {
+    const state = makePeakHold(3)
+    updatePeakHold(state, [-10, -50, -30], 1000, 100, DECAY, HOLD)
+    // A 1s frame: the 800ms hold has expired, so a full second of decay applies
+    updatePeakHold(state, [-70, -50, -70], 2000, 1000, DECAY, HOLD)
+    expect(state.values[0]).toBeCloseTo(-25, 6)
+    expect(state.values[1]).toBeCloseTo(-50, 6) // re-armed by its own level, held
+    expect(state.values[2]).toBeCloseTo(-45, 6)
   })
 })

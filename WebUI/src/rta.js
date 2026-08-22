@@ -145,6 +145,34 @@ function interpolateLogFreq(points, freq) {
   return last[1];
 }
 
+// --- Per-band peak hold ---
+// The ballistic of a hardware meter: a band that rises takes the new value
+// and is pinned there for holdMs, then falls at decayDbPerSec until
+// something pushes it up again. The hold stage is what makes the layer worth
+// drawing - on a steady signal whose frame-to-frame jitter is smaller than
+// one frame's worth of decay, a hold-less peak just sits on the current
+// level and tells you nothing.
+export function makePeakHold(bandCount, initDb = -200) {
+  return {
+    values: new Float32Array(bandCount).fill(initDb),
+    holdUntil: new Float64Array(bandCount),
+  };
+}
+
+export function updatePeakHold(state, newDb, nowMs, dtMs, decayDbPerSec, holdMs) {
+  const fall = (decayDbPerSec * dtMs) / 1000;
+  const { values, holdUntil } = state;
+  for (let i = 0; i < newDb.length; i++) {
+    if (newDb[i] >= values[i]) {
+      values[i] = newDb[i];
+      holdUntil[i] = nowMs + holdMs;
+    } else if (nowMs >= holdUntil[i]) {
+      values[i] = Math.max(newDb[i], values[i] - fall);
+    }
+  }
+  return values;
+}
+
 // Power-domain average of several per-band dB arrays (deviation snapshots
 // from different mic positions). Per band, the mean is taken over the
 // arrays that have a finite value there; NaN when none does. All arrays
