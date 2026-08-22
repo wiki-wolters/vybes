@@ -3,7 +3,6 @@
 #include <SD.h>
 #include <SerialFlash.h>
 #include <malloc.h>
-#include <new>          // std::nothrow for the shared FIR buffer block
 #include "FIRLoader.h"
 #include "PEQProcessor.h"
 #include "CrossoverFilter.h"
@@ -63,25 +62,25 @@ SerialCommandRouter router(Serial1);
 
 // FIR taps shared across all outputs (FIR_TAP_POOL on the ESP). Loads that
 // would push the total over the pool are rejected with an error the ESP can
-// relay. Fast convolution costs 16 bytes/tap of heap (2 x partitions x 256
-// floats), so a full pool is ~192KB of the ~207KB the RAM2 heap has left once
-// the audio block pool, the RTA and everything else are up. That margin is
-// why loadFirFiles streams coefficients into the engine instead of loading
-// the file into an array first: the extra 4 bytes/tap of a whole-file copy
-// put an exact-fit set (3072+3072+6144) over the top, and the last filter
-// failed to load. The direct engine runs out of CPU long before it runs out
-// of pool.
+// relay. Fast convolution costs 16 bytes/tap (2 x partitions x 256 floats),
+// so a full pool is ~192KB - reserved once, statically, as firArena rather
+// than fought for on the heap at every load. The pool is what that fixed
+// block holds, not a guess at what the heap can spare. It is also why
+// loadFirFiles streams coefficients into the engine instead of reading the
+// file into an array first: a whole-file copy would need another 4 bytes/tap
+// of heap on top, and an exact-fit set (3072+3072+6144) has none to give.
+// The direct engine runs out of CPU long before it runs out of pool.
 #define FIR_TAP_POOL 12288
 
 // Audio block pool size (see the AudioMemory call in setup for the budget).
 #define AUDIO_POOL_BLOCKS (FIR_USE_FAST_CONVOLUTION ? 480 : 240)
 
-// RAM2 heap and audio-block-pool stats, printed where the budget matters:
-// FIR loads are the only large runtime allocations, and the pool-sized
-// fast-convolution buffers (~196KB) plus the loader's transient (~48KB)
-// compete with the USB resampler, RTA and compressor buffers for the same
-// heap. "unclaimed" is heap sbrk has never handed out; "reclaimable" is
-// freed space inside the arena (usable, but possibly fragmented).
+// RAM2 heap and audio-block-pool stats, printed where the budget matters.
+// "unclaimed" is heap sbrk has never handed out; "reclaimable" is what
+// mallinfo reports free inside the claimed region. Treat the sum as a floor,
+// not the free heap: both numbers held still across a 196,608-byte FIR load
+// (2026-08-22), so malloc's top chunk is not in either of them. The linker's
+// "free for malloc/new" is the number to size anything against.
 extern unsigned long _heap_end;
 extern char* __brkval;
 static void printMemoryStats(const char* tag) {
@@ -1224,22 +1223,37 @@ static void reportFirError(int ch, const char* code, const char* file) {
   Serial1.printf("FIRERR %d %s %s\n", ch, code, file);
 }
 
-// One block holding every loaded filter's working buffers, sliced across the
-// channels. Six separate large allocations cost the allocator ~8KB of
-// padding each - ~24KB against a 15KB margin at the pool limit, which is
-// what failed the last reservation with 64KB still free. Claimed once per
-// load, so that padding is paid once. Null when no filter is loaded.
-static float* firArena = nullptr;
+// One fixed block holding every loaded filter's working buffers, sliced
+// across the channels at each load. Reserved statically rather than
+// allocated per load: a full pool needs ~206KB in one contiguous run, and
+// re-requesting that only works while the heap is still pristine. Turning
+// one filter off and back on frees the block, asks for a smaller one, then
+// asks for a bigger one again - and by then no single run that size is left,
+// so the request fails, the per-filter fallback fits all but the last
+// filter, and that output runs uncorrected (the FIRERR nomem on output 1 of
+// a 3072/3072/6144 set). Holding the worst case at a fixed address costs the
+// same RAM2 a full pool always took and makes every set the pool check
+// accepts fit by construction - no allocation left to fail, no fallback.
+//
+// Worst case: fast convolution rounds each filter up to a whole 128-tap
+// partition and spends 2 x FFT_SIZE floats per partition, so a pool spread
+// across every output wastes at most one partial partition per channel. The
+// direct engine needs 2 taps + 127 floats per channel, far less, so sizing
+// for fast convolution covers both.
+// (Ceiling division, so the bound still holds if the pool ever stops being
+// a whole number of partitions.)
+static constexpr size_t FIR_ARENA_FLOATS =
+    (((size_t)FIR_TAP_POOL + FirEngine::BLOCK_SAMPLES - 1) / FirEngine::BLOCK_SAMPLES +
+     NUM_OUTPUTS - 1) * FirEngine::FFT_SIZE * 2;
+DMAMEM static float firArena[FIR_ARENA_FLOATS];
 
-// Clears every filter and releases the block its buffers lived in. The
-// engines hold slices of it, so they have to be cleared first.
+// Clears every filter, so the slices of firArena they hold go unreferenced
+// before the next load re-carves it.
 static void releaseFirBuffers() {
   for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
     firFilter[ch].loadCoefficients(nullptr, 0);
     state.outputs[ch].firTaps = 0;
   }
-  delete[] firArena;
-  firArena = nullptr;
 }
 
 // Streams one output's file into the buffers already reserved for it. The
@@ -1295,15 +1309,12 @@ void loadFirFiles() {
     return;
   }
 
-  // Three passes, because the engine's partition arrays are large, need
-  // contiguous runs, and the heap only has ~15KB of slack at the pool limit
-  // (measured: 211,672 bytes free with nothing loaded, 196,608 for a full
-  // pool). Size every file first, then claim the whole set as a single
-  // block, then read the files in. Allocating per filter as each was read
-  // used to fail the last one with 64KB still free - partly because the SD
-  // opens and String temporaries in between cut up the free space, and
-  // mostly because every large request costs ~8KB of allocator padding that
-  // is then too small to serve the next one.
+  // Three passes: size every file, carve the arena into a slice per output,
+  // then read the files in. Sizing has to come first because the pool is
+  // shared - what fits depends on the whole set, not on one file - and the
+  // reads have to come last because an SD open between two reservations used
+  // to cut up the free space they needed (see firArena, which is now static
+  // so the slicing cannot fail either way).
   printMemoryStats("before FIR loads");
   releaseFirBuffers();
 
@@ -1352,63 +1363,40 @@ void loadFirFiles() {
     poolUsed += (uint32_t)fileTaps;
   }
 
-  // Pass 2: claim the whole set as one block and carve it up, largest first.
-  // Nothing between here and the fills touches the SD card or builds a
-  // String, and there is only the one request for the allocator to pad.
-  int order[NUM_OUTPUTS];
-  uint16_t orderTaps[NUM_OUTPUTS];
-  int reserved = 0;
-  size_t arenaFloats = 0;
-  for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
-    if (wantTaps[ch] > 0) arenaFloats += firFilter[ch].reservedFloats((uint16_t)wantTaps[ch]);
-  }
-  if (arenaFloats > 0) {
-    firArena = new (std::nothrow) float[arenaFloats];
-    if (firArena == nullptr) {
-      // Fall back to a buffer per filter: a set that won't fit one block
-      // may still fit the holes, and a smaller filter still beats none.
-      Serial1.printf("ERROR FIR arena alloc failed (%lu bytes), falling back\n",
-                     (unsigned long)(arenaFloats * sizeof(float)));
-    }
-  }
-
+  // Pass 2: carve the arena up in channel order. Nothing here can fail for
+  // want of memory - the arena is sized for the worst case pass 1 can accept
+  // - so which outputs load no longer depends on how the heap happens to
+  // look, and a channel is never dropped for being last in line.
+  uint16_t reservedTaps[NUM_OUTPUTS] = {0};
   size_t arenaUsed = 0;
-  for (int n = 0; n < NUM_OUTPUTS; n++) {
-    int ch = -1;
-    for (int i = 0; i < NUM_OUTPUTS; i++) {
-      if (wantTaps[i] > 0 && (ch < 0 || wantTaps[i] > wantTaps[ch])) ch = i;
-    }
-    if (ch < 0) break;
+  for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
+    if (wantTaps[ch] == 0) continue;
     uint16_t taps = (uint16_t)wantTaps[ch];
-    wantTaps[ch] = 0; // taken, whatever the outcome
+    size_t need = firFilter[ch].reservedFloats(taps);
 
-    bool ok;
-    if (firArena != nullptr) {
-      ok = firFilter[ch].reserveCoefficientsIn(firArena + arenaUsed, taps);
-      if (ok) arenaUsed += firFilter[ch].reservedFloats(taps);
-    } else {
-      ok = firFilter[ch].reserveCoefficients(taps);
-    }
-    if (!ok) {
-      Serial1.printf("ERROR FIR load failed: out of memory for %s (%u taps, output %d)\n",
-                     state.outputs[ch].firFile, taps, ch);
+    // Unreachable unless the arena and the pool check disagree; slicing past
+    // the end would be a buffer overrun, so refuse the channel instead.
+    if (arenaUsed + need > FIR_ARENA_FLOATS ||
+        !firFilter[ch].reserveCoefficientsIn(firArena + arenaUsed, taps)) {
+      Serial1.printf("ERROR FIR arena exhausted: %s needs %lu floats, %lu of %lu used (output %d)\n",
+                     state.outputs[ch].firFile, (unsigned long)need,
+                     (unsigned long)arenaUsed, (unsigned long)FIR_ARENA_FLOATS, ch);
       reportFirError(ch, "nomem", state.outputs[ch].firFile);
       continue;
     }
-    order[reserved] = ch;
-    orderTaps[reserved] = taps;
-    reserved++;
+    arenaUsed += need;
+    reservedTaps[ch] = taps;
   }
 
-  // Pass 3: fill what was reserved. A file that can't be read now releases
-  // only its own buffers.
+  // Pass 3: fill what was reserved. A file that can't be read now gives up
+  // only its own slice.
   poolUsed = 0;
-  for (int n = 0; n < reserved; n++) {
-    int ch = order[n];
-    if (fillFirChannel(ch, orderTaps[n])) {
-      poolUsed += orderTaps[n];
+  for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
+    if (reservedTaps[ch] == 0) continue;
+    if (fillFirChannel(ch, reservedTaps[ch])) {
+      poolUsed += reservedTaps[ch];
       Serial.printf("Output %d FIR loaded: %s (%u taps, pool %lu/%u)\n",
-                    ch, state.outputs[ch].firFile, orderTaps[n], (unsigned long)poolUsed,
+                    ch, state.outputs[ch].firFile, reservedTaps[ch], (unsigned long)poolUsed,
                     FIR_TAP_POOL);
     }
   }
