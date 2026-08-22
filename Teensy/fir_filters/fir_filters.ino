@@ -239,6 +239,11 @@ bool firFilesPending = false;
 // change poll.
 bool recStateDirty = false;
 
+// Last time the recorder or player had a file open (refreshed every loop
+// pass while one does, and after a delete's FAT write). sdReady() holds off
+// media-presence probes for a window past this - see the comment there.
+unsigned long sdLastStreamActivityMs = 0;
+
 // --- audio hold (see CMD_SET_CONFIG_HOLD in teensy_protocol.h) ---
 // Two independent sources; audio is silent while either is asserted.
 // configHold starts true so a Teensy that reboots under a running ESP stays
@@ -1177,7 +1182,24 @@ void applyDelays() {
 // removed card listed one garbage filename and failed every FIR open, with
 // nothing anywhere saying the card was gone. Re-check the media on each use
 // and re-mount when it comes back.
+//
+// EXCEPT while the recorder or player is streaming: SD.mediaPresent() probes
+// the card with CMD13, SdFat's SDIO driver keeps a multi-block write open
+// between the recorder's sector writes, and a CMD13 issued mid-transfer
+// can't complete - status() returns 0, which mediaPresent() reads as "card
+// removed" (SD.cpp). The false removal then made the next call here re-mount
+// the volume UNDER the recorder's open file, killing every recording ~2s in.
+// While a stream is running - or the card may still be programming just
+// after one closed - trust the mount and let the stream's own read/write
+// failures be the removal detector; the recorder already stops cleanly on a
+// failed write.
+#define SD_PROBE_HOLDOFF_MS 500
 static bool sdReady() {
+  if (sdRecorder.isActive() || sdPlayer.isActive() ||
+      (sdLastStreamActivityMs != 0 &&
+       millis() - sdLastStreamActivityMs < SD_PROBE_HOLDOFF_MS)) {
+    return sdCardInitialized;
+  }
   const bool present = SD.mediaPresent();
   if (!present) {
     if (sdCardInitialized) {
@@ -1869,6 +1891,12 @@ void recorderStatusLoop() {
   static uint32_t lastRecSec = 0, lastPlaySec = 0;
   static unsigned long lastPollMs = 0;
 
+  // Feeds sdReady()'s probe hold-off (runs every loop pass, so the window
+  // also covers the card finishing its final writes just after a stop)
+  if (sdRecorder.isActive() || sdPlayer.isActive()) {
+    sdLastStreamActivityMs = millis();
+  }
+
   if (sdPlayer.consumeFinishedEvent()) recStateDirty = true;
   const char* err = sdRecorder.consumeError();
   if (err != nullptr) {
@@ -1927,12 +1955,13 @@ static bool validRecordingName(const String& n) {
 }
 
 void handleStartRecording(const String& command, String* args, int argCount, OutputStream& stream) {
+  // Recording and playback both stream the card; one at a time. Stopped
+  // first so sdReady()'s media probe never lands on an open read stream.
+  if (sdPlayer.isActive()) sdPlayer.stop();
   if (!sdReady()) {
     Serial1.print("REC ERR nosd -\n");
     return;
   }
-  // Recording and playback both stream the card; one at a time
-  if (sdPlayer.isActive()) sdPlayer.stop();
   const char* err = sdRecorder.start();
   if (err != nullptr) {
     Serial1.printf("REC ERR %s -\n", err);
@@ -1997,6 +2026,9 @@ void handleDeleteRecording(const String& command, String* args, int argCount, Ou
   if (!SD.remove(path)) {
     Serial1.printf("REC ERR delete %s\n", args[0].c_str());
   }
+  // The remove's FAT write may still be programming; hold off media probes
+  // (sendRecordingsList calls sdReady) so it can't read as a pulled card
+  sdLastStreamActivityMs = millis();
   sendRecordingsList();
   recStateDirty = true;
 }
