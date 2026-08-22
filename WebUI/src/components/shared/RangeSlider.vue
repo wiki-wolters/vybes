@@ -206,6 +206,16 @@ input[type="range"]::-moz-range-track {
          focus:outline-none focus:ring-1 focus:ring-vybes-blue;
 }
 
+/* iOS Safari zooms the page in whenever a focused field's text is under
+   16px, and never zooms back out on blur — so on touch the edit field goes
+   to 16px. Pointer devices keep the tighter 14px of the readout it replaces. */
+@media (pointer: coarse) {
+  .value-input {
+    font-size: 16px;
+    line-height: 1.25;
+  }
+}
+
 .value-input::-webkit-inner-spin-button,
 .value-input::-webkit-outer-spin-button {
   -webkit-appearance: none;
