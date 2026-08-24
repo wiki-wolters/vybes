@@ -358,9 +358,31 @@ void setupWebServer() {
         // can fail. Check /status health.freeInternal - not freeHeap, which
         // counts memory a TLS handshake cannot use - before ever raising it.
         serverHttps.ssl_config.httpd.max_open_sockets = 2;
-        // Same LRU eviction as the HTTP listener - vital here, where the
-        // socket budget is this tight.
-        serverHttps.ssl_config.httpd.lru_purge_enable = true;
+        // NO LRU eviction here, unlike the HTTP listener above. This is the
+        // only pre-handshake admission control esp-idf offers: with purging
+        // off, a connection arriving at a full socket table is closed before
+        // any TLS work happens, so it cannot allocate. With purging on, the
+        // listener evicts an established socket and admits the newcomer -
+        // which means a burst is never refused, several handshakes can be
+        // holding their 16KB record buffers at once, and max_open_sockets
+        // bounds only the steady state, not the transient that actually kills
+        // the chip. Demonstrated 2026-08-24 on the 2-socket build: five
+        // concurrent slow TLS connections still hard-wedged the device (no
+        // ping, no mDNS, EN pull required) and the liveness watchdog never
+        // fired, because exhaustion that deep stops the monitor task acting.
+        //
+        // The trade is explicit and it is the reason this was true until now
+        // (2026-08-08): with no purging, parked keep-alive sockets hold slots
+        // and parallel fetches get refused - httpd_config_t has no idle-socket
+        // reaper, so a slot is only freed when the client closes it. That is
+        // survivable ONLY because index.html now carries the stylesheet and
+        // the script inline (WebUI/vite.config.js), making a cold load one
+        // request: one keep-alive connection for the document and every API
+        // call after it, one for the live-updates websocket. Cosmetic fetches
+        // (icons, manifest) can still be refused, and the page is built to
+        // survive that. Refusing a request beats wedging the device, which is
+        // the failure this whole listener kept producing.
+        serverHttps.ssl_config.httpd.lru_purge_enable = false;
         // Every esp-idf httpd instance needs its own control socket; the
         // default (32768) is already taken by the HTTP listener above
         serverHttps.ssl_config.httpd.ctrl_port = 32769;
