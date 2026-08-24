@@ -7,6 +7,10 @@ const API_BASE_URL = import.meta.env.DEV
   ? (import.meta.env.VITE_API_BASE_URL || 'http://vybes-mock.local')
   : ''
 
+// Ceiling on a single queued request, so one stall cannot freeze every
+// request behind it. See the note on request() for why they are queued.
+const REQUEST_TIMEOUT_MS = 15000
+
 /*
  * Vybes DSP API Client - Enhanced Version
  * A comprehensive JavaScript client for interacting with the Vybes DSP system
@@ -15,6 +19,10 @@ class VybesAPI {
   constructor() {
     this.baseUrl = API_BASE_URL;
     this.socket = null;
+
+    // Tail of the request queue - see request(). Always a settled-or-pending
+    // promise that never rejects, so the chain cannot be broken by a failure.
+    this.requestChain = Promise.resolve();
 
     // Live-update plumbing: one shared socket, many listeners, and
     // automatic reconnection with exponential backoff.
@@ -33,13 +41,45 @@ class VybesAPI {
   }
 
   /**
-   * Make HTTP request with error handling
+   * Make an HTTP request, queued so only one is ever in flight.
+   *
+   * The device's HTTPS listener affords 2 TLS sockets at ~50KB of internal
+   * heap each (see ESP/esp-web-server/web_server.cpp), and the live-updates
+   * websocket permanently holds one of them - it carries 20 state-change
+   * broadcast types, so it cannot be opened lazily without the UI going stale
+   * whenever the IR remote or front button changes something. That leaves
+   * exactly ONE socket for REST.
+   *
+   * Nothing here used to respect that. There is no Promise.all in the app,
+   * but a view mount has five or six components each loading independently in
+   * the same tick, so the browser opened a connection per request, the
+   * listener evicted the least-recently-used one (lru_purge_enable), and the
+   * evicted connection's in-flight request failed. That was the sporadic
+   * "failed API request" seen whenever the websocket was also connected.
+   *
+   * Queueing fixes it at the source: one request in flight means the browser
+   * reuses a single keep-alive connection and never opens a second. Requests
+   * run back-to-back rather than overlapping - about 19ms each on a reused
+   * connection, so a six-request mount costs ~120ms instead of ~40ms, which
+   * is not perceptible. If the per-connection TLS cost ever comes down (an
+   * esp-idf-as-component build could set MBEDTLS_ASYMMETRIC_CONTENT_LEN) this
+   * stays correct, it just stops being load-bearing.
+   *
    * @param {string} method - HTTP method
    * @param {string} endpoint - API endpoint
    * @param {Object} body - Request body for POST requests
    * @returns {Promise<Object>} Response data
    */
-  async request(method, endpoint, body = null, isFormData = false) {
+  request(method, endpoint, body = null, isFormData = false) {
+    const run = () => this._performRequest(method, endpoint, body, isFormData);
+    // Chained on settlement rather than success: one rejection must not stop
+    // everything queued behind it.
+    const result = this.requestChain.then(run, run);
+    this.requestChain = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  async _performRequest(method, endpoint, body, isFormData) {
     const url = this.baseUrl + endpoint;
     const config = {
       method: method.toUpperCase(),
@@ -54,6 +94,16 @@ class VybesAPI {
         config.body = JSON.stringify(body);
       }
     }
+
+    // Bounds the head-of-line blocking the queue introduces: before it, a
+    // stalled request only froze its own caller. Uploads opt out - /restore
+    // and FIR files are legitimately slow, and the goal is to avoid a second
+    // connection, not to hurry them.
+    const controller = new AbortController();
+    config.signal = controller.signal;
+    const timer = isFormData
+      ? null
+      : setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
     try {
       const response = await fetch(url, config);
@@ -74,8 +124,17 @@ class VybesAPI {
       // Handle empty responses
       return text ? JSON.parse(text) : {};
     } catch (error) {
+      if (error.name === 'AbortError') {
+        const timeout = new Error(
+          `Request timed out after ${REQUEST_TIMEOUT_MS}ms: ${method} ${endpoint}`);
+        timeout.timeout = true;
+        console.error(`API request timed out: ${method} ${endpoint}`);
+        throw timeout;
+      }
       console.error(`API request failed: ${method} ${endpoint}`, error);
       throw error;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
