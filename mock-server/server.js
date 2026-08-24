@@ -536,7 +536,11 @@ app.get('/status', async (req, res) => {
         largestFreeBlock: 110000,
         minLargestFreeBlock: 48000,
         resetReason: 'power-on',
-        lastRestartCause: 'none'
+        lastRestartCause: 'none',
+        // Parity with the ESP's escalation state (health.cpp): consecutive
+        // watchdog restarts, and whether this boot dropped HTTPS to stay up.
+        restartStreak: 0,
+        degraded: false
       }
     });
   } catch (error) {

@@ -21,6 +21,7 @@
 void initHealth();                       // early in setup(): report last restart
 void startHealthMonitor(bool standalone); // end of setup(): start the monitor
 void healthBeat();                       // in loop(): the liveness heartbeat
+void healthListenersReady();             // setupWebServer(): listeners are up
 
 // Telemetry for GET /status. Internal RAM only (MALLOC_CAP_INTERNAL), which
 // stays the meaningful number if PSRAM is ever enabled.
@@ -30,5 +31,12 @@ uint32_t healthLargestFreeBlock();
 uint32_t healthMinLargestFreeBlock();
 const char *healthLastRestartCause();
 const char *healthResetReasonName();
+
+// Repeat-failure escalation. Two watchdog restarts in a row bring the device
+// up with HTTPS disabled, so it stays reachable on port 80 instead of wedging
+// again on the load that just killed it. Read by setupWebServer(); clears
+// itself once the device holds a healthy uptime.
+bool healthDegradedMode();
+uint32_t healthRestartStreak();
 
 #endif // HEALTH_H

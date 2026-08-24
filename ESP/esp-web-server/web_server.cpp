@@ -13,6 +13,7 @@
 #include "api_volume.h"
 #include "api_recorder.h"
 #include "api_helpers.h"
+#include "health.h"
 #include "teensy_comm.h"
 #include "config.h"
 #include <ArduinoJson.h>
@@ -315,7 +316,15 @@ void setupWebServer() {
     DebugSerial.println("HTTP server started on port 80");
 
 #ifdef CONFIG_IDF_TARGET_ESP32S3
-    if (loadCertificates()) {
+    // Repeated heap-floor restarts mean the TLS load is what keeps killing
+    // this device, and coming back up with a listener that invites it again is
+    // how a recovered restart became a 75-minute outage on 2026-08-24. Boot
+    // without it so port 80 stays reachable for diagnosis; health.cpp clears
+    // the streak after a healthy uptime and the next boot restores HTTPS.
+    if (healthDegradedMode()) {
+        DebugSerial.println("HTTPS skipped: DEGRADED after repeated heap-floor "
+                            "restarts - reachable on port 80 only");
+    } else if (loadCertificates()) {
         serverHttps.ssl_config.httpd.max_uri_handlers = 60;
         // Each open TLS connection costs ~40KB at peak, so this is a heap
         // budget more than a concurrency limit. Measured 2026-08-15 against
@@ -324,13 +333,31 @@ void setupWebServer() {
         // exhaust the heap and wedge lwIP until a hardware reset - the
         // device stopped answering even ping. 4 was meant to fix that but
         // still budgets ~160KB against ~132KB free, and the same wedge
-        // recurred on 2026-08-15. 3 is the first setting that actually fits.
-        // There is no leak: heap returns to ~132.1KB after every connection,
-        // so only a concurrency burst can trigger it. The page survives
+        // recurred on 2026-08-15. 3 was believed to fit, and did not:
+        // 3 x 40KB = ~120KB is still the entire heap. Polling /status every
+        // 15s across 2026-08-20..24 put steady-state freeInternal at
+        // 103,692-120,580 and drifting DOWN with uptime - not the 132,444 the
+        // older figure assumed - so 3 sockets permits an allocation larger
+        // than everything available. On 2026-08-24 a single cold page load
+        // from a phone (html 11.7KB + js 89KB + favicon + manifest + icons:
+        // enough separate requests for a browser to open its full parallel
+        // set) collapsed freeInternal from 110,396 to under the 12KB watchdog
+        // floor in less than 19 seconds - from a completely flat, healthy
+        // largestFreeBlock of 65,524, so this is a concurrency cliff and not
+        // fragmentation or decay. 2 budgets ~80KB and leaves ~30KB.
+        //
+        // lru_purge_enable below is what makes the limit graceful instead of
+        // a hard refusal: the third connection evicts the least-recently-used
+        // socket - usually the idle websocket, which reconnects in ~1s -
+        // rather than making the allocation that kills the device. The cost
+        // is a slower cold load, since parallel fetches now serialise onto
+        // fewer sockets. There is no leak: heap returns to ~132.1KB after
+        // every connection, so only a burst can trigger it. The page survives
         // losing the race because the stylesheet is inlined into index.html
         // (see WebUI/vite.config.js); only cosmetic fetches (icons/manifest)
-        // can fail. Check /status freeHeap before ever raising this.
-        serverHttps.ssl_config.httpd.max_open_sockets = 3;
+        // can fail. Check /status health.freeInternal - not freeHeap, which
+        // counts memory a TLS handshake cannot use - before ever raising it.
+        serverHttps.ssl_config.httpd.max_open_sockets = 2;
         // Same LRU eviction as the HTTP listener - vital here, where the
         // socket budget is this tight.
         serverHttps.ssl_config.httpd.lru_purge_enable = true;
@@ -351,4 +378,9 @@ void setupWebServer() {
 #else
     DebugSerial.println("HTTPS not built on this target (ESP32-S3 only)");
 #endif
+
+    // Listeners are up (or deliberately not): this is what arms the liveness
+    // watchdog, in place of the flat boot timer it used to wait out. The
+    // heaviest allocation of the boot is now behind us. See health.cpp.
+    healthListenersReady();
 }

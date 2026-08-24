@@ -59,6 +59,12 @@ esp_err_t handleGetStatus(PsychicRequest *request) {
     health["minLargestFreeBlock"] = healthMinLargestFreeBlock();
     health["resetReason"] = healthResetReasonName();
     health["lastRestartCause"] = healthLastRestartCause();
+    // Escalation state: restartStreak counts consecutive watchdog restarts,
+    // and degraded means this boot dropped HTTPS to stay reachable at all. A
+    // degraded device answers on port 80 only, so the phone's mic features
+    // (delay probe, auto-EQ) are down until a healthy uptime clears it.
+    health["restartStreak"] = healthRestartStreak();
+    health["degraded"] = healthDegradedMode();
 
     String response;
     serializeJson(doc, response);

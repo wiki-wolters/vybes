@@ -57,9 +57,38 @@ static const uint32_t WIFI_DOWN_GRACE_MS = 120000;
 // upload runs in the httpd task), so 30s of no heartbeat means a deadlock -
 // the non-recursive config mutex being the obvious candidate.
 static const uint32_t LOOP_STALL_GRACE_MS = 30000;
-// Never restart during early boot: a low-heap moment while the TLS listener
-// comes up must not turn into a restart loop.
-static const uint32_t MIN_UPTIME_MS = 60000;
+// --- when the watchdog arms ------------------------------------------------
+// A flat 60s boot grace - what this was until 2026-08-24 - is what turned a
+// working restart into a dead device. Measured that morning: the heap floor
+// fired at 09:01:05, the device came back clean, every client reconnected
+// within ~1s (the boot log shows a websocket attach seconds in), and it wedged
+// again 35s later - inside the grace, with every check switched off. It never
+// recovered and needed a manual EN pull 75 minutes later.
+//
+// So arm off the event the grace actually existed for - the listeners coming
+// up, the heaviest allocation of the device's life - rather than wall-clock
+// guesswork, and let ARM_AFTER_LISTENERS_MS cover the settling after that.
+// Every check still needs its own fault *sustained* on top (the heap floor
+// wants 15s), so a boot transient cannot trip anything either way.
+// ARM_FALLBACK_MS is the backstop: if the ready signal never arrives - no
+// certs, a listener that failed to start, a refactor that drops the call -
+// the watchdog must not sit disarmed forever.
+static const uint32_t ARM_AFTER_LISTENERS_MS = 15000;
+static const uint32_t ARM_FALLBACK_MS = 60000;
+
+// --- repeat-failure escalation ---------------------------------------------
+// Two watchdog restarts in a row means the load that exhausted the heap is
+// still out there and will do it again the moment the listeners come up.
+// Coming back with HTTPS off keeps the device reachable: ~40KB per TLS socket
+// is the whole problem and plain HTTP costs none of it, so the next boot can
+// be diagnosed over port 80 instead of needing someone at the EN pin. This is
+// a deliberately visible degradation - the phone needs a secure context for
+// its mic, so the delay probe and auto-EQ stop working until it clears.
+// STREAK_DECAY_MS is what clears it: hold a healthy uptime that long and the
+// streak resets, so two unrelated restarts weeks apart never accumulate into
+// a permanent downgrade.
+static const uint32_t DEGRADE_AFTER_RESTARTS = 2;
+static const uint32_t STREAK_DECAY_MS = 600000; // 10 min healthy = forgiven
 
 static const uint32_t HEALTH_LOG_INTERVAL_MS = 300000; // 5 min serial summary
 
@@ -80,6 +109,10 @@ enum HealthCause : uint32_t {
 
 RTC_NOINIT_ATTR static uint32_t rtcMagic;
 RTC_NOINIT_ATTR static uint32_t rtcCause;
+// Consecutive watchdog restarts, carried across the restart beside the cause.
+// The cause is consumed by the boot that reports it; this is not - only a
+// healthy uptime clears it. See DEGRADE_AFTER_RESTARTS.
+RTC_NOINIT_ATTR static uint32_t rtcStreak;
 
 static const char *causeName(uint32_t cause) {
     switch (cause) {
@@ -95,6 +128,8 @@ static const char *lastRestartCause = "none";
 static bool healthStandalone = false;
 static volatile uint32_t loopHeartbeat = 0;
 static volatile uint32_t minLargestBlock = UINT32_MAX;
+static volatile uint32_t listenersReadyAt = 0;
+static bool degradedMode = false;
 
 const char *healthResetReasonName() {
     switch (esp_reset_reason()) {
@@ -136,14 +171,48 @@ uint32_t healthMinLargestFreeBlock() {
 }
 const char *healthLastRestartCause() { return lastRestartCause; }
 
-void initHealth() {
-    if (rtcMagic == HEALTH_MAGIC) {
-        lastRestartCause = causeName(rtcCause);
-        DebugSerial.printf("Health watchdog restarted the device last boot: %s\n",
-                           lastRestartCause);
+void healthListenersReady() {
+    // First call wins: a retry, or a second caller added later, must not push
+    // the arming point back and re-open the window this exists to close.
+    if (listenersReadyAt == 0) {
+        listenersReadyAt = millis();
     }
-    // Either way, don't let a stale value be reported after the next restart
-    rtcMagic = 0;
+}
+
+bool healthDegradedMode() { return degradedMode; }
+
+uint32_t healthRestartStreak() {
+    return rtcMagic == HEALTH_MAGIC ? rtcStreak : 0;
+}
+
+void initHealth() {
+    // A cold power-on leaves all three of these holding garbage, so the magic
+    // is what separates "carried across a restart" from "never initialised".
+    if (rtcMagic != HEALTH_MAGIC) {
+        rtcMagic = HEALTH_MAGIC;
+        rtcCause = CAUSE_NONE;
+        rtcStreak = 0;
+    }
+
+    if (rtcCause != CAUSE_NONE) {
+        lastRestartCause = causeName(rtcCause);
+        DebugSerial.printf("Health watchdog restarted the device last boot: %s "
+                           "(%u in a row)\n", lastRestartCause,
+                           (unsigned)rtcStreak);
+    }
+
+    // Decided before the cause is consumed below, because the streak is the
+    // part that survives - and setupWebServer() reads this to skip HTTPS.
+    degradedMode = rtcStreak >= DEGRADE_AFTER_RESTARTS;
+    if (degradedMode) {
+        DebugSerial.printf("Health: %u watchdog restarts in a row - starting "
+                           "DEGRADED, HTTPS disabled this boot. Clears after "
+                           "%lus of healthy uptime.\n", (unsigned)rtcStreak,
+                           (unsigned long)(STREAK_DECAY_MS / 1000));
+    }
+
+    // Consume the cause so the next boot cannot report it as its own. The
+    // streak deliberately stays put; only a healthy uptime clears that.
     rtcCause = CAUSE_NONE;
 }
 
@@ -158,6 +227,10 @@ static void restartWithCause(HealthCause cause, const char *detail) {
                        (unsigned long)(millis() / 1000));
     rtcMagic = HEALTH_MAGIC;
     rtcCause = cause;
+    // initHealth() has already validated the RTC block, and the monitor task
+    // that calls this only starts after it, so this increments a known value
+    // rather than power-on garbage.
+    rtcStreak++;
     DebugSerial.flush();
     delay(100);
     ESP.restart();
@@ -176,6 +249,16 @@ static bool sustained(bool faulted, uint32_t &since, uint32_t now, uint32_t grac
         return false;
     }
     return (now - since) >= graceMs;
+}
+
+// True once the listeners have been up long enough to settle, or once the
+// fallback expires so a missing ready signal cannot leave this disarmed.
+static bool watchdogArmed(uint32_t now) {
+    if (now >= ARM_FALLBACK_MS) {
+        return true;
+    }
+    uint32_t ready = listenersReadyAt;
+    return ready != 0 && (now - ready) >= ARM_AFTER_LISTENERS_MS;
 }
 
 static void healthMonitorTask(void *) {
@@ -210,9 +293,18 @@ static void healthMonitorTask(void *) {
                                (unsigned)healthMinLargestFreeBlock());
         }
 
-        // Boot grace: the TLS listener coming up is the heaviest moment of the
-        // device's life and must never be mistaken for a fault.
-        if (now < MIN_UPTIME_MS) {
+        // A healthy stretch forgives the past, so restarts weeks apart never
+        // add up to a permanent downgrade. Deliberately ahead of the arming
+        // gate: forgiving is always safe, whatever the watchdog's state.
+        if (rtcStreak != 0 && now >= STREAK_DECAY_MS) {
+            DebugSerial.printf("Health: %lus healthy - restart streak cleared\n",
+                               (unsigned long)(now / 1000));
+            rtcStreak = 0;
+        }
+
+        // Arm off the listeners being up, not a flat boot timer - see
+        // ARM_AFTER_LISTENERS_MS for why the old 60s window was the bug.
+        if (!watchdogArmed(now)) {
             continue;
         }
 
