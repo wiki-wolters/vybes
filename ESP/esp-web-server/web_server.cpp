@@ -358,31 +358,22 @@ void setupWebServer() {
         // can fail. Check /status health.freeInternal - not freeHeap, which
         // counts memory a TLS handshake cannot use - before ever raising it.
         serverHttps.ssl_config.httpd.max_open_sockets = 2;
-        // NO LRU eviction here, unlike the HTTP listener above. This is the
-        // only pre-handshake admission control esp-idf offers: with purging
-        // off, a connection arriving at a full socket table is closed before
-        // any TLS work happens, so it cannot allocate. With purging on, the
-        // listener evicts an established socket and admits the newcomer -
-        // which means a burst is never refused, several handshakes can be
-        // holding their 16KB record buffers at once, and max_open_sockets
-        // bounds only the steady state, not the transient that actually kills
-        // the chip. Demonstrated 2026-08-24 on the 2-socket build: five
-        // concurrent slow TLS connections still hard-wedged the device (no
-        // ping, no mDNS, EN pull required) and the liveness watchdog never
-        // fired, because exhaustion that deep stops the monitor task acting.
+        // LRU eviction, same as the HTTP listener. This was briefly false
+        // (2026-08-24) to get pre-handshake refusal, back when ~40KB of TLS
+        // buffers had to come out of ~113KB of internal heap and refusing a
+        // request was better than wedging the chip. It did not work - a burst
+        // still drove minFreeInternal to 2,060 bytes and a later test
+        // truncated a response and hard-wedged the device anyway - and it cost
+        // real reliability, because httpd_config_t has no idle-socket reaper,
+        // so a parked keep-alive holds a slot until the client closes it.
         //
-        // The trade is explicit and it is the reason this was true until now
-        // (2026-08-08): with no purging, parked keep-alive sockets hold slots
-        // and parallel fetches get refused - httpd_config_t has no idle-socket
-        // reaper, so a slot is only freed when the client closes it. That is
-        // survivable ONLY because index.html now carries the stylesheet and
-        // the script inline (WebUI/vite.config.js), making a cold load one
-        // request: one keep-alive connection for the document and every API
-        // call after it, one for the live-updates websocket. Cosmetic fetches
-        // (icons, manifest) can still be refused, and the page is built to
-        // survive that. Refusing a request beats wedging the device, which is
-        // the failure this whole listener kept producing.
-        serverHttps.ssl_config.httpd.lru_purge_enable = false;
+        // PSRAM (ESP/platformio.ini) is what actually fixed the budget: the
+        // 16KB mbedTLS record buffers now land in external RAM, so internal
+        // heap is no longer what a handshake spends. With headroom back,
+        // eviction is the better failure mode again - browsers park idle
+        // keep-alive sockets, and evicting the least-recently-used one (an
+        // idle websocket reconnects in ~1s) beats refusing a live fetch.
+        serverHttps.ssl_config.httpd.lru_purge_enable = true;
         // Every esp-idf httpd instance needs its own control socket; the
         // default (32768) is already taken by the HTTP listener above
         serverHttps.ssl_config.httpd.ctrl_port = 32769;

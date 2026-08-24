@@ -169,6 +169,14 @@ uint32_t healthMinLargestFreeBlock() {
     uint32_t low = minLargestBlock;
     return low == UINT32_MAX ? healthLargestFreeBlock() : low;
 }
+
+// Deliberately NOT folded into the internal-heap numbers above: internal RAM
+// stays the scarce resource and the one the restart thresholds watch. These
+// exist to answer a different question - whether PSRAM is really absorbing
+// the 16KB mbedTLS record buffers, which shows up as freeInternal barely
+// moving under a TLS burst that used to collapse it.
+uint32_t healthPsramFree() { return heap_caps_get_free_size(MALLOC_CAP_SPIRAM); }
+uint32_t healthPsramSize() { return heap_caps_get_total_size(MALLOC_CAP_SPIRAM); }
 const char *healthLastRestartCause() { return lastRestartCause; }
 
 void healthListenersReady() {

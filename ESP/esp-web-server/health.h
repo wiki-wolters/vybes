@@ -29,6 +29,11 @@ uint32_t healthFreeInternal();
 uint32_t healthMinFreeInternal();
 uint32_t healthLargestFreeBlock();
 uint32_t healthMinLargestFreeBlock();
+// PSRAM, reported so it is possible to tell that it is actually carrying the
+// TLS buffers rather than merely being linked in. Both read 0 on a build
+// without it, which is itself the check that memory_type took effect.
+uint32_t healthPsramFree();
+uint32_t healthPsramSize();
 const char *healthLastRestartCause();
 const char *healthResetReasonName();
 

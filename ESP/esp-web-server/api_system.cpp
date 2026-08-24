@@ -63,6 +63,11 @@ esp_err_t handleGetStatus(PsychicRequest *request) {
     // and degraded means this boot dropped HTTPS to stay reachable at all. A
     // degraded device answers on port 80 only, so the phone's mic features
     // (delay probe, auto-EQ) are down until a healthy uptime clears it.
+    // PSRAM carries the TLS record buffers as of 2026-08-24; if these read 0
+    // on an S3 build, memory_type did not take and internal heap is exposed
+    // again - which is the condition that kept wedging the device.
+    health["psramFree"] = healthPsramFree();
+    health["psramSize"] = healthPsramSize();
     health["restartStreak"] = healthRestartStreak();
     health["degraded"] = healthDegradedMode();
 

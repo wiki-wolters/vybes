@@ -540,7 +540,11 @@ app.get('/status', async (req, res) => {
         // Parity with the ESP's escalation state (health.cpp): consecutive
         // watchdog restarts, and whether this boot dropped HTTPS to stay up.
         restartStreak: 0,
-        degraded: false
+        degraded: false,
+        // Parity with the S3's PSRAM telemetry (8MB octal, carrying the TLS
+        // record buffers). Zero would mean PSRAM is not in play.
+        psramFree: 8200000,
+        psramSize: 8388608
       }
     });
   } catch (error) {
