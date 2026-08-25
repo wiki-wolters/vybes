@@ -5,6 +5,7 @@
 #include <malloc.h>
 #include "FIRLoader.h"
 #include "PEQProcessor.h"
+#include "HeadroomMath.h"
 #include "CrossoverFilter.h"
 #include "MultibandCompressor.h"
 #include "SerialCommandRouter.h"
@@ -126,7 +127,8 @@ AudioMixer4              Right_Aux_mixer;
 AudioMixer4              Generator_mixer;
 
 // Shared input EQ (the L/R buses ahead of the per-output routing matrix).
-// The pre-EQ amps attenuate to compensate for the EQ curve's maximum boost.
+// The pre-EQ amps attenuate to compensate for the EQ curve's maximum boost
+// (less the spectral allowance - see HeadroomMath.h).
 AudioAmplifier           Left_Pre_EQ_amp;
 AudioAmplifier           Right_Pre_EQ_amp;
 PEQProcessor peqLeft;
@@ -383,8 +385,11 @@ unsigned long outputSoloLastKeepaliveAt = 0;
 // --- Shared output headroom pad ---
 // The per-output chains have no per-channel compensation stage (a per-output
 // pad would skew the balance between drivers and wreck crossover summing),
-// so one shared pad - the largest active output-EQ boost across all
-// channels - is folded into every source mixer's gains. Recomputed once
+// so one shared pad - the largest net output-EQ boost across all channels -
+// is folded into every source mixer's gains. "Net" folds in each channel's
+// crossover response and the spectral allowance (HeadroomMath.h), so a
+// boost the crossover removes, or one riding above 2kHz where program
+// energy is sparse, doesn't cost the whole system headroom. Recomputed once
 // per loop() pass when
 // marked dirty, so a burst of EQ edits (the boot sync) costs one 8-channel
 // curve sweep, not eighty.
@@ -1109,13 +1114,14 @@ void probeLoop() {
 
 // --- Shared input EQ ---
 
-// Attenuate the pre-EQ amps to compensate for the maximum boost of the
-// current EQ curve, so boosted bands can't clip. Unity while the EQ is
-// bypassed ("Pure Direct" - no wasted headroom).
+// Attenuate the pre-EQ amps to compensate for the maximum net boost of the
+// current EQ curve (boost less the spectral allowance - HeadroomMath.h), so
+// boosted bands can't clip. Unity while the EQ is bypassed ("Pure Direct" -
+// no wasted headroom).
 void applyPreEQGainCompensation() {
   float padDb = 0.0f;
   if (state.inputEqEnabled) {
-    padDb = peqLeft.calculateMaxEqBoost(state.inputEqBands, MAX_PEQ_BANDS);
+    padDb = headroomMaxBoostDb(state.inputEqBands, MAX_PEQ_BANDS);
   }
   peqLeft.applyPreEQGain(padDb, Left_Pre_EQ_amp, Right_Pre_EQ_amp);
 }
@@ -1169,8 +1175,11 @@ void refreshOutputPad() {
   outputPadDirty = false;
   float padDb = 0.0f;
   for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
-    if (!state.outputs[ch].eqEnabled) continue;
-    float boost = outputPeq[ch].calculateMaxEqBoost(state.outputs[ch].peq, MAX_OUTPUT_PEQ);
+    const OutputState& o = state.outputs[ch];
+    if (!o.eqEnabled) continue;
+    float boost = headroomMaxBoostDb(o.peq, MAX_OUTPUT_PEQ,
+                                     o.hpFreq, o.hpType, o.lpFreq, o.lpType,
+                                     AUDIO_SAMPLE_RATE);
     if (boost > padDb) padDb = boost;
   }
   float padLin = (padDb > 0.0f) ? 1.0f / powf(10.0f, padDb / 20.0f) : 1.0f;
@@ -1557,6 +1566,8 @@ static void handleOutputFilter(String* args, int argCount, bool isHighpass) {
     o.lpType = type;
     xover[ch].setLowpass(freq, type);
   }
+  // The crossover response is folded into the shared headroom pad
+  outputPadDirty = true;
 }
 
 void handleSetOutputHp(const String& command, String* args, int argCount, OutputStream& stream) {

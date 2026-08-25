@@ -5,6 +5,15 @@
 // the Teensy) and the host-native test suite - no Arduino/Audio
 // dependencies.
 
+// One parametric EQ band. Defined here rather than in PEQProcessor.h so the
+// pure headroom math (HeadroomMath.h) can consume band arrays host-side.
+struct PEQBand {
+  float frequency;
+  float gain;
+  float q;
+  bool enabled;
+};
+
 // Cytomic/Simper trapezoidal SVF bell coefficients (see PEQProcessor.cpp for
 // the filter loop that consumes them).
 struct PeqSvfCoeffs {

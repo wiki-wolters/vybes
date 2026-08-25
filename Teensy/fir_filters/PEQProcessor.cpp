@@ -100,26 +100,6 @@ int PEQProcessor::getActiveBandCount() const {
   return count;
 }
 
-float PEQProcessor::calculateMaxEqBoost(const PEQBand* currentBands, int numBands) const {
-  float maxBoost = 0.0f;
-  // Sample the summed response logarithmically from 20Hz to 20kHz. Cascaded
-  // filters multiply in linear gain, so their dB responses add.
-  const int numSamples = 100;
-  for (int i = 0; i < numSamples; ++i) {
-    float freq = 20.0f * powf(1000.0f, (float)i / (numSamples - 1)); // 20Hz .. 20kHz
-    float currentTotalGain = 0.0f;
-    for (int j = 0; j < numBands; j++) {
-      if (currentBands[j].enabled) {
-        currentTotalGain += calculateBellFilter(freq, currentBands[j].frequency, currentBands[j].gain, currentBands[j].q);
-      }
-    }
-    if (currentTotalGain > maxBoost) {
-      maxBoost = currentTotalGain;
-    }
-  }
-  return maxBoost;
-}
-
 void PEQProcessor::applyPreEQGain(float maxBoost, AudioAmplifier& leftAmp, AudioAmplifier& rightAmp) {
   float linearGain = 1.0f; // Default to 1.0 (0dB) if no boost or only cuts
   if (maxBoost > 0.0f) {

@@ -14,13 +14,8 @@
 // Must match MAX_PEQ_POINTS on the ESP and the point limit in the WebUI
 #define MAX_PEQ_BANDS 15
 
-// PEQ Band structure
-struct PEQBand {
-  float frequency;
-  float gain;
-  float q;
-  bool enabled;
-};
+// PEQBand itself lives in PEQMath.h (included above) so the pure headroom
+// math can consume band arrays host-side.
 
 // Animation structure (used for smooth morphs between EQ curves)
 struct AnimationState {
@@ -53,7 +48,8 @@ public:
   // Band queries
   PEQBand getBand(int bandIndex) const;
   int getActiveBandCount() const;
-  float calculateMaxEqBoost(const PEQBand* currentBands, int numBands) const;
+  // The headroom pad the boost compensation feeds this from is computed by
+  // headroomMaxBoostDb (HeadroomMath.h).
   void applyPreEQGain(float maxBoost, AudioAmplifier& leftAmp, AudioAmplifier& rightAmp);
 
   // Animation (smooth morph between curves)

@@ -45,6 +45,15 @@ XoverBranch xoverComputeBranch(float freq, CrossoverType type, float sampleRate)
 // Returns false (leaving out untouched) for anything else.
 bool xoverParseType(const char* s, CrossoverType& out);
 
+// Magnitude response in dB of one branch at 'freq', from the analog
+// prototype - the same convention calculateBellFilter uses, so the headroom
+// pad math treats bells and crossover branches consistently. branchFreq is
+// clamped exactly like xoverComputeBranch; branchFreq <= 0 (branch off)
+// returns 0dB. Never positive: every crossover type runs Q <= 0.7071, so a
+// branch can only take headroom pressure off, not add to it.
+float xoverBranchResponseDb(float freq, float branchFreq, CrossoverType type,
+                            bool highpass, float sampleRate);
+
 // Process one sample through one section. The two functions share the SVF
 // core and differ only in which output is taken.
 inline float xoverProcessHighpass(const XoverSection& c, XoverSectionState& st, float v0) {

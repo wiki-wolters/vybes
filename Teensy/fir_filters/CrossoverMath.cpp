@@ -44,6 +44,30 @@ XoverBranch xoverComputeBranch(float freq, CrossoverType type, float sampleRate)
   return branch;
 }
 
+float xoverBranchResponseDb(float freq, float branchFreq, CrossoverType type,
+                            bool highpass, float sampleRate) {
+  if (branchFreq <= 0.0f || freq <= 0.0f) return 0.0f;
+
+  // Same corner-frequency clamp as xoverComputeBranch, so this models the
+  // branch that actually runs
+  double f = branchFreq;
+  if (f < 10.0) f = 10.0;
+  double fMax = 0.45 * sampleRate;
+  if (f > fMax) f = fMax;
+
+  const double BUTTERWORTH_Q = 0.70710678118654752;
+  double q = (type == CROSSOVER_LR2) ? 0.5 : BUTTERWORTH_Q;
+  int sections = (type == CROSSOVER_LR4) ? 2 : 1;
+
+  // Second-order section magnitude: |H|^2 = num / ((1-O^2)^2 + (O/Q)^2)
+  // with O = freq/fc, num = O^4 for highpass and 1 for lowpass
+  double O2 = ((double)freq / f) * ((double)freq / f);
+  double c = 1.0 - O2;
+  double den = c * c + O2 / (q * q);
+  double num = highpass ? O2 * O2 : 1.0;
+  return (float)(sections * 10.0 * log10(num / den));
+}
+
 // Case-insensitive comparison against a known 3-char token
 static bool tokenEquals(const char* s, const char* token) {
   for (int i = 0; i < 3; i++) {

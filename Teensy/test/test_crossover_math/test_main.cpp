@@ -96,6 +96,67 @@ static void test_lr4_hp_plus_lp_sums_flat(void) {
     }
 }
 
+// --- analytic response function (feeds the headroom pad) ---
+
+// xoverBranchResponseDb models the analog prototype; the running sections
+// are its bilinear transform, so away from Nyquist the two agree closely.
+// Compare against the measured (DFT) response of the real sections.
+static void test_response_function_matches_sections(void) {
+    const CrossoverType types[] = {CROSSOVER_LR2, CROSSOVER_BW2, CROSSOVER_LR4};
+    const float fc = 1000.0f;
+    const float freqs[] = {250.0f, 500.0f, 1000.0f, 2000.0f, 4000.0f};
+    for (CrossoverType type : types) {
+        for (bool hp : {true, false}) {
+            for (float f : freqs) {
+                float measured = branchMagDb(fc, type, hp, f);
+                float modeled = xoverBranchResponseDb(f, fc, type, hp, FS);
+                char msg[64];
+                snprintf(msg, sizeof(msg), "type %d %s at %.0f Hz",
+                         (int)type, hp ? "HP" : "LP", f);
+                if (measured >= -40.0f) {
+                    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.75f, measured, modeled, msg);
+                } else {
+                    // Deep stopband: bilinear warping steepens the digital
+                    // slope near Nyquist, so the analog model reads slightly
+                    // high there - conservative for the pad, and irrelevant
+                    // at -40dB and below. Just require it deep too.
+                    TEST_ASSERT_TRUE_MESSAGE(modeled < -35.0f, msg);
+                }
+            }
+        }
+    }
+}
+
+static void test_response_branch_off_is_flat(void) {
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, xoverBranchResponseDb(1000.0f, 0.0f, CROSSOVER_LR4, true, FS));
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, xoverBranchResponseDb(1000.0f, -1.0f, CROSSOVER_LR2, false, FS));
+}
+
+// Every crossover type runs Q <= 0.7071, so no branch response peaks above
+// unity - the headroom fold relies on this
+static void test_response_never_positive(void) {
+    const CrossoverType types[] = {CROSSOVER_LR2, CROSSOVER_BW2, CROSSOVER_LR4};
+    for (CrossoverType type : types) {
+        for (bool hp : {true, false}) {
+            for (float f = 20.0f; f <= 20000.0f; f *= 1.2f) {
+                TEST_ASSERT_TRUE(xoverBranchResponseDb(f, 800.0f, type, hp, FS) <= 1e-4f);
+            }
+        }
+    }
+}
+
+// The corner clamp must mirror xoverComputeBranch: a corner past 0.45*fs
+// models the (clamped) branch that actually runs
+static void test_response_clamps_corner_like_compute_branch(void) {
+    float clamped = 0.45f * FS;
+    TEST_ASSERT_EQUAL_FLOAT(
+        xoverBranchResponseDb(5000.0f, clamped, CROSSOVER_LR4, false, FS),
+        xoverBranchResponseDb(5000.0f, 30000.0f, CROSSOVER_LR4, false, FS));
+    TEST_ASSERT_EQUAL_FLOAT(
+        xoverBranchResponseDb(50.0f, 10.0f, CROSSOVER_LR2, true, FS),
+        xoverBranchResponseDb(50.0f, 5.0f, CROSSOVER_LR2, true, FS));
+}
+
 // --- configuration plumbing ---
 
 static void test_freq_zero_disables_branch(void) {
@@ -135,6 +196,10 @@ int main(int, char**) {
     RUN_TEST(test_bw2_is_minus_3dB_at_fc);
     RUN_TEST(test_slopes_and_passbands);
     RUN_TEST(test_lr4_hp_plus_lp_sums_flat);
+    RUN_TEST(test_response_function_matches_sections);
+    RUN_TEST(test_response_branch_off_is_flat);
+    RUN_TEST(test_response_never_positive);
+    RUN_TEST(test_response_clamps_corner_like_compute_branch);
     RUN_TEST(test_freq_zero_disables_branch);
     RUN_TEST(test_section_counts);
     RUN_TEST(test_type_parsing);
