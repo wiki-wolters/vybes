@@ -211,11 +211,41 @@ function hpfDeviationPoints(cornerHz) {
   });
 }
 
+// Deviation of the iPhone 17 Pro's built-in microphone, digitised from Faber
+// Acoustical's anechoic measurement (PCB 378B02 reference at 1mm; the
+// pressure-corrected one of the two published traces - they only diverge
+// above 5kHz). Flat within ~1.5 dB from 100Hz to 5kHz, so the correction
+// that matters is all in the low end, reaching -13 dB at 20Hz.
+//
+// This is the acoustic path as captured in iOS measurement mode, so it does
+// NOT include any further high-pass Safari's getUserMedia may apply on top.
+// If it does apply one, this profile under-corrects the bottom octave - the
+// two possibilities differ by ~14 dB at 25Hz. Switching between this and
+// 'smartphone-hpf' on a known source tells you which chain you're on.
+//
+// Above 10kHz the points follow the measured port resonance, but treat them
+// as indicative: it moves with orientation, and the auto-EQ's default range
+// stops at 10kHz regardless.
+const IPHONE_17_PRO_POINTS = [
+  [20, -13.0], [22, -11.8], [25, -10.3], [28, -9.0], [31.5, -7.6], [35, -6.4],
+  [40, -5.1], [45, -4.3], [50, -3.6], [56, -3.0], [63, -2.5], [71, -2.2],
+  [80, -1.9], [90, -1.7], [100, -1.6], [125, -1.4], [160, -1.2], [200, -1.0],
+  [250, -0.8], [315, -0.7], [400, -0.6], [500, -0.5], [630, -0.4], [800, -0.3],
+  [1000, -0.2], [1600, -0.1], [2500, 0], [4000, 0], [5000, -0.1], [6300, -0.6],
+  [8000, -1.7], [10000, -3.6], [11000, -4.6], [13000, 4.5], [15000, -1.0],
+  [17500, 1.9], [19000, -13.0], [20000, -17.0],
+];
+
 export const BUILTIN_CAL_PRESETS = [
   {
     id: 'smartphone-hpf',
     name: 'Generic smartphone (approx.)',
     points: hpfDeviationPoints(55),
+  },
+  {
+    id: 'iphone-17-pro',
+    name: 'iPhone 17 Pro',
+    points: IPHONE_17_PRO_POINTS,
   },
 ];
 

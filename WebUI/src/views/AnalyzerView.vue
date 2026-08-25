@@ -443,7 +443,13 @@
                 <option value="file" :disabled="calSelection !== 'file'">Imported file</option>
               </SelectGroup>
               <p class="mt-1 text-xs text-vybes-text-secondary">
-                <template v-if="calSelection === 'smartphone-hpf'">
+                <template v-if="calSelection === 'iphone-17-pro'">
+                  Anechoic measurement of the iPhone 17 Pro capsule: flat within ~1.5 dB
+                  from 100 Hz up, so it mostly restores the low end (+10 dB at 25 Hz). It
+                  assumes Safari captures without an extra high-pass — if the bottom
+                  octave still reads low, compare against the generic profile.
+                </template>
+                <template v-else-if="calSelection === 'smartphone-hpf'">
                   Undoes the low-end roll-off the browser's capture chain applies (~2nd-order
                   high-pass near 55 Hz). Approximate — an imported measurement of your phone
                   is always better.

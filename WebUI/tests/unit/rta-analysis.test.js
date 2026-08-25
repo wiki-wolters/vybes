@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { averageDbArrays, BUILTIN_CAL_PRESETS, makeBandGrid, aggregateBands, medianOffset, makePeakHold, updatePeakHold } from '../../src/rta.js'
+import { averageDbArrays, BUILTIN_CAL_PRESETS, calCurveForGrid, makeBandGrid, aggregateBands, medianOffset, makePeakHold, updatePeakHold } from '../../src/rta.js'
 
 describe('averageDbArrays', () => {
   it('returns null for an empty list', () => {
@@ -65,6 +65,39 @@ describe('BUILTIN_CAL_PRESETS', () => {
     for (let i = 1; i < preset.points.length; i++) {
       expect(preset.points[i][1]).toBeGreaterThanOrEqual(preset.points[i - 1][1])
     }
+  })
+})
+
+describe('iPhone 17 Pro cal preset', () => {
+  const preset = BUILTIN_CAL_PRESETS.find((p) => p.id === 'iphone-17-pro')
+  const at = (f) => preset.points.find((p) => p[0] === f)[1]
+
+  it('exists and has sorted [freq, gain] points spanning 20Hz-20kHz', () => {
+    expect(preset).toBeDefined()
+    expect(preset.points[0][0]).toBeLessThanOrEqual(20)
+    expect(preset.points[preset.points.length - 1][0]).toBeGreaterThanOrEqual(20000)
+    for (let i = 1; i < preset.points.length; i++) {
+      expect(preset.points[i][0]).toBeGreaterThan(preset.points[i - 1][0])
+    }
+  })
+
+  it('is flat across the level-alignment window', () => {
+    // 200Hz-5kHz is where medianOffset aligns the mic to the source. A bump
+    // in here would bias every band outside it, so it has to stay small.
+    for (const f of [200, 500, 1000, 2500, 5000]) expect(Math.abs(at(f))).toBeLessThan(1.5)
+  })
+
+  it('rolls off in the bottom octave', () => {
+    expect(at(20)).toBeLessThan(-10)
+    expect(at(50)).toBeLessThan(-3)
+    expect(at(50)).toBeGreaterThan(-5)
+    expect(at(100)).toBeGreaterThan(-2.5)
+  })
+
+  it('interpolates onto a band grid without gaps', () => {
+    const curve = calCurveForGrid(preset.points, makeBandGrid(12))
+    expect(curve).toHaveLength(121)
+    expect(curve.every((v) => Number.isFinite(v))).toBe(true)
   })
 })
 
