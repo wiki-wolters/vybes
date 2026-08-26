@@ -7,7 +7,8 @@
 #include "teensy_comm.h"
 
 // Screen is 1602 LCD via I2C with PCF8574 backpack
-LiquidCrystal_PCF8574 lcd(0x27); // Default I2C address 0x27
+static const uint8_t LCD_I2C_ADDR = 0x27; // Default PCF8574 address
+LiquidCrystal_PCF8574 lcd(LCD_I2C_ADDR);
 
 const long MAX_BACKLIGHT_MILLIS = 5000;
 
@@ -42,18 +43,28 @@ static void initLcd() {
     lcd.createChar(REC_DOT_CHAR, recDot);
 }
 
+// The library binds its TwoWire pointer inside begin() and nowhere else -
+// the constructor leaves it null - so lcd.isConnected() faults on a null
+// port until the one-shot init has run. That is precisely the probe this
+// code has to make *before* init, so probe the bus directly instead.
+// Wire is already up: initI2C() runs ahead of setupScreen().
+static bool backpackAcks() {
+    Wire.beginTransmission(LCD_I2C_ADDR);
+    return Wire.endTransmission() == 0;
+}
+
 void setupScreen() {
     // The screen's 5V rail can come up after the ESP does (separate supply,
     // slow ramp), and a blind lcd.begin() into an unpowered backpack is what
     // used to leave the screen blank for the whole session. Wait briefly for
     // the backpack to ACK; a screen that misses the window is picked up by
     // the probe in loopScreen() whenever it appears.
-    screenPresent = lcd.isConnected();
+    screenPresent = backpackAcks();
     if (!screenPresent) {
         unsigned long waitStart = millis();
         while (!screenPresent && millis() - waitStart < SCREEN_BOOT_WAIT_MS) {
             delay(50);
-            screenPresent = lcd.isConnected();
+            screenPresent = backpackAcks();
         }
         if (!screenPresent) {
             DebugSerial.println("LCD not responding; will keep probing");
@@ -86,7 +97,7 @@ static void probeScreenPresence() {
     }
     lastProbeMillis = millis();
 
-    bool present = lcd.isConnected();
+    bool present = backpackAcks();
     if (present && !screenPresent) {
         DebugSerial.println("LCD appeared; initializing");
         delay(100); // same power-on-reset settle as in setupScreen()
