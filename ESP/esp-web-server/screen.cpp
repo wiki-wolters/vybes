@@ -2,6 +2,7 @@
 #include <Wire.h>
 #include <Arduino.h>
 #include <LiquidCrystal_PCF8574.h>
+#include "globals.h"
 #include "config.h"
 #include "teensy_comm.h"
 
@@ -10,17 +11,27 @@ LiquidCrystal_PCF8574 lcd(0x27); // Default I2C address 0x27
 
 const long MAX_BACKLIGHT_MILLIS = 5000;
 
+// How long boot will wait for the backpack to ACK before giving up on it
+// (loopScreen keeps probing after that, so a late screen still comes up).
+const unsigned long SCREEN_BOOT_WAIT_MS = 1000;
+const unsigned long SCREEN_PROBE_INTERVAL_MS = 2000;
+
 unsigned long messageStart = 0;
 unsigned long messageDuration = 0;
 unsigned long backlightStart = 0;
 String currentMessage = "";
 
+static bool screenPresent = false;
+static unsigned long lastProbeMillis = 0;
+
 // Custom glyph slot for the recording dot ("\x01" in messages; slot 0 would
 // terminate the String).
 #define REC_DOT_CHAR 1
 
-void setupScreen() {
-    // Try to initialize the LCD
+// The HD44780 accepts its init sequence exactly once and begin() checks no
+// ACKs, so an LCD that isn't powered and settled at this moment stays dark
+// until the next power cycle even though every later print() "succeeds".
+static void initLcd() {
     lcd.begin(16, 2);  // Initialize for 16x2 display
     lcd.setBacklight(0);  // Turn off backlight initially
     lcd.clear();
@@ -29,6 +40,32 @@ void setupScreen() {
     byte recDot[8] = {0b00000, 0b01110, 0b11111, 0b11111,
                       0b11111, 0b01110, 0b00000, 0b00000};
     lcd.createChar(REC_DOT_CHAR, recDot);
+}
+
+void setupScreen() {
+    // The screen's 5V rail can come up after the ESP does (separate supply,
+    // slow ramp), and a blind lcd.begin() into an unpowered backpack is what
+    // used to leave the screen blank for the whole session. Wait briefly for
+    // the backpack to ACK; a screen that misses the window is picked up by
+    // the probe in loopScreen() whenever it appears.
+    screenPresent = lcd.isConnected();
+    if (!screenPresent) {
+        unsigned long waitStart = millis();
+        while (!screenPresent && millis() - waitStart < SCREEN_BOOT_WAIT_MS) {
+            delay(50);
+            screenPresent = lcd.isConnected();
+        }
+        if (!screenPresent) {
+            DebugSerial.println("LCD not responding; will keep probing");
+            return;
+        }
+        // The PCF8574 ACKs from ~2.5V but the HD44780 behind it needs its
+        // 5V power-on reset to finish: give a rail we just watched come up
+        // a moment to settle before the one-shot init sequence.
+        delay(100);
+    }
+
+    initLcd();
 
     // Display a test message
     lcd.setCursor(0, 0);
@@ -36,6 +73,33 @@ void setupScreen() {
 
     // Store empty string as current message
     currentMessage = "";
+}
+
+// Periodic presence probe. A screen that was absent (or lost power) gets the
+// full init sequence again the moment it ACKs, then the persistent message
+// is rewritten - so the display self-heals no matter which rail came up
+// first. Timed messages are dropped on re-init: whatever they said predates
+// the outage.
+static void probeScreenPresence() {
+    if (millis() - lastProbeMillis < SCREEN_PROBE_INTERVAL_MS) {
+        return;
+    }
+    lastProbeMillis = millis();
+
+    bool present = lcd.isConnected();
+    if (present && !screenPresent) {
+        DebugSerial.println("LCD appeared; initializing");
+        delay(100); // same power-on-reset settle as in setupScreen()
+        initLcd();
+        screenPresent = true;
+        messageDuration = 0;
+        if (currentMessage.length() > 0) {
+            writeToScreen(currentMessage);
+        }
+    } else if (!present && screenPresent) {
+        DebugSerial.println("LCD stopped responding");
+        screenPresent = false;
+    }
 }
 
 void writeToScreen(String message, unsigned long duration) {
@@ -108,6 +172,7 @@ static void updateRecordingMessage() {
 }
 
 void loopScreen() {
+    probeScreenPresence();
     updateRecordingMessage();
 
     // This function handles timed messages
