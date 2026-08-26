@@ -251,10 +251,11 @@ import DelayAlignWizard from '../components/DelayAlignWizard.vue';
 import EQSection from '../components/shared/EQSection.vue';
 import CollapsibleSection from '../components/shared/CollapsibleSection.vue';
 import Loading from '../components/shared/Loading.vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { usePresetStore } from '../stores/preset.js';
 import { formatValue } from '../utilities.js';
 
+const route = useRoute();
 const router = useRouter();
 const store = usePresetStore();
 
@@ -374,6 +375,16 @@ watch(() => props.name, (name) => {
 onMounted(async () => {
   store.loadFirFiles();
   await selectPreset(props.name);
+
+  // ?channel=N opens the Channels tab on that output. The analyzer links here
+  // after applying an output EQ, and the default Tuning tab shows the *input*
+  // EQ - landing on a flat graph reads as "nothing was applied".
+  const channel = Number(route.query.channel);
+  if (Number.isInteger(channel) && channel >= 0 && channel < store.outputs.length) {
+    activeTab.value = 'channels';
+    await nextTick();
+    focusChannel(channel);
+  }
 
   unsubscribeLive = apiClient.connectLiveUpdates(
     (data) => {

@@ -11,6 +11,19 @@ const API_BASE_URL = import.meta.env.DEV
 // request behind it. See the note on request() for why they are queued.
 const REQUEST_TIMEOUT_MS = 15000
 
+// A dropped connection is retried; see _performRequest for why. The delays
+// only have to outlast a transient heap dip on the device, which is
+// milliseconds, so they are short enough to stay invisible.
+const TRANSPORT_RETRY_DELAYS_MS = [250, 750]
+
+// Methods safe to replay when we never learned the outcome. GET/PUT/DELETE
+// in this API are all full-state operations, so a replay either repeats the
+// same write or reads again. POST is not: /preset creates, /restore reboots,
+// /recorder/record/start begins a new file.
+const REPLAYABLE_METHODS = new Set(['GET', 'PUT', 'DELETE', 'HEAD'])
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
 /*
  * Vybes DSP API Client - Enhanced Version
  * A comprehensive JavaScript client for interacting with the Vybes DSP system
@@ -71,12 +84,52 @@ class VybesAPI {
    * @returns {Promise<Object>} Response data
    */
   request(method, endpoint, body = null, isFormData = false) {
-    const run = () => this._performRequest(method, endpoint, body, isFormData);
+    // The retry loop lives inside the queue slot, so a replay reuses the same
+    // keep-alive connection instead of racing a second one into the listener.
+    const run = () => this._requestWithRetry(method, endpoint, body, isFormData);
     // Chained on settlement rather than success: one rejection must not stop
     // everything queued behind it.
     const result = this.requestChain.then(run, run);
     this.requestChain = result.then(() => undefined, () => undefined);
     return result;
+  }
+
+  /**
+   * Replay a request whose outcome we never learned.
+   *
+   * fetch() rejects with a bare TypeError ("Load failed" in Safari, "Failed to
+   * fetch" in Chrome) when the connection dies before a response arrives. That
+   * says nothing about whether the device acted: its handlers commit the change
+   * and only then reply, so a drop after the commit looks identical to one
+   * before it. The analyzer made this routine - it streams RTA frames the whole
+   * time it is open, and that churn dips the device's largest free block below
+   * the 16KB a TLS handshake needs (see ESP/esp-web-server/health.cpp). A
+   * request unlucky enough to land inside the dip dies, and an EQ apply that
+   * had already been written reported itself as a failure.
+   *
+   * Only genuine transport failures are replayed. An HTTP error status is the
+   * device's considered answer, and a timeout has already spent its 15s, so
+   * neither is retried; a drop fails in milliseconds, which keeps the added
+   * head-of-line blocking bounded.
+   */
+  async _requestWithRetry(method, endpoint, body, isFormData) {
+    const replayable = REPLAYABLE_METHODS.has(method.toUpperCase()) && !isFormData;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this._performRequest(method, endpoint, body, isFormData);
+      } catch (error) {
+        // Per the fetch spec a network error rejects with a TypeError, which
+        // separates a dropped connection from a bad JSON body on a 2xx.
+        const transportFailure = error instanceof TypeError;
+        if (!replayable || !transportFailure || attempt >= TRANSPORT_RETRY_DELAYS_MS.length) {
+          throw error;
+        }
+        console.warn(
+          `API connection dropped, retrying (${attempt + 1}/${TRANSPORT_RETRY_DELAYS_MS.length}): ` +
+          `${method} ${endpoint}`);
+        await sleep(TRANSPORT_RETRY_DELAYS_MS[attempt]);
+      }
+    }
   }
 
   async _performRequest(method, endpoint, body, isFormData) {

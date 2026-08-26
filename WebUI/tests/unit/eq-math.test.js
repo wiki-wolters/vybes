@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { peakingBellDb, peqSumDb, octavesToQ, fitPeqPoints } from '../../src/eq-math.js'
+import { peakingBellDb, peqSumDb, octavesToQ, fitPeqPoints, peqPointsMatch } from '../../src/eq-math.js'
 
 /*
  * Independent reference implementation of the RBJ analog-prototype peaking
@@ -266,5 +266,43 @@ describe('fitPeqPoints', () => {
       expect(p.gain).toBeCloseTo(Math.round(p.gain * 10) / 10, 12)
       expect(p.q).toBeCloseTo(Math.round(p.q * 100) / 100, 12)
     }
+  })
+})
+
+// Recognising our own write coming back is what lets an EQ apply whose reply
+// was lost report the truth instead of a failure, so the comparison has to be
+// exact about which bands it accepts.
+describe('peqPointsMatch', () => {
+  const wanted = [
+    { freq: 112.2, gain: 6, q: 4.32 },
+    { freq: 8414, gain: -3.7, q: 4.32 },
+  ]
+
+  it('matches a round-tripped copy of the same bands', () => {
+    const stored = wanted.map((p) => ({ ...p, id: 0 }))
+    expect(peqPointsMatch(stored, wanted)).toBe(true)
+  })
+
+  it('absorbs float round-tripping but not a rounding step', () => {
+    expect(peqPointsMatch(
+      [{ freq: 112.20000076, gain: 5.99999988, q: 4.3200001 }, wanted[1]],
+      wanted,
+    )).toBe(true)
+    // 0.1 dB is a whole step of the generator's output - a different fit.
+    expect(peqPointsMatch(
+      [{ freq: 112.2, gain: 6.1, q: 4.32 }, wanted[1]],
+      wanted,
+    )).toBe(false)
+  })
+
+  it('rejects a different band count, order, or missing array', () => {
+    expect(peqPointsMatch([wanted[0]], wanted)).toBe(false)
+    expect(peqPointsMatch([wanted[1], wanted[0]], wanted)).toBe(false)
+    expect(peqPointsMatch(undefined, wanted)).toBe(false)
+    expect(peqPointsMatch(null, wanted)).toBe(false)
+  })
+
+  it('matches empty against empty - clearing the bands is a real outcome', () => {
+    expect(peqPointsMatch([], [])).toBe(true)
   })
 })

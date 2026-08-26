@@ -17,7 +17,9 @@
       </p>
     </div>
 
-    <div>
+    <!-- Capture mode replaces the page rather than covering it: two live
+         deviation charts would both recompute on every RTA frame. -->
+    <div v-if="!captureModalOpen">
       <CardSection title="Spectrum">
         <!-- Legend / status -->
         <div class="flex flex-wrap items-center gap-x-5 gap-y-1 mb-3 text-xs">
@@ -299,7 +301,7 @@
             {{ applyState.message }}
             <router-link
               v-if="!applyState.error && activePresetName"
-              :to="`/preset/${encodeURIComponent(activePresetName)}`"
+              :to="appliedEqLink"
               class="text-vybes-accent underline ml-1"
             >
               Fine-tune in the preset editor
@@ -357,22 +359,22 @@
             </p>
 
             <div class="mt-4 pt-3 border-t border-vybes-border">
-              <button class="w-full btn-secondary" :disabled="!captureReady" @click="capturePosition">
-                Capture position {{ captures.length + 1 }}
+              <button
+                class="w-full btn-secondary"
+                :disabled="!micActive || !sourceLive"
+                @click="openCaptureMode"
+              >
+                {{ captures.length ? 'Capture more positions…' : 'Capture positions…' }}
               </button>
               <p class="mt-2 text-xs text-vybes-text-secondary">
-                <template v-if="captureSettling">
-                  Settling — hold the phone in place (or wave it slowly around the spot) for
-                  {{ Number(averagingSeconds) }} s before capturing.
-                </template>
-                <template v-else-if="captures.length">
+                <template v-if="captures.length">
                   The EQ corrects the average of {{ captures.length }}
-                  position{{ captures.length === 1 ? '' : 's' }}. Move to another listening
-                  spot and capture again.
+                  position{{ captures.length === 1 ? '' : 's' }}.
                 </template>
                 <template v-else>
                   Capture the deviation at several listening spots — the EQ then corrects
-                  their average instead of a single point.
+                  their average instead of a single point. Opens a full-screen view so the
+                  button stays under your thumb while you move around.
                 </template>
               </p>
               <div v-if="captures.length" class="flex flex-wrap items-center gap-2 mt-2">
@@ -485,6 +487,24 @@
       </CardSection>
     </div>
 
+    <CapturePositionsModal
+      :open="captureModalOpen"
+      :grid="compareGrid"
+      :delta="deltaValues"
+      :average="averagedDelta"
+      :captures="captures"
+      :ready="captureReady"
+      :settling="captureSettling"
+      :mic-active="micActive"
+      :source-live="sourceLive"
+      :seconds-remaining="settleSecondsRemaining"
+      :averaging-seconds="Number(averagingSeconds)"
+      :scope-label="scopeLabel"
+      @capture="capturePosition"
+      @remove="removeCapture"
+      @close="captureModalOpen = false"
+    />
+
     <ModalDialog
       v-model="showApplyModal"
       title="Apply EQ correction"
@@ -522,7 +542,18 @@ import CardSection from '../components/shared/CardSection.vue';
 import SelectGroup from '../components/shared/SelectGroup.vue';
 import RangeSlider from '../components/shared/RangeSlider.vue';
 import ModalDialog from '../components/shared/ModalDialog.vue';
-import { peqSumDb, fitPeqPoints } from '../eq-math.js';
+import CapturePositionsModal from '../components/CapturePositionsModal.vue';
+import { peqSumDb, fitPeqPoints, peqPointsMatch } from '../eq-math.js';
+import {
+  clampDelta,
+  logX,
+  freqAtLogX,
+  bandPixelWidth as bandPixelWidthAt,
+  deltaZeroY as deltaZeroYAt,
+  deltaDbToY as deltaDbToYAt,
+  deviationBars,
+  deviationPath,
+} from '../rta-chart.js';
 import {
   makeBandGrid,
   decodeRtaFrame,
@@ -553,7 +584,6 @@ const width = ref(320);
 const chartHeight = 300;
 const deltaHeight = 160;
 const padLeft = 28;
-const DELTA_RANGE_DB = 20;
 
 // --- Band grids ---
 // The display resolution is a user setting; the mic trace always renders at
@@ -998,20 +1028,11 @@ function clearCal() {
 }
 
 // --- Chart geometry ---
-// Log-frequency x axis with a fixed span (the outer edges of the 1/3-octave
-// 20Hz-20kHz range), so traces of different resolutions share the chart and
-// the axis doesn't shift when the resolution changes.
-const LOG_X_LO = 1.25; // log10(20) - half a 1/3-octave band
-const LOG_X_HI = 4.35; // log10(20000) + half a 1/3-octave band
-
-const xForFreq = (f) =>
-  padLeft + ((Math.log10(f) - LOG_X_LO) / (LOG_X_HI - LOG_X_LO)) * (width.value - padLeft);
-const freqAtX = (x) =>
-  Math.pow(10, LOG_X_LO + ((x - padLeft) / (width.value - padLeft)) * (LOG_X_HI - LOG_X_LO));
-
-// Pixel width of one band on a grid (bands are equal-width in log frequency)
-const bandPixelWidth = (grid) =>
-  (width.value - padLeft) / ((LOG_X_HI - LOG_X_LO) * grid.perDecade);
+// Bound to this chart's measured width; the log-frequency scale itself is
+// shared with the capture modal's chart (see rta-chart.js).
+const xForFreq = (f) => logX(f, width.value, padLeft);
+const freqAtX = (x) => freqAtLogX(x, width.value, padLeft);
+const bandPixelWidth = (grid) => bandPixelWidthAt(grid, width.value, padLeft);
 
 // Y scale of the overlay chart: 70dB window that tracks the loudest band.
 // The peak layer is included, or the ticks would pin to the top edge exactly
@@ -1138,8 +1159,8 @@ const barLayers = computed(() => {
 });
 
 // --- Delta chart ---
-const deltaZeroY = deltaHeight / 2;
-const deltaDbToY = (db) => deltaZeroY - (db / DELTA_RANGE_DB) * (deltaHeight / 2 - 8);
+const deltaZeroY = deltaZeroYAt(deltaHeight);
+const deltaDbToY = (db) => deltaDbToYAt(db, deltaHeight);
 
 const deltaGridLines = computed(() =>
   [-20, -10, 10, 20].map((db) => ({ db, y: deltaDbToY(db) }))
@@ -1163,8 +1184,6 @@ const deltaValues = computed(() => {
   return out;
 });
 
-const clampDelta = (d) => Math.max(-DELTA_RANGE_DB, Math.min(DELTA_RANGE_DB, d));
-
 // --- Position captures ---
 const captureSettling = computed(
   () =>
@@ -1175,6 +1194,35 @@ const captureReady = computed(
   () =>
     micActive.value && sourceLive.value && !frozen.value &&
     !!deltaValues.value && !captureSettling.value
+);
+
+// Full-screen capture mode. The page's own capture button used to sit below
+// the EQ Correction card, which only appears once the first position is
+// captured - so taking one shoved the button ~700px down the page, and every
+// position after that meant scrolling to find it again with a phone in hand.
+const captureModalOpen = ref(false);
+
+function openCaptureMode() {
+  // Entering restarts the settle window: the user is about to walk somewhere,
+  // and a window that elapsed while they were reading the page is not a
+  // measurement of anywhere.
+  settleAnchor.value = Date.now();
+  captureModalOpen.value = true;
+}
+
+// Whole seconds left before the next capture is allowed. Displayed as a
+// countdown and a filling bar - see the modal for why that is not optional.
+const settleSecondsRemaining = computed(() => {
+  const elapsed = nowTick.value - settleAnchor.value;
+  return Math.max(0, Math.ceil((Number(averagingSeconds.value) * 1000 - elapsed) / 1000));
+});
+
+// Changing scope clears every capture, so capture mode shows what it is
+// measuring rather than offering to change it.
+const scopeLabel = computed(() =>
+  scopeIsOutput.value
+    ? `${scopeOutput.value?.label ?? 'Output'} only (output EQ)`
+    : 'All outputs (input EQ)'
 );
 
 function capturePosition() {
@@ -1209,32 +1257,11 @@ watch(compareGrid, () => {
   captures.value = [];
 });
 
-// Bar fills are bound per-bar, so they can't come from a stylesheet rule.
-// Kept in sync with the theme amber (--vybes-accent) by hand.
-const DELTA_BOOST_COLOR = '#f5c04e';
-const DELTA_LOSS_COLOR = '#38bdf8';
-
-const deltaBars = computed(() => {
-  if (!deltaValues.value) return [];
-  const grid = compareGrid.value;
-  const bars = [];
-  const bw = bandPixelWidth(grid) * 0.66;
-  for (let i = 0; i < grid.centers.length; i++) {
-    if (!Number.isFinite(deltaValues.value[i])) continue;
-    const d = clampDelta(deltaValues.value[i]);
-    const y0 = deltaDbToY(Math.max(0, d));
-    bars.push({
-      index: i,
-      x: xForFreq(grid.centers[i]) - bw / 2,
-      y: y0,
-      w: bw,
-      h: Math.max(1, Math.abs(deltaDbToY(d) - deltaZeroY)),
-      color: d >= 0 ? DELTA_BOOST_COLOR : DELTA_LOSS_COLOR,
-      opacity: Math.abs(d) < 2 ? 0.35 : 0.9,
-    });
-  }
-  return bars;
-});
+const deltaBars = computed(() =>
+  deviationBars(deltaValues.value, compareGrid.value, {
+    width: width.value, padLeft, height: deltaHeight,
+  })
+);
 
 // --- Chart crosshairs ---
 
@@ -1433,6 +1460,14 @@ watch(eqTarget, () => {
 });
 
 const activePresetName = ref('');
+// Where "fine-tune" goes after an apply. An output correction lives on the
+// Channels tab; the editor's default Tuning tab shows the input EQ, so linking
+// there after an output apply lands the user on a flat graph.
+const appliedEqLink = computed(() => {
+  const base = `/preset/${encodeURIComponent(activePresetName.value || '')}`;
+  return scopeIsOutput.value ? `${base}?channel=${Number(scope.value)}` : base;
+});
+
 const showApplyModal = ref(false);
 const applyState = reactive({ busy: false, message: '', error: false });
 
@@ -1583,6 +1618,7 @@ watch(activePresetName, (name) => {
 watch(scope, (s, prev) => {
   captures.value = [];
   frozen.value = false;
+  captureModalOpen.value = false;
   settleAnchor.value = Date.now();
   if (s !== 'input') {
     apiClient.sendLiveMessage(`solo:${s}`);
@@ -1641,17 +1677,11 @@ const correctionPath = computed(() => {
   return `M ${seg.join(' L ')}`;
 });
 
-const averagePath = computed(() => {
-  if (!averagedDelta.value) return '';
-  const grid = compareGrid.value;
-  const seg = [];
-  for (let i = 0; i < grid.centers.length; i++) {
-    const d = averagedDelta.value[i];
-    if (!Number.isFinite(d)) continue;
-    seg.push(`${xForFreq(grid.centers[i]).toFixed(1)},${deltaDbToY(clampDelta(d)).toFixed(1)}`);
-  }
-  return seg.length > 1 ? `M ${seg.join(' L ')}` : '';
-});
+const averagePath = computed(() =>
+  deviationPath(averagedDelta.value, compareGrid.value, {
+    width: width.value, padLeft, height: deltaHeight,
+  })
+);
 
 const predictedPath = computed(() => {
   if (!generatedPoints.value.length || !analysisDelta.value) return '';
@@ -1666,12 +1696,53 @@ const predictedPath = computed(() => {
   return seg.length > 1 ? `M ${seg.join(' L ')}` : '';
 });
 
+// Did the apply land despite the error?
+//
+// A dropped connection ("Load failed" in Safari) rejects without a response,
+// which says nothing about whether the device acted - its handlers commit the
+// change and only then reply. Reporting that as a plain failure is worse than
+// useless here: the bands are on the device, the UI says they are not, and the
+// user re-measures the room. So read the preset back and let the stored state
+// answer. If the points are there but the EQ was left bypassed, the second
+// request is the one that was lost - reissue it.
+async function recoverApply(points) {
+  try {
+    const preset = await apiClient.getPreset(activePresetName.value);
+    if (scopeIsOutput.value) {
+      const index = Number(scope.value);
+      const stored = preset?.outputs?.[index];
+      if (!stored || !peqPointsMatch(stored.peq, points)) return false;
+      if (!stored.eqEnabled) {
+        await apiClient.setOutputEqEnabled(activePresetName.value, index, true);
+      }
+      const o = scopeOutput.value;
+      if (o) o.eqEnabled = true;
+      return true;
+    }
+    const set = preset?.inputEq?.sets?.find((s) => s.spl === 0);
+    if (!peqPointsMatch(set?.points, points)) return false;
+    if (!preset?.inputEq?.enabled) {
+      await apiClient.setEQEnabled(activePresetName.value, 'pref', true);
+    }
+    inputEqEnabled.value = true;
+    return true;
+  } catch (e) {
+    // The read-back failed too - fall back to reporting the original error.
+    console.error('EQ apply read-back failed:', e);
+    return false;
+  }
+}
+
 async function applyGeneratedEq() {
   showApplyModal.value = false;
   if (!activePresetName.value || !generatedPoints.value.length) return;
   applyState.busy = true;
   applyState.message = '';
   const points = generatedPoints.value.map((p, id) => ({ id, freq: p.freq, gain: p.gain, q: p.q }));
+  const wasBypassed = scopeEqBypassed.value;
+  const savedMessage = scopeIsOutput.value
+    ? `Saved ${points.length} band${points.length === 1 ? '' : 's'} to the “${scopeOutput.value?.label}” output EQ${wasBypassed ? ' and re-enabled it' : ''}.`
+    : `Saved ${points.length} band${points.length === 1 ? '' : 's'} to “${activePresetName.value}”${wasBypassed ? ' and enabled the EQ' : ''}.`;
   try {
     // Always enable the target EQ on apply: the correction was fitted against
     // what the mic heard (EQ bypassed = raw response), so enabling is exactly
@@ -1681,39 +1752,63 @@ async function applyGeneratedEq() {
     // before the broadcast refresh landed, or over a dropped socket) and would
     // otherwise leave the EQ off after apply. `wasBypassed` only tunes the
     // status wording.
-    const wasBypassed = scopeEqBypassed.value;
     if (scopeIsOutput.value) {
       await apiClient.saveOutputEq(activePresetName.value, Number(scope.value), points);
       await apiClient.setOutputEqEnabled(activePresetName.value, Number(scope.value), true);
       const o = scopeOutput.value;
       if (o) o.eqEnabled = true;
-      applyState.error = false;
-      applyState.message = `Saved ${points.length} band${points.length === 1 ? '' : 's'} to the “${scopeOutput.value?.label}” output EQ${wasBypassed ? ' and re-enabled it' : ''}.`;
     } else {
       await apiClient.savePrefEqSet(activePresetName.value, points);
       await apiClient.setEQEnabled(activePresetName.value, 'pref', true);
       inputEqEnabled.value = true;
-      applyState.error = false;
-      applyState.message = `Saved ${points.length} band${points.length === 1 ? '' : 's'} to “${activePresetName.value}”${wasBypassed ? ' and enabled the EQ' : ''}.`;
     }
+    applyState.error = false;
+    applyState.message = savedMessage;
+  } catch (err) {
+    if (await recoverApply(points)) {
+      applyState.error = false;
+      applyState.message = `${savedMessage} (the connection dropped mid-save — confirmed on the device).`;
+    } else {
+      applyState.error = true;
+      applyState.message = `Failed to apply EQ: ${err.message}`;
+    }
+  }
+
+  try {
     // The preset editor trusts the store's cached copy; resync it or the
-    // applied bands stay invisible there until a full page reload.
+    // applied bands stay invisible there until a full page reload. Outside the
+    // save's own error handling: this is housekeeping, and letting it decide
+    // whether the save "failed" is what made a landed apply report a failure.
     if (presetStore.presetName === activePresetName.value) {
       await presetStore.refresh();
     }
     // The scope notes read our local snapshot; the broadcasts also schedule
     // this, but not over a dropped socket.
     scheduleOutputsRefresh();
-  } catch (err) {
-    applyState.error = true;
-    applyState.message = `Failed to apply EQ: ${err.message}`;
   } finally {
     applyState.busy = false;
   }
 }
 
 // --- Lifecycle ---
+// Watched rather than set up once in onMounted: capture mode unmounts the page
+// (and its chart container) and remounts it on exit, so a one-shot observer
+// would come back attached to a detached element and the chart would stop
+// tracking the viewport after the first capture session.
 let resizeObserver = null;
+const updateWidth = () => {
+  if (chartContainer.value?.clientWidth > 0) width.value = chartContainer.value.clientWidth;
+};
+watch(chartContainer, (el) => {
+  resizeObserver?.disconnect();
+  resizeObserver = null;
+  if (!el) return;
+  updateWidth();
+  if (window.ResizeObserver) {
+    resizeObserver = new ResizeObserver(updateWidth);
+    resizeObserver.observe(el);
+  }
+}, { flush: 'post' });
 
 onMounted(() => {
   // Stored calibration survives reloads
@@ -1774,15 +1869,6 @@ onMounted(() => {
   }, KEEPALIVE_INTERVAL_MS);
 
   micPollTimer = setInterval(pollTick, MIC_POLL_INTERVAL_MS);
-
-  const updateWidth = () => {
-    if (chartContainer.value?.clientWidth > 0) width.value = chartContainer.value.clientWidth;
-  };
-  updateWidth();
-  if (window.ResizeObserver && chartContainer.value) {
-    resizeObserver = new ResizeObserver(updateWidth);
-    resizeObserver.observe(chartContainer.value);
-  }
 });
 
 onUnmounted(() => {

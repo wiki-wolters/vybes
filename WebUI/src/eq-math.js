@@ -121,3 +121,25 @@ export function fitPeqPoints(freqs, correction, {
       q: Math.round(p.q * 100) / 100,
     }));
 }
+
+/**
+ * Is `stored` the same band list as `wanted`?
+ *
+ * Used to recognise our own write coming back from the device after a save
+ * whose response was lost. The device clamps what it is handed but otherwise
+ * stores it verbatim, and fitPeqPoints has already rounded to 0.1 Hz / 0.1 dB
+ * / 0.01 Q, so the tolerances only have to absorb float round-tripping - they
+ * are deliberately tighter than one rounding step, or a *different* set of
+ * bands could pass for ours.
+ */
+export function peqPointsMatch(stored, wanted) {
+  if (!Array.isArray(stored) || !Array.isArray(wanted)) return false;
+  if (stored.length !== wanted.length) return false;
+  return wanted.every((w, i) => {
+    const s = stored[i];
+    return !!s &&
+      Math.abs(s.freq - w.freq) < 0.05 &&
+      Math.abs(s.gain - w.gain) < 0.05 &&
+      Math.abs(s.q - w.q) < 0.005;
+  });
+}
