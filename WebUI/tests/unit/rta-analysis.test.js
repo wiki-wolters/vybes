@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { averageDbArrays, BUILTIN_CAL_PRESETS, calCurveForGrid, makeBandGrid, aggregateBands, medianOffset, makePeakHold, updatePeakHold } from '../../src/rta.js'
+import { alignmentWindow, averageDbArrays, BUILTIN_CAL_PRESETS, calCurveForGrid, makeBandGrid, aggregateBands, medianOffset, makePeakHold, updatePeakHold } from '../../src/rta.js'
 
 describe('averageDbArrays', () => {
   it('returns null for an empty list', () => {
@@ -138,6 +138,62 @@ describe('medianOffset', () => {
     expect(medianOffset(a, b, centers, 20, 20000, floor, 8)).toBeCloseTo(-20, 6)
     // Without the gate the noise-floor bands dominate and wreck the offset.
     expect(medianOffset(a, b, centers, 20, 20000)).toBeCloseTo(-58, 6)
+  })
+})
+
+describe('alignmentWindow', () => {
+  const FULL = { loHz: 25, hiHz: 10000 }
+
+  it('a full-range scope aligns on the midrange', () => {
+    expect(alignmentWindow(FULL)).toEqual({ loHz: 200, hiHz: 5000 })
+  })
+
+  it('a woofer aligns inside its passband, clear of both corners', () => {
+    // hp 80 / lp 2000: skirts pull it to 113-1414, then the midrange floor
+    // keeps it out of the modal region below 200 Hz.
+    const w = alignmentWindow({ loHz: 80, hiHz: 2000, hpHz: 80, lpHz: 2000 })
+    expect(w.loHz).toBe(200)
+    expect(w.hiHz).toBeCloseTo(2000 / Math.SQRT2, 6)
+  })
+
+  it('follows the correction band down when it is narrowed to the bass', () => {
+    // Asking for 45-120 Hz flat has to move the alignment there too: aligning
+    // on 200-5000 Hz and differencing at 50 Hz is an offset from somewhere
+    // else, which is what tilted a soloed sub up by ~20 dB.
+    expect(alignmentWindow({ loHz: 45, hiHz: 120 })).toEqual({ loHz: 45, hiHz: 120 })
+  })
+
+  it('a narrowed band beats a passband it contradicts', () => {
+    // The bug in the field: the enabled "Sub" output was high-passed at 80 Hz
+    // with no low-pass, so the passband rule alone said 200-5000 Hz - dead
+    // bands for a subwoofer. An explicit 45-120 Hz request wins.
+    expect(alignmentWindow({ loHz: 45, hiHz: 120, hpHz: 80 })).toEqual({ loHz: 45, hiHz: 120 })
+  })
+
+  it('keeps the requested band when the skirts would eat it', () => {
+    // Sub low-passed at 80 Hz: half an octave in from the corner leaves
+    // 45-56.6 Hz, under a third of an octave, too few bands for a median.
+    expect(alignmentWindow({ loHz: 45, hiHz: 120, lpHz: 80 })).toEqual({ loHz: 45, hiHz: 120 })
+  })
+
+  it('a sub with room to spare aligns inside its own passband', () => {
+    const w = alignmentWindow({ loHz: 20, hiHz: 120, lpHz: 120 })
+    expect(w.loHz).toBe(20)
+    expect(w.hiHz).toBeCloseTo(120 / Math.SQRT2, 6)
+  })
+
+  it('never returns an inverted window', () => {
+    const w = alignmentWindow({ loHz: 500, hiHz: 60 })
+    expect(w.loHz).toBeLessThan(w.hiHz)
+  })
+
+  it('the window it returns always contains real signal for a soloed sub', () => {
+    // End to end with medianOffset: the sub's true offset is -20 dB.
+    const { centers } = makeBandGrid(6)
+    const source = centers.map(() => -30)
+    const mic = centers.map((fc) => (fc >= 40 && fc <= 130 ? -50 : -88))
+    const w = alignmentWindow({ loHz: 45, hiHz: 120, hpHz: 80 })
+    expect(medianOffset(mic, source, centers, w.loHz, w.hiHz)).toBeCloseTo(-20, 6)
   })
 })
 

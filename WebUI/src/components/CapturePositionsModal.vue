@@ -49,6 +49,14 @@
           fill="none"
           stroke-width="2.5"
         />
+        <!-- Outside the correction limits, dimmed - same window the page's
+             chart shows, so a capture walk reads as the same measurement. -->
+        <rect
+          v-for="(shade, i) in shades"
+          :key="'oob' + i"
+          :x="shade.x" y="0" :width="shade.w" :height="height"
+          fill="#000" opacity="0.5"
+        />
       </svg>
     </div>
     <p class="capture-legend">
@@ -119,6 +127,7 @@ import {
   deltaDbToY,
   deviationBars,
   deviationPath,
+  outOfBandShades,
 } from '../rta-chart.js';
 
 const props = defineProps({
@@ -139,6 +148,9 @@ const props = defineProps({
   /** Length of the settle window, for the progress bar */
   averagingSeconds: { type: Number, default: 2 },
   scopeLabel: { type: String, default: '' },
+  /** Correction limits, dimmed outside on the chart */
+  loHz: { type: Number, default: 20 },
+  hiHz: { type: Number, default: 20000 },
 });
 
 const emit = defineEmits(['close', 'capture', 'remove']);
@@ -163,6 +175,9 @@ const bars = computed(() =>
   deviationBars(props.delta, props.grid, {
     width: width.value, padLeft: PAD_LEFT, height: height.value,
   })
+);
+const shades = computed(() =>
+  outOfBandShades(props.loHz, props.hiHz, { width: width.value, padLeft: PAD_LEFT })
 );
 const averagePath = computed(() =>
   deviationPath(props.average, props.grid, {

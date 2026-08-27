@@ -37,8 +37,11 @@
               {{ micActive ? (calPoints ? 'on (calibrated)' : 'on') : 'off' }}
             </span>
           </span>
+          <!-- The window is worth showing: an offset taken outside the band
+               the output actually plays is the one way this whole chart lies. -->
           <span v-if="micActive && sourceLive" class="text-vybes-text-secondary tabular-nums">
             level aligned {{ offset >= 0 ? '+' : '' }}{{ offset.toFixed(1) }} dB
+            over {{ fmtHz(alignWindow.loHz) }}–{{ fmtHz(alignWindow.hiHz) }}
           </span>
         </div>
         <p class="-mt-2 mb-3 text-[11px] text-vybes-text-secondary">
@@ -101,6 +104,11 @@
           <p class="text-xs text-vybes-text-secondary mb-2">
             Room + system deviation (mic − source). Bars above zero are frequencies the room/system
             boosts; below zero, frequencies it loses.
+            <span v-if="deltaShades.length">
+              The dimmed areas are outside the correction limits
+              ({{ fmtHz(eqGen.loHz) }}–{{ fmtHz(eqGen.hiHz) }}) — nothing there is levelled,
+              measured or corrected.
+            </span>
           </p>
           <div class="w-full rounded bg-black/30 overflow-hidden">
             <svg
@@ -137,6 +145,19 @@
                 <path class="trace-correction" :d="correctionPath" fill="none" stroke-width="2" opacity="0.9" />
                 <path class="trace-predicted" :d="predictedPath" fill="none" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.75" />
               </template>
+              <!-- Everything outside the correction limits, dimmed: the
+                   deviation there is the crossover's rolloff, not an error. -->
+              <rect
+                v-for="(shade, i) in deltaShades"
+                :key="'oob' + i"
+                :x="shade.x"
+                y="0"
+                :width="shade.w"
+                :height="deltaHeight"
+                fill="#000"
+                opacity="0.5"
+                pointer-events="none"
+              />
               <!-- Crosshair: nearest band under the pointer/finger -->
               <g v-if="deltaHover" pointer-events="none">
                 <line :x1="deltaHover.x" :y1="0" :x2="deltaHover.x" :y2="deltaHeight" stroke="#fff" stroke-width="1" opacity="0.5" />
@@ -242,7 +263,7 @@
           <RangeSlider
             label="Low frequency limit"
             :min="20"
-            :max="500"
+            :max="eqLoMax"
             :step="1"
             unit="Hz"
             :decimals="0"
@@ -251,7 +272,7 @@
           />
           <RangeSlider
             label="High frequency limit"
-            :min="1000"
+            :min="eqHiMin"
             :max="20000"
             :step="10"
             unit="Hz"
@@ -500,6 +521,8 @@
       :seconds-remaining="settleSecondsRemaining"
       :averaging-seconds="Number(averagingSeconds)"
       :scope-label="scopeLabel"
+      :lo-hz="eqGen.loHz"
+      :hi-hz="eqGen.hiHz"
       @capture="capturePosition"
       @remove="removeCapture"
       @close="captureModalOpen = false"
@@ -553,6 +576,7 @@ import {
   deltaDbToY as deltaDbToYAt,
   deviationBars,
   deviationPath,
+  outOfBandShades,
 } from '../rta-chart.js';
 import {
   makeBandGrid,
@@ -565,6 +589,7 @@ import {
   averageDbArrays,
   makePeakHold,
   updatePeakHold,
+  alignmentWindow,
   BUILTIN_CAL_PRESETS,
 } from '../rta.js';
 import { TARGET_CURVE_PRESETS, targetCurveForGrid } from '../target-curves.js';
@@ -1263,6 +1288,12 @@ const deltaBars = computed(() =>
   })
 );
 
+// The correction limits drawn onto the deviation chart (lazy computed: eqGen
+// is declared further down, first read at render).
+const deltaShades = computed(() =>
+  outOfBandShades(eqGen.loHz, eqGen.hiHz, { width: width.value, padLeft })
+);
+
 // --- Chart crosshairs ---
 
 // touch-action: pan-y lets vertical swipes scroll the page, but the browser
@@ -1397,6 +1428,16 @@ const eqGen = reactive({
   maxBands: 8,
 });
 
+// The two limits bound each other, so the window can never invert. The high
+// limit reaches down into the bass on purpose: correcting one soloed sub
+// means asking for a band like 45-120 Hz, and a floor of 1 kHz made that
+// impossible to express - it left the correction chasing the crossover's
+// low-pass skirt across three octaves of rolloff.
+const EQ_HI_FLOOR_HZ = 40;
+const EQ_LO_CEILING_HZ = 500;
+const eqLoMax = computed(() => Math.min(EQ_LO_CEILING_HZ, eqGen.hiHz));
+const eqHiMin = computed(() => Math.max(EQ_HI_FLOOR_HZ, eqGen.loHz));
+
 // --- Target curve the correction aims for ---
 const eqTarget = reactive({
   mode: 'tilt', // 'tilt' | 'flat' | preset id | 'custom'
@@ -1490,30 +1531,16 @@ const scopeOutput = computed(() =>
 );
 
 // Level-alignment window: the band used to line the mic trace up with the
-// source before differencing. It has to fall where the scoped output
-// actually makes sound, or the offset is computed from noise (this is why
-// a soloed sub used to swing wildly - it was aligned on 200-5000 Hz, which
-// the sub can't reproduce). Full-range scopes align on the trustworthy
-// midrange (clear of room modes and mic HF rolloff); a band-limited output
-// aligns inside its passband, pulled a half octave in from each crossover
-// corner so the rolloff skirts don't drag the offset.
-const ALIGN_SKIRT = Math.SQRT2; // half octave
-const alignWindow = computed(() => {
-  const o = scopeOutput.value;
-  if (!o || (!o.hpHz && !o.lpHz)) return { loHz: 200, hiHz: 5000 };
-  const rawLo = o.hpHz ?? 20;
-  const rawHi = o.lpHz ?? 20000;
-  let lo = rawLo * ALIGN_SKIRT;
-  let hi = rawHi / ALIGN_SKIRT;
-  if (hi <= lo) { lo = rawLo; hi = rawHi; } // passband narrower than an octave
-  // Where the passband reaches the midrange, align there (a woofer aligns
-  // on 200 Hz up, not through its modal region); a sub sits entirely below
-  // it and keeps its own band.
-  const midLo = Math.max(lo, 200);
-  const midHi = Math.min(hi, 5000);
-  if (midHi / midLo >= 1.26) return { loHz: midLo, hiHz: midHi }; // >= 1/3 oct
-  return { loHz: lo, hiHz: hi };
-});
+// source before differencing. Derived from the correction limits and the
+// scoped output's passband - see alignmentWindow for why it has to be both.
+const alignWindow = computed(() =>
+  alignmentWindow({
+    loHz: eqGen.loHz,
+    hiHz: eqGen.hiHz,
+    hpHz: scopeOutput.value?.hpHz ?? null,
+    lpHz: scopeOutput.value?.lpHz ?? null,
+  })
+);
 // Whether the EQ the correction targets is currently bypassed. Applying
 // re-enables it (see applyGeneratedEq) - a correction saved into a bypassed
 // EQ would be inaudible, and the measurement was made without it anyway.

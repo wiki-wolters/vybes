@@ -76,6 +76,27 @@ export function deviationBars(values, grid, { width, padLeft, height, barFractio
 }
 
 /**
+ * The regions of the frequency axis outside [loHz, hiHz], as rects to lay over
+ * a deviation chart.
+ *
+ * Outside the correction limits the deviation is mostly the crossover's own
+ * rolloff - a soloed sub reads as -20 dB from 200 Hz up because it is not
+ * meant to play there, and that cliff dominates the chart while being the one
+ * part of it nothing is going to fix. Dimming those regions turns a
+ * band-limited measurement back into a picture of the band being measured.
+ *
+ * Returns 0-2 rects; a limit already at the chart edge contributes none.
+ */
+export function outOfBandShades(loHz, hiHz, { width, padLeft }) {
+  const loX = logX(Math.min(loHz, hiHz), width, padLeft);
+  const hiX = logX(Math.max(loHz, hiHz), width, padLeft);
+  const shades = [];
+  if (loX > padLeft + 2) shades.push({ x: padLeft, w: Math.min(loX, width) - padLeft });
+  if (hiX < width - 2) shades.push({ x: Math.max(hiX, padLeft), w: width - Math.max(hiX, padLeft) });
+  return shades;
+}
+
+/**
  * SVG path through a per-band deviation series.
  *
  * Gated bands (NaN - the source had no content there) are skipped rather than

@@ -17,6 +17,7 @@ import {
   deltaDbToY,
   deviationBars,
   deviationPath,
+  outOfBandShades,
 } from '../../src/rta-chart.js'
 import { makeBandGrid } from '../../src/rta.js'
 
@@ -62,6 +63,43 @@ describe('deviation chart geometry', () => {
     // A finer grid packs more bands into the same axis, so each is narrower.
     expect(bandPixelWidth(makeBandGrid(12), 900, PAD))
       .toBeLessThan(bandPixelWidth(makeBandGrid(3), 900, PAD))
+  })
+})
+
+describe('outOfBandShades', () => {
+  const geom = { width: 1216, padLeft: PAD }
+
+  it('leaves exactly the requested band clear', () => {
+    const shades = outOfBandShades(45, 120, geom)
+    expect(shades).toHaveLength(2)
+    // The gap between the two rects is 45-120 Hz on the shared axis.
+    expect(shades[0].x + shades[0].w).toBeCloseTo(logX(45, geom.width, PAD), 6)
+    expect(shades[1].x).toBeCloseTo(logX(120, geom.width, PAD), 6)
+  })
+
+  it('never covers the dB labels or overruns the chart', () => {
+    for (const [lo, hi] of [[45, 120], [25, 10000], [20, 20000], [200, 300]]) {
+      for (const s of outOfBandShades(lo, hi, geom)) {
+        expect(s.x).toBeGreaterThanOrEqual(PAD)
+        expect(s.w).toBeGreaterThan(0)
+        expect(s.x + s.w).toBeLessThanOrEqual(geom.width + 1e-9)
+      }
+    }
+  })
+
+  it('shades nothing when the limits span the whole axis', () => {
+    expect(outOfBandShades(20 / Math.pow(10, 0.05), 20000 * Math.pow(10, 0.05), geom)).toEqual([])
+  })
+
+  it('tolerates inverted limits', () => {
+    expect(outOfBandShades(120, 45, geom)).toEqual(outOfBandShades(45, 120, geom))
+  })
+
+  it('the same limits land on the same frequencies at the modal width', () => {
+    const wide = outOfBandShades(45, 120, geom)
+    const narrow = outOfBandShades(45, 120, { width: 360, padLeft: PAD })
+    const freqAt = (x, width) => freqAtLogX(x, width, PAD)
+    expect(freqAt(wide[1].x, geom.width)).toBeCloseTo(freqAt(narrow[1].x, 360), 6)
   })
 })
 

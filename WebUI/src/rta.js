@@ -270,3 +270,44 @@ export function medianOffset(a, b, centers, loHz = 200, hiHz = 5000, floor = nul
   const mid = Math.floor(diffs.length / 2);
   return diffs.length % 2 ? diffs[mid] : (diffs[mid - 1] + diffs[mid]) / 2;
 }
+
+// --- Level-alignment window ---
+// The band the mic trace is lined up with the source over before the two are
+// differenced. It has to fall where the scoped output actually makes sound
+// AND where the correction is aimed, or the offset gets computed from bands
+// nobody is measuring: a soloed sub aligned on 200-5000 Hz is aligned on its
+// own leakage, which tilts its entire deviation up by ~20 dB.
+//
+// Seeded with the correction band [loHz, hiHz] - narrowing that band is the
+// user saying which range they care about, and the alignment has to follow it
+// or the deviation inside the band is an offset from outside it. Then pulled
+// in to the output's passband, a half octave clear of each crossover corner
+// so the rolloff skirts can't drag the offset. Where what's left still
+// reaches the midrange, align there instead: a woofer aligns from 200 Hz up
+// rather than through its modal region, while a sub sits entirely below it
+// and keeps its own band.
+export const ALIGN_SKIRT = Math.SQRT2; // half octave
+const MIN_ALIGN_RATIO = 1.26; // 1/3 octave - the narrowest window worth a median
+const MID_LO_HZ = 200;
+const MID_HI_HZ = 5000;
+
+export function alignmentWindow({ loHz = 20, hiHz = 20000, hpHz = null, lpHz = null } = {}) {
+  let lo = Math.min(loHz, hiHz);
+  let hi = Math.max(loHz, hiHz);
+  if (hpHz || lpHz) {
+    const inLo = Math.max(lo, (hpHz ?? 0) * ALIGN_SKIRT);
+    const inHi = Math.min(hi, lpHz ? lpHz / ALIGN_SKIRT : Infinity);
+    // Only take the narrowed window when enough of it survives to take a
+    // median over - a passband narrower than its own skirts (a sub crossed
+    // just above its corner) leaves the requested band the best estimate
+    // available.
+    if (inHi / inLo >= MIN_ALIGN_RATIO) {
+      lo = inLo;
+      hi = inHi;
+    }
+  }
+  const midLo = Math.max(lo, MID_LO_HZ);
+  const midHi = Math.min(hi, MID_HI_HZ);
+  if (midHi / midLo >= MIN_ALIGN_RATIO) return { loHz: midLo, hiHz: midHi };
+  return { loHz: lo, hiHz: hi };
+}
