@@ -500,6 +500,40 @@
               <p v-if="calError" class="mt-2 text-xs text-red-400">{{ calError }}</p>
             </div>
           </div>
+          <!-- What the browser granted, not what we asked for. A capture the
+               OS is still voice-processing measures its own processing, and
+               the level alignment quietly absorbs the broadband part of it -
+               so the readback belongs here, not inferred later from a curve
+               that came out looking strange. -->
+          <div v-if="captureChain" class="mt-3 text-xs">
+            <p class="text-vybes-text-secondary">
+              Capture chain —
+              <template v-for="(proc, i) in captureChain.processors" :key="proc.key">
+                <span v-if="i">, </span>{{ proc.label }}:
+                <span
+                  :class="{
+                    'text-red-400': proc.state === 'on',
+                    'text-vybes-live': proc.state === 'off',
+                  }"
+                >{{ proc.state === 'unknown' ? 'not reported' : proc.state }}</span>
+              </template>
+              <template v-if="captureChain.sampleRate || captureChain.channels">
+                · {{ [captureChain.sampleRate, captureChain.channels].filter(Boolean).join(' ') }}
+              </template>
+            </p>
+            <p v-if="captureChain.processed" class="mt-1 text-red-400">
+              The browser left processing on after being asked for a raw capture. A voice
+              chain reshapes the speech band, and the level alignment absorbs the broadband
+              part of it — what survives reads as room response. On iOS, check Control
+              Center → Mic Mode → Standard while the mic is running.
+            </p>
+            <p v-else-if="captureChain.unreported" class="mt-1 text-vybes-text-secondary">
+              This browser reports nothing either way — Safari omits these rather than
+              answering false, so treat the request as unconfirmed. Measuring a known source
+              against a calibrated mic is the only way to settle it.
+            </p>
+          </div>
+
           <p v-if="noiseFloor" class="mt-3 text-xs text-vybes-text-secondary">
             Mic noise floor sampled at startup — bands within {{ NOISE_FLOOR_MARGIN_DB }} dB of
             it are excluded from the deviation so the EQ never chases noise.
@@ -591,6 +625,7 @@ import {
   updatePeakHold,
   alignmentWindow,
   BUILTIN_CAL_PRESETS,
+  describeCaptureSettings,
 } from '../rta.js';
 import { TARGET_CURVE_PRESETS, targetCurveForGrid } from '../target-curves.js';
 
@@ -657,6 +692,12 @@ const calPoints = ref(null); // [[freq, gain], ...] from the cal file or preset
 const calName = ref('');
 const calError = ref('');
 const calSelection = ref('none'); // 'none' | builtin preset id | 'file'
+
+// What the browser handed back for the current capture (getSettings()), so
+// a voice-processed track is visible as one rather than showing up later as
+// EQ nobody can explain. Null whenever the mic is off.
+const micSettings = ref(null);
+const captureChain = computed(() => describeCaptureSettings(micSettings.value));
 
 // --- Multi-position captures ---
 // Deviation snapshots taken at different listening positions; the EQ
@@ -868,6 +909,15 @@ async function startMic() {
     return;
   }
 
+  // Read back what we were actually given. getSettings() is spec'd not to
+  // throw, but this runs on whatever browser the phone in your hand has, and
+  // a readback that fails is not worth losing the measurement over.
+  try {
+    micSettings.value = micStream.getAudioTracks()[0]?.getSettings?.() ?? null;
+  } catch {
+    micSettings.value = null;
+  }
+
   audioContext = new (window.AudioContext || window.webkitAudioContext)();
   await audioContext.resume();
   analyser = audioContext.createAnalyser();
@@ -891,6 +941,7 @@ function stopMic() {
     micStream.getTracks().forEach((t) => t.stop());
     micStream = null;
   }
+  micSettings.value = null;
   if (audioContext) {
     audioContext.close();
     audioContext = null;

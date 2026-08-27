@@ -249,6 +249,50 @@ export const BUILTIN_CAL_PRESETS = [
   },
 ];
 
+// --- Capture chain readback ---
+// What the browser actually granted for a mic capture, taken from the
+// track's getSettings(). We ask for raw audio - no echo cancellation, no
+// noise suppression, no AGC - but a constraint is a request, not a promise:
+// iOS can hand back a voice-processed track regardless, and a chain tuned
+// for speech reshapes the 200Hz-5kHz band medianOffset pins its alignment
+// to. Correct that and the EQ is correcting the microphone, not the room.
+//
+// Three states per processor, and the third one is the reason this exists:
+// Safari commonly omits these keys rather than reporting them false, so
+// 'unknown' has to stay visibly distinct from 'off'. Reading a missing key
+// as "disabled" is precisely the false all-clear worth not giving.
+export const CAPTURE_PROCESSORS = [
+  ['echoCancellation', 'echo cancellation'],
+  ['noiseSuppression', 'noise suppression'],
+  ['autoGainControl', 'auto gain'],
+];
+
+export function describeCaptureSettings(settings) {
+  if (!settings) return null;
+  const processors = CAPTURE_PROCESSORS.map(([key, label]) => ({
+    key,
+    label,
+    // Nullish, not just undefined: a browser that answers null has told us
+    // nothing either, and that has to land in 'unknown' too.
+    state: settings[key] == null ? 'unknown' : settings[key] ? 'on' : 'off',
+  }));
+  const rate = settings.sampleRate;
+  const channels = settings.channelCount;
+  return {
+    processors,
+    // Something is demonstrably processing the capture.
+    processed: processors.some((p) => p.state === 'on'),
+    // Nothing was reported either way - the readback proves nothing here.
+    unreported: processors.every((p) => p.state === 'unknown'),
+    sampleRate: Number.isFinite(rate)
+      ? `${(rate / 1000).toFixed(rate % 1000 ? 1 : 0)} kHz`
+      : null,
+    channels:
+      channels === 1 ? 'mono' : channels === 2 ? 'stereo'
+        : Number.isFinite(channels) ? `${channels} ch` : null,
+  };
+}
+
 // Median of (a[i] - b[i]) over the bands whose center lies in [loHz, hiHz].
 // Used to auto-align the mic trace level (a) with the source trace (b). a, b
 // and centers must share one grid. When a floor array is supplied, bands

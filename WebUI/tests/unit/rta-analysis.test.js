@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { alignmentWindow, averageDbArrays, BUILTIN_CAL_PRESETS, calCurveForGrid, makeBandGrid, aggregateBands, medianOffset, makePeakHold, updatePeakHold } from '../../src/rta.js'
+import { alignmentWindow, averageDbArrays, BUILTIN_CAL_PRESETS, calCurveForGrid, describeCaptureSettings, makeBandGrid, aggregateBands, medianOffset, makePeakHold, updatePeakHold } from '../../src/rta.js'
 
 describe('averageDbArrays', () => {
   it('returns null for an empty list', () => {
@@ -290,5 +290,63 @@ describe('updatePeakHold', () => {
     expect(state.values[0]).toBeCloseTo(-25, 6)
     expect(state.values[1]).toBeCloseTo(-50, 6) // re-armed by its own level, held
     expect(state.values[2]).toBeCloseTo(-45, 6)
+  })
+})
+
+describe('describeCaptureSettings', () => {
+  it('returns null when the browser gave us nothing to read', () => {
+    expect(describeCaptureSettings(null)).toBeNull()
+  })
+
+  it('reports a granted raw capture as off, not processed, not unreported', () => {
+    const d = describeCaptureSettings({
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    })
+    expect(d.processors.map((p) => p.state)).toEqual(['off', 'off', 'off'])
+    expect(d.processed).toBe(false)
+    expect(d.unreported).toBe(false)
+  })
+
+  it('flags a track the browser kept processing', () => {
+    const d = describeCaptureSettings({
+      echoCancellation: false,
+      noiseSuppression: true,
+      autoGainControl: false,
+    })
+    expect(d.processed).toBe(true)
+    expect(d.processors.find((p) => p.key === 'noiseSuppression').state).toBe('on')
+  })
+
+  // The distinction the readback exists for: Safari omits these keys rather
+  // than answering false, and calling that "off" is a false all-clear.
+  it('keeps an omitted key unknown rather than reading it as off', () => {
+    const d = describeCaptureSettings({ sampleRate: 48000 })
+    expect(d.processors.map((p) => p.state)).toEqual(['unknown', 'unknown', 'unknown'])
+    expect(d.processed).toBe(false)
+    expect(d.unreported).toBe(true)
+  })
+
+  it('treats a null answer as unknown, not as off', () => {
+    const d = describeCaptureSettings({ echoCancellation: null })
+    expect(d.processors.find((p) => p.key === 'echoCancellation').state).toBe('unknown')
+  })
+
+  it('is not unreported when only some keys are missing', () => {
+    const d = describeCaptureSettings({ echoCancellation: false })
+    expect(d.unreported).toBe(false)
+    expect(d.processed).toBe(false)
+  })
+
+  it('formats whole and fractional sample rates, and channel counts', () => {
+    expect(describeCaptureSettings({ sampleRate: 48000 }).sampleRate).toBe('48 kHz')
+    expect(describeCaptureSettings({ sampleRate: 44100 }).sampleRate).toBe('44.1 kHz')
+    expect(describeCaptureSettings({ sampleRate: 16000 }).sampleRate).toBe('16 kHz')
+    expect(describeCaptureSettings({}).sampleRate).toBeNull()
+    expect(describeCaptureSettings({ channelCount: 1 }).channels).toBe('mono')
+    expect(describeCaptureSettings({ channelCount: 2 }).channels).toBe('stereo')
+    expect(describeCaptureSettings({ channelCount: 4 }).channels).toBe('4 ch')
+    expect(describeCaptureSettings({}).channels).toBeNull()
   })
 })
