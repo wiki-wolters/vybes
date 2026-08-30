@@ -4,6 +4,20 @@
 #include <arm_const_structs.h>
 #include <arm_common_tables.h>
 
+#ifdef VYBES_FIR_PROFILE
+#include <Arduino.h>   // ARM_DWT_CYCCNT
+uint64_t firProfFwd = 0, firProfMac = 0, firProfInv = 0, firProfBlocks = 0;
+#define PROF_DECL()    uint32_t _pt
+#define PROF_START()   _pt = ARM_DWT_CYCCNT
+#define PROF_END(a)    a += (uint32_t)(ARM_DWT_CYCCNT - _pt)
+#define PROF_BLOCK()   firProfBlocks++
+#else
+#define PROF_DECL()    ((void)0)
+#define PROF_START()   ((void)0)
+#define PROF_END(a)    ((void)0)
+#define PROF_BLOCK()   ((void)0)
+#endif
+
 // Default constructor implementation
 FirEngine::FirEngine()
   : firCoeffs(nullptr),
@@ -334,12 +348,16 @@ void FirEngine::processFast(const float* input, float* output) {
   memcpy(scratch, prevBlock, BLOCK_SAMPLES * sizeof(float));
   memcpy(scratch + BLOCK_SAMPLES, input, BLOCK_SAMPLES * sizeof(float));
   memcpy(prevBlock, input, BLOCK_SAMPLES * sizeof(float));
+  PROF_DECL();
+  PROF_START();
   arm_rfft_fast_f32(&rfft, scratch, fdl + (size_t)fdlIndex * FFT_SIZE, 0);
+  PROF_END(firProfFwd);
 
   // CMSIS packs the two real-only bins as [DC, Nyquist, re1, im1, re2, ...],
   // so those two multiply directly and the rest are complex products.
   float acc[FFT_SIZE];
   memset(acc, 0, sizeof(acc));
+  PROF_START();
   uint16_t idx = fdlIndex;
   for (uint16_t p = 0; p < numPartitions; p++) {
     const float* H = partSpectra + (size_t)p * FFT_SIZE;
@@ -354,9 +372,13 @@ void FirEngine::processFast(const float* input, float* output) {
     }
     idx = (idx == 0) ? numPartitions - 1 : idx - 1;
   }
+  PROF_END(firProfMac);
   fdlIndex = (fdlIndex + 1 == numPartitions) ? 0 : fdlIndex + 1;
 
   // Inverse FFT (includes the 1/N scaling); keep the valid second half
+  PROF_START();
   arm_rfft_fast_f32(&rfft, acc, scratch, 1);
+  PROF_END(firProfInv);
   memcpy(output, scratch + BLOCK_SAMPLES, BLOCK_SAMPLES * sizeof(float));
+  PROF_BLOCK();
 }

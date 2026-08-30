@@ -22,6 +22,12 @@
 // next coefficient load. This class has no AudioStream/Arduino dependencies
 // so it can be exercised host-side; AudioFilterFIRFloat wraps it into the
 // Teensy audio graph.
+#ifdef VYBES_FIR_PROFILE
+// Per-stage cycle accounting for the fast engine, compiled only into the
+// bench env (see Teensy/fir_bench). Production builds carry none of this.
+extern uint64_t firProfFwd, firProfMac, firProfInv, firProfBlocks;
+#endif
+
 class FirEngine {
 
 public:
