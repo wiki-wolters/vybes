@@ -20,13 +20,9 @@
 #include "SdWavPlayer.h"
 #include "WavFormat.h"
 #include "PeakMeter.h"
-
-// The .ino prototype generator injects generated prototypes for the sketch's
-// functions partway down the globals below - above where OutputState is
-// defined. outputTargetGain() takes an OutputState&, and a reference only
-// needs the type declared, so declare it here (before the insertion point) or
-// that generated prototype fails to compile.
-struct OutputState;
+#include "SketchState.h" // OutputState/State + the objects FirFiles.cpp shares
+#include "AudioHold.h"
+#include "FirFiles.h"
 
 // V1 8-output architecture (docs/CHANNEL_ARCHITECTURE.md): a shared stereo
 // input stage (source mixing + input EQ) feeds eight identical output
@@ -40,17 +36,8 @@ struct OutputState;
 #define ESP_LINK_BAUD 115200
 SerialCommandRouter router(Serial1);
 
-// Number of output channels (octal I2S). Must match NUM_OUTPUTS on the ESP.
-#define NUM_OUTPUTS 8
-
-// PEQ bands per output channel (MAX_OUTPUT_PEQ on the ESP). The shared input
-// EQ keeps MAX_PEQ_BANDS (15) from PEQProcessor.h.
-#define MAX_OUTPUT_PEQ 10
-
 // Duration of the smooth morph applied to EQ changes (ms)
 #define EQ_MORPH_MS 50
-
-#define MAX_FILENAME_LEN 64 // Maximum length for FIR filenames
 
 // Maximum per-channel delay in microseconds. AudioEffectDelay holds the
 // delayed audio in the AudioMemory pool, so an unbounded delay would
@@ -62,19 +49,8 @@ SerialCommandRouter router(Serial1);
 // direct-form CMSIS FIR. Both engines produce identical, block-aligned output.
 #define FIR_USE_FAST_CONVOLUTION 1
 
-// FIR taps shared across all outputs (FIR_TAP_POOL on the ESP). Loads that
-// would push the total over the pool are rejected with an error the ESP can
-// relay. Fast convolution costs 16 bytes/tap (2 x partitions x 256 floats),
-// so a full pool is ~192KB - reserved once, statically, as firArena rather
-// than fought for on the heap at every load. The pool is what that fixed
-// block holds, not a guess at what the heap can spare. It is also why
-// loadFirFiles streams coefficients into the engine instead of reading the
-// file into an array first: a whole-file copy would need another 4 bytes/tap
-// of heap on top, and an exact-fit set (3072+3072+6144) has none to give.
-// The direct engine runs out of CPU long before it runs out of pool.
-#define FIR_TAP_POOL 12288
-
 // Audio block pool size (see the AudioMemory call in setup for the budget).
+// The FIR tap pool and its static arena live in FirFiles.{h,cpp}.
 #define AUDIO_POOL_BLOCKS (FIR_USE_FAST_CONVOLUTION ? 480 : 240)
 
 // RAM2 heap and audio-block-pool stats, printed where the budget matters.
@@ -85,7 +61,7 @@ SerialCommandRouter router(Serial1);
 // "free for malloc/new" is the number to size anything against.
 extern unsigned long _heap_end;
 extern char* __brkval;
-static void printMemoryStats(const char* tag) {
+void printMemoryStats(const char* tag) {
   struct mallinfo mi = mallinfo();
   Serial.printf("MEM %s: heap unclaimed %lu + reclaimable %lu bytes, audio blocks %d used (max %d of %d)\n",
                 tag, (unsigned long)((char*)&_heap_end - __brkval),
@@ -240,7 +216,6 @@ AudioConnection chainCords[NUM_OUTPUTS][5]; // mixer->xover->peq->fir->delay->am
 AudioConnection outCords[NUM_OUTPUTS];      // amp -> octal I2S
 AudioConnection spdifCords[2];              // outputs 0/1 -> SPDIF
 
-const int CURRENT_VERSION = 4;
 bool sdCardInitialized = false;
 bool firFilesPending = false;
 
@@ -254,35 +229,11 @@ bool recStateDirty = false;
 // media-presence probes for a window past this - see the comment there.
 unsigned long sdLastStreamActivityMs = 0;
 
-// --- audio hold (see CMD_SET_CONFIG_HOLD in teensy_protocol.h) ---
-// Two independent sources; audio is silent while either is asserted.
-// configHold starts true so a Teensy that reboots under a running ESP stays
-// silent until that ESP has pushed the whole preset, rather than briefly
-// playing boot defaults at full-range and 50% volume.
-// bootHold covers power-on until the first sync completes. syncHoldDepth
-// nests, so two overlapping syncs (preset button pressed twice, or a boot
-// event racing an API call) release only when the outer one finishes rather
-// than the inner one unmuting mid-config.
-bool bootHold = true;
-int syncHoldDepth = 0;
-bool firLoadHold = false;
-unsigned long configHoldIdleSince = 0; // last command seen while holding
-uint32_t configHoldLastDispatch = 0;
-
-// Fail-safe: an ESP running firmware without setConfigHold, or a release
-// lost to a UART glitch, must not mute the device forever. Releasing early
-// is only ever as bad as the old behaviour; staying silent is worse.
-//
-// Measured from the last command received, NOT from when the hold went on: a
-// full sync is hundreds of commands and the ESP drains its queue as fast as
-// its own loop allows, so a fixed deadline can expire mid-sync and unmute the
-// outputs one at a time as each setOutputSource lands - audibly staggering
-// the channels. Idle time is the thing that actually means "no sync coming".
-#define CONFIG_HOLD_IDLE_MS 3000
-
-static inline bool audioHeld() {
-  return bootHold || syncHoldDepth > 0 || firLoadHold;
-}
+// --- audio hold ---
+// Outputs are silent while any hold source is asserted (boot, nested config
+// syncs, a queued FIR load). The state machine, its fail-safe, and the
+// rationale live in AudioHold.h.
+AudioHold audioHold;
 
 // --- RTA (real-time analyzer) state ---
 // The ESP refreshes the enable flag every couple of seconds while a web
@@ -301,60 +252,8 @@ bool rtaEnabled = false;
 unsigned long rtaLastKeepaliveAt = 0;
 unsigned long rtaLastFrameAt = 0;
 
-// Per-output channel state. Defaults are silent (source gains 0) - the ESP
-// pushes the full DSP state after the "boot" event, so nothing plays from
-// stale defaults.
-struct OutputState {
-  float sourceLeft = 0.0f;   // L bus contribution (linear gain)
-  float sourceRight = 0.0f;  // R bus contribution
-  float gainDb = 0.0f;       // output gain in dB (-40..+10, clamped)
-  bool mute = false;         // effective mute (the ESP folds 'enabled' in)
-  bool invert = false;
-  int delayUs = 0;
-
-  float hpFreq = 0.0f;       // 0 = off
-  CrossoverType hpType = CROSSOVER_LR4;
-  float lpFreq = 0.0f;
-  CrossoverType lpType = CROSSOVER_LR4;
-
-  PEQBand peq[MAX_OUTPUT_PEQ];
-  bool eqEnabled = true;     // PEQ bypass (bands are kept; see setOutputEqEnabled)
-
-  char firFile[MAX_FILENAME_LEN] = "";
-  uint16_t firTaps = 0;      // taps currently loaded (0 = none)
-
-  float currentGain = 0.0f;  // smoothed amp gain actually applied
-};
-
-//Define a structure for holding state
-struct State {
-  int version = CURRENT_VERSION;
-
-  // Input gains
-  float gainBluetooth = 1.0;
-  float gainOptical = 1.0;
-  float gainUSB = 1.0;
-  float gainGenerator = 1.0;
-  float gainAnalog = 1.0;
-  float gainPlayer = 1.0; // SD playback (aux input 2); setPlaybackGain
-
-  // Master Volume
-  float volume = 0.5; // User-set volume
-  float targetVolume = 0.5; // Target volume for smoothing
-  bool muted = false;
-  float mutePercent = 100.0; // Mute volume reduction percentage
-
-  // Preset-level master toggles
-  bool inputEqEnabled = true;
-  bool firEnabled = true;
-  bool delaysEnabled = true;
-
-  OutputState outputs[NUM_OUTPUTS];
-
-  // Shared input EQ bands (left and right run the same curve)
-  PEQBand inputEqBands[MAX_PEQ_BANDS];
-};
-
+// The preset/DSP state (struct definitions in SketchState.h, which also
+// externs this for FirFiles.cpp)
 State state;
 
 // --- Auto delay alignment probe state ---
@@ -533,11 +432,11 @@ void setup() {
   // before the real sync has sent a single value.
   while (Serial1.available()) Serial1.read();
 
-  // Outputs are held silent from power-on (bootHold) until the sync below
-  // completes. Start the fail-safe idle window here rather than at millis()
-  // 0, so it measures the ESP's response to the boot event and not however
-  // long setup() spent on the SD card.
-  configHoldIdleSince = millis();
+  // Outputs are held silent from power-on (the boot hold) until the sync
+  // below completes; arm the fail-safe idle window here so it measures the
+  // ESP's response to the boot event and not however long setup() spent on
+  // the SD card.
+  audioHold.armFailsafe(millis());
 
   // Tell the ESP we (re)booted so it pushes the full DSP state
   router.sendEvent("boot");
@@ -635,23 +534,14 @@ void loop() {
     }
     loadFirFiles();
     firFilesPending = false;
-    firLoadHold = false;
+    audioHold.setFirLoadHold(false);
   }
 
   // Fail-safe release: never let a missing or lost setConfigHold 0 leave the
   // device permanently silent (e.g. an ESP on firmware that predates the
-  // command). Audio comes back with whatever state did arrive - no worse
-  // than the behaviour before the hold existed. The deadline restarts on
-  // every command, so an in-progress sync can take as long as it likes.
-  if (bootHold || syncHoldDepth > 0) {
-    if (router.dispatched() != configHoldLastDispatch) {
-      configHoldLastDispatch = router.dispatched();
-      configHoldIdleSince = millis();
-    } else if ((millis() - configHoldIdleSince) > CONFIG_HOLD_IDLE_MS) {
-      bootHold = false;
-      syncHoldDepth = 0;
-      Serial.println("WARN: no config sync, releasing audio hold");
-    }
+  // command). See AudioHold::pollFailsafe.
+  if (audioHold.pollFailsafe(router.dispatched(), millis())) {
+    Serial.println("WARN: no config sync, releasing audio hold");
   }
 
   static unsigned long lastMemoryCheck = 0;
@@ -873,7 +763,7 @@ static float outputTargetGain(int ch, const OutputState& o) {
   // both louder than intended and full-range. Hold every output at zero
   // until the whole picture is in place; updateAudioVolume's ramp makes the
   // release click-free.
-  if (audioHeld()) return 0.0f;
+  if (audioHold.held()) return 0.0f;
   if (probeActive) {
     if (ch != probeSolo) return 0.0f;
     return o.invert ? -probeGain : probeGain;
@@ -1269,7 +1159,7 @@ void applyDelays() {
 // failures be the removal detector; the recorder already stops cleanly on a
 // failed write.
 #define SD_PROBE_HOLDOFF_MS 500
-static bool sdReady() {
+bool sdReady() {
   if (sdRecorder.isActive() || sdPlayer.isActive() ||
       (sdLastStreamActivityMs != 0 &&
        millis() - sdLastStreamActivityMs < SD_PROBE_HOLDOFF_MS)) {
@@ -1289,208 +1179,6 @@ static bool sdReady() {
                                      : "SD card present but mount failed");
   }
   return sdCardInitialized;
-}
-
-// Machine-readable companion to the human-readable "ERROR FIR ..." lines, so
-// the ESP can attribute a failure to a channel and surface it in the web UI
-// instead of it dying in a debug console. Codes: nosd, missing, poolfull,
-// toobig, nomem.
-static void reportFirError(int ch, const char* code, const char* file) {
-  Serial1.printf("FIRERR %d %s %s\n", ch, code, file);
-}
-
-// One fixed block holding every loaded filter's working buffers, sliced
-// across the channels at each load. Reserved statically rather than
-// allocated per load: a full pool needs ~206KB in one contiguous run, and
-// re-requesting that only works while the heap is still pristine. Turning
-// one filter off and back on frees the block, asks for a smaller one, then
-// asks for a bigger one again - and by then no single run that size is left,
-// so the request fails, the per-filter fallback fits all but the last
-// filter, and that output runs uncorrected (the FIRERR nomem on output 1 of
-// a 3072/3072/6144 set). Holding the worst case at a fixed address costs the
-// same RAM2 a full pool always took and makes every set the pool check
-// accepts fit by construction - no allocation left to fail, no fallback.
-//
-// Sized in whole partitions because the pool is CHARGED in whole partitions
-// (FIR_POOL_CHARGE_QUANTUM in teensy_protocol.h, matched by the ESP's
-// accounting): fast convolution rounds each filter up to a 128-tap
-// partition costing 2 x FFT_SIZE floats, so with partition-quantized
-// charging the pool's partition count is exactly the arena's worst case -
-// no per-channel rounding waste can exceed what was charged. Sizing for the
-// raw tap count plus one partial partition per channel instead cost 14KB
-// more, and that 14KB was the RAM2 headroom whose loss made the RTA's boot
-// allocation fail (see RtaFFT4096.cpp). The direct engine needs far less
-// per channel, so sizing for fast convolution covers both.
-static_assert(FIR_POOL_CHARGE_QUANTUM == FirEngine::BLOCK_SAMPLES,
-              "pool charging quantum must match the engine partition size");
-static constexpr size_t FIR_ARENA_FLOATS =
-    (((size_t)FIR_TAP_POOL + FirEngine::BLOCK_SAMPLES - 1) / FirEngine::BLOCK_SAMPLES) *
-    FirEngine::FFT_SIZE * 2;
-DMAMEM static float firArena[FIR_ARENA_FLOATS];
-
-// Clears every filter, so the slices of firArena they hold go unreferenced
-// before the next load re-carves it.
-static void releaseFirBuffers() {
-  for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
-    firFilter[ch].loadCoefficients(nullptr, 0);
-    state.outputs[ch].firTaps = 0;
-  }
-}
-
-// Streams one output's file into the buffers already reserved for it. The
-// engine pulls one 128-tap partition at a time, so coefficients never exist
-// outside its buffers as more than 512 bytes of its own stack scratch, never
-// a copy of the filter. 'taps' is the count the sizing pass accepted.
-static bool fillFirChannel(int ch, uint16_t taps) {
-  OutputState& o = state.outputs[ch];
-
-  File file = SD.open(o.firFile);
-  if (!file) {
-    Serial1.printf("ERROR FIR load failed: %s (output %d)\n", o.firFile, ch);
-    reportFirError(ch, "missing", o.firFile);
-    return false;
-  }
-  FIRLoader::FileSource source(file);
-  FIRLoader::Stream stream;
-
-  // prepare() is where an encoding the reader can't convert is caught; the
-  // sizing pass only needed the chunk headers.
-  if (stream.begin(source, o.firFile) != (long)taps || !stream.prepare()) {
-    file.close();
-    Serial1.printf("ERROR FIR load failed: %s (output %d)\n", o.firFile, ch);
-    reportFirError(ch, "missing", o.firFile);
-    return false;
-  }
-
-  bool loaded = firFilter[ch].fillReserved(stream);
-  file.close();
-  if (!loaded) {
-    Serial1.printf("ERROR FIR load failed: unreadable file %s (output %d)\n", o.firFile, ch);
-    reportFirError(ch, "missing", o.firFile);
-    return false;
-  }
-
-  o.firTaps = taps;
-  return true;
-}
-
-void loadFirFiles() {
-  // Note: incoming serial commands are buffered by the UART while we read
-  // from the SD card, so no special handling is needed here.
-  if (!sdReady()) {
-    Serial.println("SD not available - can't load FIR files");
-    // Clear any existing FIR filters to ensure no stale filters are used
-    releaseFirBuffers();
-    for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
-      if (state.outputs[ch].firFile[0] != '\0') {
-        reportFirError(ch, "nosd", state.outputs[ch].firFile);
-      }
-    }
-    applyDelays();
-    return;
-  }
-
-  // Three passes: size every file, carve the arena into a slice per output,
-  // then read the files in. Sizing has to come first because the pool is
-  // shared - what fits depends on the whole set, not on one file - and the
-  // reads have to come last because an SD open between two reservations used
-  // to cut up the free space they needed (see firArena, which is now static
-  // so the slicing cannot fail either way).
-  printMemoryStats("before FIR loads");
-  releaseFirBuffers();
-
-  // Pass 1: size every file (header reads only - no coefficients yet) and
-  // spend the pool in channel order, so which outputs get rejected when a
-  // set over-subscribes stays independent of the load order chosen below.
-  long wantTaps[NUM_OUTPUTS] = {0};
-  uint32_t poolUsed = 0;
-  for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
-    OutputState& o = state.outputs[ch];
-    if (o.firFile[0] == '\0') continue;
-
-    uint32_t remaining = FIR_TAP_POOL - poolUsed;
-    if (remaining == 0) {
-      Serial1.printf("ERROR FIR pool exhausted, skipping %s (output %d)\n", o.firFile, ch);
-      reportFirError(ch, "poolfull", o.firFile);
-      continue;
-    }
-
-    File file = SD.open(o.firFile);
-    if (!file) {
-      Serial1.printf("ERROR FIR load failed: %s (output %d)\n", o.firFile, ch);
-      reportFirError(ch, "missing", o.firFile);
-      continue;
-    }
-    FIRLoader::FileSource source(file);
-    FIRLoader::Stream stream;
-    long fileTaps = stream.begin(source, o.firFile);
-    file.close();
-
-    if (fileTaps <= 0) {
-      Serial1.printf("ERROR FIR load failed: %s (output %d)\n", o.firFile, ch);
-      reportFirError(ch, "missing", o.firFile);
-      continue;
-    }
-    // Charged in whole partitions - what the arena actually spends (and how
-    // the ESP accounts the pool; see FIR_POOL_CHARGE_QUANTUM). A file that
-    // doesn't fit the remaining pool is rejected outright rather than
-    // truncated - a shortened impulse response is a different filter, not a
-    // smaller one.
-    uint32_t charged = ((uint32_t)fileTaps + FIR_POOL_CHARGE_QUANTUM - 1) /
-                       FIR_POOL_CHARGE_QUANTUM * FIR_POOL_CHARGE_QUANTUM;
-    if (charged > remaining) {
-      Serial1.printf("ERROR FIR pool exceeded: %s needs %lu taps (%ld padded to whole partitions), %lu of %u left (output %d)\n",
-                     o.firFile, (unsigned long)charged, fileTaps,
-                     (unsigned long)remaining, FIR_TAP_POOL, ch);
-      reportFirError(ch, "toobig", o.firFile);
-      continue;
-    }
-    wantTaps[ch] = fileTaps;
-    poolUsed += charged;
-  }
-
-  // Pass 2: carve the arena up in channel order. Nothing here can fail for
-  // want of memory - the arena is sized for the worst case pass 1 can accept
-  // - so which outputs load no longer depends on how the heap happens to
-  // look, and a channel is never dropped for being last in line.
-  uint16_t reservedTaps[NUM_OUTPUTS] = {0};
-  size_t arenaUsed = 0;
-  for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
-    if (wantTaps[ch] == 0) continue;
-    uint16_t taps = (uint16_t)wantTaps[ch];
-    size_t need = firFilter[ch].reservedFloats(taps);
-
-    // Unreachable unless the arena and the pool check disagree; slicing past
-    // the end would be a buffer overrun, so refuse the channel instead.
-    if (arenaUsed + need > FIR_ARENA_FLOATS ||
-        !firFilter[ch].reserveCoefficientsIn(firArena + arenaUsed, taps)) {
-      Serial1.printf("ERROR FIR arena exhausted: %s needs %lu floats, %lu of %lu used (output %d)\n",
-                     state.outputs[ch].firFile, (unsigned long)need,
-                     (unsigned long)arenaUsed, (unsigned long)FIR_ARENA_FLOATS, ch);
-      reportFirError(ch, "nomem", state.outputs[ch].firFile);
-      continue;
-    }
-    arenaUsed += need;
-    reservedTaps[ch] = taps;
-  }
-
-  // Pass 3: fill what was reserved. A file that can't be read now gives up
-  // only its own slice.
-  poolUsed = 0;
-  for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
-    if (reservedTaps[ch] == 0) continue;
-    if (fillFirChannel(ch, reservedTaps[ch])) {
-      poolUsed += reservedTaps[ch];
-      Serial.printf("Output %d FIR loaded: %s (%u taps, pool %lu/%u)\n",
-                    ch, state.outputs[ch].firFile, reservedTaps[ch], (unsigned long)poolUsed,
-                    FIR_TAP_POOL);
-    }
-  }
-
-  printMemoryStats("after FIR loads");
-
-  // FIR latencies may have changed - realign the channels
-  applyDelays();
 }
 
 /*
@@ -1686,22 +1374,20 @@ void handleLoadFirFiles(const String& command, String* args, int argCount, Outpu
   // The load itself happens in loop() and reads from SD, which can take
   // seconds. Stay silent across it rather than play the new preset's gains
   // through the old preset's filters.
-  firLoadHold = true;
+  audioHold.setFirLoadHold(true);
 }
 
 void handleSetConfigHold(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 1) {
-    const bool wasHeld = audioHeld();
+    const bool wasHeld = audioHold.held();
     if (args[0].toInt() == 1) {
-      syncHoldDepth++;
-      configHoldIdleSince = millis();
+      audioHold.beginSync(millis());
     } else {
-      if (syncHoldDepth > 0) syncHoldDepth--;
-      bootHold = false; // a completed sync is what boot was waiting for
+      audioHold.endSync();
     }
-    if (audioHeld() != wasHeld) {
+    if (audioHold.held() != wasHeld) {
       Serial.print("Audio hold ");
-      Serial.println(audioHeld() ? "on (config sync)" : "off (config applied)");
+      Serial.println(audioHold.held() ? "on (config sync)" : "off (config applied)");
     }
   }
 }
