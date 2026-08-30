@@ -26,10 +26,12 @@ import {
   deconvolve,
   estimateDrift,
   resampleByPpm,
+  gatedResponse,
 } from '../../src/sweep-math.js';
 import {
   planTapBudget,
   designKernel,
+  predictCorrected,
   encodeFirBin,
   FIR_TAP_POOL,
   FIR_POOL_QUANTUM,
@@ -57,7 +59,7 @@ const PLANT_BAND = { lo: 100, hi: 16000 };
 const CORR_BAND = { fLo: 300, fHi: 8000 };
 const DESIGN_GRID = { ...CORR_BAND, pointsPerOctave: 24 };
 
-describe.skip('criterion 1: deconvolution recovers a known delay', () => {
+describe('criterion 1: deconvolution recovers a known delay', () => {
   it('peaks at 5 ms +/- 0.1 ms, >= 40 dB above background', () => {
     const system = makeSystemIr(RATE, { delayS: 0.005, band: { lo: 20, hi: 20000 } });
     const ref = generateSweep(RATE, SCHEDULE);
@@ -83,7 +85,7 @@ describe.skip('criterion 1: deconvolution recovers a known delay', () => {
   });
 });
 
-describe.skip('criterion 2: clock drift is estimated and correctable', () => {
+describe('criterion 2: clock drift is estimated and correctable', () => {
   // One output, two passes: build the ideal session at the device rate,
   // stretch the whole thing by +80 ppm (fast capture clock), add noise.
   function buildSession(driftPpm) {
@@ -211,7 +213,7 @@ describe.skip('criteria 3-6: kernel design', () => {
   });
 });
 
-describe.skip('criterion 7: tap budget', () => {
+describe('criterion 7: tap budget', () => {
   // The design doc's example: 3-way stereo + 2 subs.
   const outputs = [
     { index: 0, enabled: true, fLo: 2500, fHi: 20000 }, // tweeter L
@@ -254,7 +256,7 @@ describe.skip('criterion 7: tap budget', () => {
   });
 });
 
-describe.skip('criterion 8: .bin encoding round-trips', () => {
+describe('criterion 8: .bin encoding round-trips', () => {
   it('is raw little-endian float32', () => {
     const kernel = Float32Array.from([0.5, -0.25, 1, 3.5e-5]);
     const buf = encodeFirBin(kernel);
@@ -263,5 +265,121 @@ describe.skip('criterion 8: .bin encoding round-trips', () => {
     for (let i = 0; i < kernel.length; i++) {
       expect(view.getFloat32(i * 4, true)).toBe(kernel[i]);
     }
+  });
+});
+
+describe('criterion 9: gated response fidelity', () => {
+  // gatedResponse is what the wizard feeds the designer from real captures,
+  // so it must agree with the harness's ungated view on reflection-free
+  // systems - including when the IR peak sits close to the buffer start,
+  // where the analysis window necessarily extends before time zero.
+  const GATE_OPTS = { fLo: 300, fHi: 8000, pointsPerOctave: 24, cycles: 8 };
+  const PLANT = {
+    band: { lo: 100, hi: 16000 },
+    resonances: [{ freq: 700, q: 2, gainDb: 4 }],
+  };
+
+  function magMatch(ir) {
+    const gated = gatedResponse(ir, 0, RATE, GATE_OPTS);
+    const truth = freqResponse(ir, RATE, gated.freqs).magDb;
+    // Both curves have arbitrary absolute level conventions; compare shapes.
+    let gMean = 0;
+    let tMean = 0;
+    for (let i = 0; i < gated.freqs.length; i++) {
+      gMean += gated.magDb[i];
+      tMean += truth[i];
+    }
+    gMean /= gated.freqs.length;
+    tMean /= gated.freqs.length;
+    let worst = 0;
+    for (let i = 0; i < gated.freqs.length; i++) {
+      worst = Math.max(worst, Math.abs(gated.magDb[i] - gMean - (truth[i] - tMean)));
+    }
+    return { gated, worstDb: worst };
+  }
+
+  it('matches the ungated magnitude within 1.5 dB, peak near buffer start', () => {
+    const ir = makeSystemIr(RATE, PLANT); // delayS 0: worst case for the gate
+    expect(magMatch(ir).worstDb).toBeLessThanOrEqual(1.5);
+  });
+
+  it('matches the ungated magnitude within 1.5 dB with a realistic delay', () => {
+    const ir = makeSystemIr(RATE, { ...PLANT, delayS: 0.005 });
+    expect(magMatch(ir).worstDb).toBeLessThanOrEqual(1.5);
+  });
+
+  it('reads ~zero excess phase on a minimum-phase system', () => {
+    const ir = makeSystemIr(RATE, { ...PLANT, delayS: 0.005 });
+    const gated = gatedResponse(ir, 0, RATE, GATE_OPTS);
+    expect(rms(gated.excessPhaseRad)).toBeLessThanOrEqual(0.2);
+  });
+
+  it('agrees with the harness on an allpass system', () => {
+    const ir = makeSystemIr(RATE, {
+      band: { lo: 100, hi: 16000 },
+      allpasses: [{ freq: 1000, q: 1 }],
+      delayS: 0.005,
+    });
+    const gated = gatedResponse(ir, 0, RATE, GATE_OPTS);
+    expect(rms(gated.excessPhaseRad)).toBeGreaterThanOrEqual(0.5);
+    const truth = excessPhaseOf(ir, RATE, gated.freqs);
+    const diff = new Float64Array(gated.freqs.length);
+    for (let i = 0; i < diff.length; i++) diff[i] = gated.excessPhaseRad[i] - truth[i];
+    expect(rms(diff)).toBeLessThanOrEqual(0.3);
+  });
+
+  it('excludes a late reflection at high frequencies - the point of gating', () => {
+    const clean = makeSystemIr(RATE, { band: { lo: 100, hi: 16000 }, delayS: 0.005 });
+    const reflected = makeSystemIr(RATE, {
+      band: { lo: 100, hi: 16000 },
+      delayS: 0.005,
+      reflection: { delayS: 0.006, gain: 0.4 },
+    });
+    const gc = gatedResponse(clean, 0, RATE, GATE_OPTS);
+    const gr = gatedResponse(reflected, 0, RATE, GATE_OPTS);
+    // Ungated, the comb is plainly visible up high...
+    const hf = logSpace(2000, 8000, 24);
+    const combed = freqResponse(reflected, RATE, hf).magDb;
+    expect(Math.max(...combed) - Math.min(...combed)).toBeGreaterThanOrEqual(4);
+    // ...gated, the HF curve barely knows the reflection exists.
+    for (let i = 0; i < gc.freqs.length; i++) {
+      if (gc.freqs[i] < 2000) continue;
+      expect(Math.abs(gr.magDb[i] - gc.magDb[i])).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+describe('criterion 10: predictCorrected invariances', () => {
+  it('a delta kernel changes nothing', () => {
+    const system = makeSystemIr(RATE, {
+      band: PLANT_BAND,
+      allpasses: [{ freq: 1000, q: 1 }],
+    });
+    const measurement = measurementOf(system, RATE, DESIGN_GRID);
+    const delta = new Float32Array(256);
+    delta[0] = 1;
+    const out = predictCorrected(delta, measurement, RATE);
+    for (let i = 0; i < measurement.freqs.length; i++) {
+      expect(out.magDb[i]).toBeCloseTo(measurement.magDb[i], 1);
+    }
+    const diff = new Float64Array(measurement.freqs.length);
+    for (let i = 0; i < diff.length; i++) {
+      diff[i] = out.excessPhaseRad[i] - measurement.excessPhaseRad[i];
+    }
+    expect(rms(diff)).toBeLessThanOrEqual(0.05);
+  });
+
+  it('a pure-delay kernel is bulk delay, not excess phase or magnitude', () => {
+    const system = makeSystemIr(RATE, { band: PLANT_BAND });
+    const measurement = measurementOf(system, RATE, DESIGN_GRID);
+    const shifted = new Float32Array(1024);
+    shifted[441] = 1;
+    const out = predictCorrected(shifted, measurement, RATE);
+    for (let i = 0; i < measurement.freqs.length; i++) {
+      expect(out.magDb[i]).toBeCloseTo(measurement.magDb[i], 1);
+    }
+    expect(rms(out.excessPhaseRad)).toBeLessThanOrEqual(
+      rms(measurement.excessPhaseRad) + 0.05
+    );
   });
 });

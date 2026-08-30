@@ -178,6 +178,17 @@ Numbered acceptance criteria (mirrored in the test file):
    algorithm.
 8. **Encoding**: `encodeFirBin` round-trips: bytes/4 taps, little-endian
    float32, exact values.
+9. **Gated response fidelity** (added 2026-08-30 after integration review
+   found `gatedResponse` unconstrained by 1–8): on reflection-free systems it
+   matches the harness's ungated view — magnitude *shape* within 1.5 dB
+   (including when the IR peak sits near the buffer start, where the
+   analysis window extends before time zero), excess phase ≤ 0.2 rad RMS on
+   a minimum-phase system, within 0.3 rad RMS of the harness on an allpass
+   system — and on a system with a 6 ms reflection, the gated HF curve
+   (≥ 2 kHz, 8-cycle windows) moves ≤ 1 dB while the ungated comb is ≥ 4 dB.
+10. **predictCorrected invariances**: a delta kernel changes neither
+    magnitude (±0.1 dB-ish) nor excess phase (≤ 0.05 rad RMS); a pure-delay
+    kernel reads as bulk delay, not excess phase or magnitude.
 
 Notes for the implementer: the radix-2 FFT in `delay-align.js` may be
 extracted into a shared module (that refactor is in-scope for B; keep

@@ -18,6 +18,8 @@
  * and matches PROBE_* in ESP/esp-web-server/teensy_protocol.h.
  */
 
+import { fft, nextPow2 } from './fft.js';
+
 export const SPEED_OF_SOUND_M_PER_S = 343;
 
 // Arrival peaks below this peak-to-background ratio count as "not detected"
@@ -79,48 +81,10 @@ export function generateChirp(sampleRate, schedule) {
   return out;
 }
 
-// --- FFT (iterative radix-2, in-place, complex) ---
-
-function fft(re, im, inverse) {
-  const n = re.length;
-  for (let i = 1, j = 0; i < n; i++) {
-    let bit = n >> 1;
-    for (; j & bit; bit >>= 1) j ^= bit;
-    j ^= bit;
-    if (i < j) {
-      let t = re[i]; re[i] = re[j]; re[j] = t;
-      t = im[i]; im[i] = im[j]; im[j] = t;
-    }
-  }
-  for (let len = 2; len <= n; len <<= 1) {
-    const ang = (inverse ? 2 : -2) * Math.PI / len;
-    const wRe = Math.cos(ang);
-    const wIm = Math.sin(ang);
-    for (let i = 0; i < n; i += len) {
-      let curRe = 1;
-      let curIm = 0;
-      for (let k = 0; k < len / 2; k++) {
-        const a = i + k;
-        const b = i + k + len / 2;
-        const tRe = re[b] * curRe - im[b] * curIm;
-        const tIm = re[b] * curIm + im[b] * curRe;
-        re[b] = re[a] - tRe;
-        im[b] = im[a] - tIm;
-        re[a] += tRe;
-        im[a] += tIm;
-        const nRe = curRe * wRe - curIm * wIm;
-        curIm = curRe * wIm + curIm * wRe;
-        curRe = nRe;
-      }
-    }
-  }
-  if (inverse) {
-    for (let i = 0; i < n; i++) {
-      re[i] /= n;
-      im[i] /= n;
-    }
-  }
-}
+// --- FFT ---
+// The radix-2 FFT itself lives in fft.js (shared with sweep-math.js /
+// fir-design.js); this module keeps the correlation logic that's specific
+// to delay probing.
 
 // Cross-correlation envelope of recording against the reference chirp:
 // |analytic(corr)|, where corr[t] = sum_n recording[t+n] * chirp[n]. The
@@ -130,8 +94,7 @@ function fft(re, im, inverse) {
 // matches the recording; only t <= recording.length - chirp.length is
 // meaningful.
 export function correlationEnvelope(recording, chirp) {
-  let size = 1;
-  while (size < recording.length + chirp.length) size <<= 1;
+  const size = nextPow2(recording.length + chirp.length);
   const re = new Float32Array(size);
   const im = new Float32Array(size);
   re.set(recording);
