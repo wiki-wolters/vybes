@@ -29,6 +29,12 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { startTarget, connectWs, api, REAL_DEVICE } from './harness.js'
 
 const itMockOnly = REAL_DEVICE ? it.skip : it
+// POST /fir/upload and DELETE /fir/files (docs/AUTO_FIR_CONTRACTS.md, Slice
+// A) write through to the Teensy's real SD card over the UART link; the
+// mock server has no simulated Teensy and doesn't implement either route.
+// Unlike itMockOnly's "unsafe against real hardware" gate, this one is
+// "meaningless against the mock" - inverted, real-device-only.
+const itDeviceOnly = REAL_DEVICE ? it : it.skip
 const enc = encodeURIComponent
 
 const PREFIX = `contract-test-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
@@ -774,6 +780,68 @@ describe('FIR filters', () => {
 
   it('rejects invalid states with 400', async () => {
     expect((await PUT(`/preset/fir/enabled?preset_name=${enc(P)}&state=maybe`)).status).toBe(400)
+  })
+})
+
+// ===== FIR file upload/delete (Slice A) =====
+// docs/AUTO_FIR_CONTRACTS.md's own acceptance line for this slice: "upload a
+// 512-tap .bin -> GET /fir/files lists it with taps = 512 -> pool math
+// charges 512 -> delete -> gone; delete-while-referenced returns 409."
+// Raw-body upload isn't expressible through harness.js's JSON-only `api()`
+// helper, so these post the body directly with fetch.
+
+const uploadFirBin = (name, taps) => {
+  const bytes = new Uint8Array(taps * 4) // raw little-endian float32, no header
+  return fetch(`${t.baseUrl}/fir/upload?name=${enc(name)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: bytes,
+  })
+}
+
+describe('FIR file upload/delete', () => {
+  itDeviceOnly('uploads a 512-tap .bin, lists and charges it, then deletes it', async () => {
+    const name = `${PREFIX}-a1-woofer.bin`
+    const taps = 512 // already a whole number of 128-tap charge quanta
+
+    const uploadRes = await uploadFirBin(name, taps)
+    expect(uploadRes.status).toBe(200)
+    const uploadJson = await uploadRes.json()
+    expect(uploadJson).toEqual({ name, size: taps * 4, taps })
+
+    expect((await GET('/fir/files')).json).toContain(name)
+
+    const poolBefore = (await GET(`/preset/fir/pool?preset_name=${enc(P)}`)).json.used
+    const assign = await PUT(`/preset/output/fir?preset_name=${enc(P)}&output=0&file=${enc(name)}`)
+    expect(assign.status).toBe(200)
+    expect(assign.json.firPool.used).toBe(poolBefore + taps)
+
+    await PUT(`/preset/output/fir?preset_name=${enc(P)}&output=0&file=`) // clear before deleting
+
+    const del = await DEL(`/fir/files?name=${enc(name)}`)
+    expect(del.status).toBe(200)
+    expect(del.json).toEqual({ name })
+    expect((await GET('/fir/files')).json).not.toContain(name)
+  })
+
+  itDeviceOnly('refuses to delete a file a preset output still references, with 409', async () => {
+    const name = `${PREFIX}-a2-referenced.bin`
+    expect((await uploadFirBin(name, 128)).status).toBe(200)
+    await PUT(`/preset/output/fir?preset_name=${enc(P)}&output=0&file=${enc(name)}`)
+
+    const del = await DEL(`/fir/files?name=${enc(name)}`)
+    expect(del.status).toBe(409)
+    expect(del.json.error).toBe('referenced')
+    expect(del.json.presets).toContain(P)
+
+    // Cleanup: clear the reference, then the delete succeeds.
+    await PUT(`/preset/output/fir?preset_name=${enc(P)}&output=0&file=`)
+    expect((await DEL(`/fir/files?name=${enc(name)}`)).status).toBe(200)
+  })
+
+  itDeviceOnly('rejects a bad name with 400 and a missing file with 404', async () => {
+    expect((await uploadFirBin('has space.bin', 4)).status).toBe(400)
+    expect((await DEL(`/fir/files?name=${enc(`${PREFIX}-never-uploaded.bin`)}`)).status).toBe(404)
   })
 })
 

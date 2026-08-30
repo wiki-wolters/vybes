@@ -4,6 +4,7 @@
 #include "websocket.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <freertos/task.h>
 
 // Outgoing queue. A full V1 preset sync is ~190 commands worst case
 // (8 outputs x up to 19 commands each, plus input EQ, dynamics and globals).
@@ -69,6 +70,29 @@ struct FirLoadError {
 };
 static FirLoadError firLoadErrors[NUM_OUTPUTS] = {};
 
+// --- FIR upload/delete (docs/AUTO_FIR_CONTRACTS.md) ---
+//
+// firUploadBegin/firUploadPutLine/firUploadEnd/firUploadDelete block the
+// calling httpd task waiting for a reply; the reply itself is only ever
+// observed by the loop task (handleTeensyLine, below), so the two sides
+// hand it off through this small mutex-guarded struct rather than reading
+// TeensySerial from two tasks. Single-flight (firUploadTryBegin/Release)
+// guarantees only one op is ever waiting at a time, so a plain "did the
+// kind I want arrive since I last looked" poll is enough - no per-request
+// identifiers needed.
+struct FirUploadReply {
+    uint32_t seqNum = 0;      // bumped on every FIRPUT/FIRDEL line parsed
+    char kind[8] = "";        // "begin","ack","ok","err","stop","delok","delerr"
+    char name[FIR_FILENAME_LEN + 1] = "";
+    uint32_t size = 0;
+    uint32_t taps = 0;
+    char reason[16] = "";
+};
+static FirUploadReply firReply;
+static int32_t firLastAckedSeq = -1;
+static SemaphoreHandle_t firUploadMutex = nullptr;
+static bool firUploadBusy = false; // ESP-side single-flight guard
+
 // --- Message building ---
 
 // The actual formatting lives in teensy_protocol.h (shared with the Teensy
@@ -133,9 +157,19 @@ static int coalesceKeyTokens(const char* command) {
 //                   whole sync - the exact thing the hold exists to prevent.
 //   loadFirFiles  - would hop backwards ahead of the setFir commands naming
 //                   the files it is supposed to load.
+//   firPutBegin/firPut/firPutEnd/firPutAbort/firDelete - every line of a
+//                   file transfer is distinct wire data (a sequence number,
+//                   a chunk of bytes), never a repeated "latest value wins"
+//                   parameter; coalescing two of them would silently drop a
+//                   chunk instead of sending it.
 static bool isOrderedBarrier(const char* command) {
     return strcmp(command, CMD_SET_CONFIG_HOLD) == 0 ||
-           strcmp(command, CMD_LOAD_FIR_FILES) == 0;
+           strcmp(command, CMD_LOAD_FIR_FILES) == 0 ||
+           strcmp(command, CMD_FIR_PUT_BEGIN) == 0 ||
+           strcmp(command, CMD_FIR_PUT) == 0 ||
+           strcmp(command, CMD_FIR_PUT_END) == 0 ||
+           strcmp(command, CMD_FIR_PUT_ABORT) == 0 ||
+           strcmp(command, CMD_FIR_DELETE) == 0;
 }
 
 // Two messages coalesce when they set the same parameter: same command and
@@ -379,6 +413,166 @@ bool getFirLoadError(int output, char* code, size_t codeSize,
     return present;
 }
 
+// --- FIR upload/delete (docs/AUTO_FIR_CONTRACTS.md) ---
+
+bool firUploadTryBegin() {
+    xSemaphoreTake(firUploadMutex, portMAX_DELAY);
+    bool wasBusy = firUploadBusy;
+    if (!wasBusy) firUploadBusy = true;
+    xSemaphoreGive(firUploadMutex);
+    return !wasBusy;
+}
+
+void firUploadRelease() {
+    xSemaphoreTake(firUploadMutex, portMAX_DELAY);
+    firUploadBusy = false;
+    xSemaphoreGive(firUploadMutex);
+}
+
+bool firUploadNameFits(const char* name, uint32_t size) {
+    char sizeStr[12];
+    snprintf(sizeStr, sizeof(sizeStr), "%lu", (unsigned long)size);
+    // "<cmd> <name> <size> <crc32>", content only (no trailing newline) -
+    // teensyBuildMessage needs this at most TEENSY_MSG_MAX - 2 to append the
+    // newline without truncating (see its own comment).
+    size_t contentLen = strlen(CMD_FIR_PUT_BEGIN) + 1 + strlen(name) + 1 +
+                        strlen(sizeStr) + 1 + 8;
+    return contentLen <= (size_t)(TEENSY_MSG_MAX - 2);
+}
+
+// Blocks until a FIRPUT/FIRDEL line whose kind is one of acceptKinds[0..n)
+// arrives, or timeoutMs elapses. Copies the matching reply out. A reply of
+// some OTHER kind observed while waiting is stale/irrelevant and skipped -
+// single-flight guarantees there is only ever one legitimate waiter, so
+// that should only happen for a genuinely unexpected line.
+static bool waitForFirReply(unsigned long timeoutMs, const char* const* acceptKinds, int nKinds,
+                            FirUploadReply* out) {
+    xSemaphoreTake(firUploadMutex, portMAX_DELAY);
+    uint32_t seen = firReply.seqNum;
+    xSemaphoreGive(firUploadMutex);
+
+    unsigned long start = millis();
+    for (;;) {
+        xSemaphoreTake(firUploadMutex, portMAX_DELAY);
+        bool changed = firReply.seqNum != seen;
+        FirUploadReply snapshot = firReply;
+        if (changed) seen = firReply.seqNum;
+        xSemaphoreGive(firUploadMutex);
+        if (changed) {
+            for (int i = 0; i < nKinds; i++) {
+                if (strcmp(snapshot.kind, acceptKinds[i]) == 0) {
+                    *out = snapshot;
+                    return true;
+                }
+            }
+            // Not the kind we're waiting for (a stray line) - keep waiting.
+        }
+        if (millis() - start >= timeoutMs) return false;
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+}
+
+// Cross-call high-water mark for firUploadPutLine's own ERR check (separate
+// from waitForFirReply's per-call "seen", which resets on every call and so
+// can't itself distinguish "no new line" from "an old err from a previous,
+// already-finished session"). Reset to the current seqNum whenever a begin
+// succeeds, so a stale err can never leak into the next transfer.
+static uint32_t firPutConsumedSeqNum = 0;
+
+FirUploadStatus firUploadBegin(const char* name, uint32_t size, const char* crc32hex,
+                               unsigned long timeoutMs, char* errReason, size_t errReasonSize) {
+    char sizeStr[12];
+    snprintf(sizeStr, sizeof(sizeStr), "%lu", (unsigned long)size);
+
+    xSemaphoreTake(firUploadMutex, portMAX_DELAY);
+    firLastAckedSeq = -1;
+    xSemaphoreGive(firUploadMutex);
+
+    sendToTeensy(CMD_FIR_PUT_BEGIN, name, sizeStr, crc32hex);
+
+    static const char* kinds[] = {"begin", "err"};
+    FirUploadReply reply;
+    if (!waitForFirReply(timeoutMs, kinds, 2, &reply)) return FIR_UPLOAD_TIMEOUT;
+
+    xSemaphoreTake(firUploadMutex, portMAX_DELAY);
+    firPutConsumedSeqNum = firReply.seqNum; // don't re-observe this reply as a "put" error
+    xSemaphoreGive(firUploadMutex);
+
+    if (strcmp(reply.kind, "err") == 0) {
+        strlcpy(errReason, reply.reason, errReasonSize);
+        return FIR_UPLOAD_ERR;
+    }
+    return FIR_UPLOAD_OK;
+}
+
+FirUploadStatus firUploadPutLine(int32_t seq, const char* base64Payload,
+                                 unsigned long timeoutMs, char* errReason, size_t errReasonSize) {
+    unsigned long start = millis();
+    // Flow control: don't let more than FIR_PUT_ACK_STRIDE lines sit
+    // unacknowledged. Also bails out as soon as an ERR arrives (aborting the
+    // transfer) instead of sending more data into a session the Teensy has
+    // already torn down.
+    for (;;) {
+        xSemaphoreTake(firUploadMutex, portMAX_DELAY);
+        bool changed = firReply.seqNum != firPutConsumedSeqNum;
+        bool isErr = changed && strcmp(firReply.kind, "err") == 0;
+        char reasonCopy[16];
+        strlcpy(reasonCopy, firReply.reason, sizeof(reasonCopy));
+        if (changed) firPutConsumedSeqNum = firReply.seqNum;
+        int32_t lastAcked = firLastAckedSeq;
+        xSemaphoreGive(firUploadMutex);
+
+        if (isErr) {
+            strlcpy(errReason, reasonCopy, errReasonSize);
+            return FIR_UPLOAD_ERR;
+        }
+        if (seq - lastAcked <= FIR_PUT_ACK_STRIDE) break;
+        if (millis() - start >= timeoutMs) return FIR_UPLOAD_TIMEOUT;
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+
+    char seqStr[12];
+    snprintf(seqStr, sizeof(seqStr), "%ld", (long)seq);
+    sendToTeensy(CMD_FIR_PUT, seqStr, base64Payload);
+    return FIR_UPLOAD_OK;
+}
+
+FirUploadStatus firUploadEnd(unsigned long timeoutMs, uint32_t* outSize, uint32_t* outTaps,
+                             char* errReason, size_t errReasonSize) {
+    sendToTeensy(CMD_FIR_PUT_END);
+
+    static const char* kinds[] = {"ok", "err"};
+    FirUploadReply reply;
+    if (!waitForFirReply(timeoutMs, kinds, 2, &reply)) return FIR_UPLOAD_TIMEOUT;
+    if (strcmp(reply.kind, "err") == 0) {
+        strlcpy(errReason, reply.reason, errReasonSize);
+        return FIR_UPLOAD_ERR;
+    }
+    if (outSize) *outSize = reply.size;
+    if (outTaps) *outTaps = reply.taps;
+    return FIR_UPLOAD_OK;
+}
+
+void firUploadAbort() {
+    sendToTeensy(CMD_FIR_PUT_ABORT);
+}
+
+FirUploadStatus firUploadDelete(const char* name, unsigned long timeoutMs,
+                                char* errReason, size_t errReasonSize, bool* notFound) {
+    if (notFound) *notFound = false;
+    sendToTeensy(CMD_FIR_DELETE, name);
+
+    static const char* kinds[] = {"delok", "delerr"};
+    FirUploadReply reply;
+    if (!waitForFirReply(timeoutMs, kinds, 2, &reply)) return FIR_UPLOAD_TIMEOUT;
+    if (strcmp(reply.kind, "delerr") == 0) {
+        strlcpy(errReason, reply.reason, errReasonSize);
+        if (notFound && strcmp(reply.reason, "notfound") == 0) *notFound = true;
+        return FIR_UPLOAD_ERR;
+    }
+    return FIR_UPLOAD_OK;
+}
+
 // --- RX line handling ---
 
 // Handle one complete line from the Teensy. The Teensy sends:
@@ -412,6 +606,71 @@ static void handleTeensyLine(const char* line) {
     // wizard off them.
     if (strncmp(line, "PROBE ", 6) == 0) {
         broadcastProbeEvent(line + 6);
+        return;
+    }
+
+    // Measurement sweep progress lines - same relay as the delay probe
+    // above: "relayed to the web UI like probeEvent" (docs/AUTO_FIR_CONTRACTS.md).
+    if (strncmp(line, "SWEEP ", 6) == 0) {
+        broadcastProbeEvent(line + 6);
+        return;
+    }
+
+    // "FIRPUT ..." / "FIRDEL ..." replies to the FIR upload/delete commands
+    // (docs/AUTO_FIR_CONTRACTS.md). No httpd task ever reads TeensySerial
+    // directly - they block on the firUpload*() calls in teensy_comm.h,
+    // which poll this struct, so the loop task stays the port's only reader.
+    if (strncmp(line, "FIRPUT ", 7) == 0) {
+        const char* rest = line + 7;
+        xSemaphoreTake(firUploadMutex, portMAX_DELAY);
+        firReply.seqNum++;
+        firReply.reason[0] = '\0';
+        if (strncmp(rest, "BEGIN ", 6) == 0) {
+            strlcpy(firReply.kind, "begin", sizeof(firReply.kind));
+            strlcpy(firReply.name, rest + 6, sizeof(firReply.name));
+        } else if (strncmp(rest, "ACK ", 4) == 0) {
+            strlcpy(firReply.kind, "ack", sizeof(firReply.kind));
+            firLastAckedSeq = (int32_t)strtol(rest + 4, nullptr, 10);
+        } else if (strncmp(rest, "OK ", 3) == 0) {
+            strlcpy(firReply.kind, "ok", sizeof(firReply.kind));
+            char nameBuf[FIR_FILENAME_LEN + 1] = "";
+            unsigned long sz = 0, tp = 0;
+            const char* p = rest + 3;
+            const char* sp1 = strchr(p, ' ');
+            if (sp1 != nullptr) {
+                size_t nlen = (size_t)(sp1 - p);
+                if (nlen > FIR_FILENAME_LEN) nlen = FIR_FILENAME_LEN;
+                memcpy(nameBuf, p, nlen);
+                nameBuf[nlen] = '\0';
+                const char* sp2 = strchr(sp1 + 1, ' ');
+                sz = strtoul(sp1 + 1, nullptr, 10);
+                if (sp2 != nullptr) tp = strtoul(sp2 + 1, nullptr, 10);
+            }
+            strlcpy(firReply.name, nameBuf, sizeof(firReply.name));
+            firReply.size = (uint32_t)sz;
+            firReply.taps = (uint32_t)tp;
+        } else if (strncmp(rest, "ERR ", 4) == 0) {
+            strlcpy(firReply.kind, "err", sizeof(firReply.kind));
+            strlcpy(firReply.reason, rest + 4, sizeof(firReply.reason));
+        } else if (strcmp(rest, "STOP") == 0) {
+            strlcpy(firReply.kind, "stop", sizeof(firReply.kind));
+        }
+        xSemaphoreGive(firUploadMutex);
+        return;
+    }
+    if (strncmp(line, "FIRDEL ", 7) == 0) {
+        const char* rest = line + 7;
+        xSemaphoreTake(firUploadMutex, portMAX_DELAY);
+        firReply.seqNum++;
+        firReply.reason[0] = '\0';
+        if (strncmp(rest, "OK ", 3) == 0) {
+            strlcpy(firReply.kind, "delok", sizeof(firReply.kind));
+            strlcpy(firReply.name, rest + 3, sizeof(firReply.name));
+        } else if (strncmp(rest, "ERR ", 4) == 0) {
+            strlcpy(firReply.kind, "delerr", sizeof(firReply.kind));
+            strlcpy(firReply.reason, rest + 4, sizeof(firReply.reason));
+        }
+        xSemaphoreGive(firUploadMutex);
         return;
     }
 
@@ -599,6 +858,7 @@ void initTeensyComm() {
     memset(cmdQueue, 0, sizeof(cmdQueue));
     queueMutex = xSemaphoreCreateMutex();
     firCacheMutex = xSemaphoreCreateMutex();
+    firUploadMutex = xSemaphoreCreateMutex();
     // Ask for the file lists in case the Teensy was already running when we
     // booted (its boot event would have been missed).
     requestFirFilesRefresh();

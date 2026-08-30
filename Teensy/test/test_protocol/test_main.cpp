@@ -103,6 +103,14 @@ static const ProtocolCase kProtocolCases[] = {
     {CMD_SET_FIR_ENABLED, "1", nullptr, nullptr, nullptr, nullptr, 1},
     {CMD_LOAD_FIR_FILES, nullptr, nullptr, nullptr, nullptr, nullptr, 0},
     {CMD_GET_FILES, nullptr, nullptr, nullptr, nullptr, nullptr, 0},
+    // FIR file upload/delete (docs/AUTO_FIR_CONTRACTS.md, Slice A) - full
+    // grammar/state-machine coverage lives in test_fir_upload; this just
+    // proves the command names round-trip with the right arg count.
+    {CMD_FIR_PUT_BEGIN, "a3-woofer-l.bin", "512", "0123abcd", nullptr, nullptr, 3},
+    {CMD_FIR_PUT, "0", "QUJDRA==", nullptr, nullptr, nullptr, 2},
+    {CMD_FIR_PUT_END, nullptr, nullptr, nullptr, nullptr, nullptr, 0},
+    {CMD_FIR_PUT_ABORT, nullptr, nullptr, nullptr, nullptr, nullptr, 0},
+    {CMD_FIR_DELETE, "a3-woofer-l.bin", nullptr, nullptr, nullptr, nullptr, 1},
     {CMD_SET_DELAYS_ENABLED, "1", nullptr, nullptr, nullptr, nullptr, 1},
     {CMD_SET_SPEAKER_GAINS, "1.00", "0.90", "0.80", nullptr, nullptr, 3},
     {CMD_SET_INPUT_GAINS, "1.00", "0.50", "0.75", "1.00", "0.25", 5},
@@ -125,6 +133,10 @@ static const ProtocolCase kProtocolCases[] = {
     {CMD_SET_GRM, "1", nullptr, nullptr, nullptr, nullptr, 1},
     {CMD_START_DELAY_PROBE, "255", "50", nullptr, nullptr, nullptr, 2},
     {CMD_STOP_DELAY_PROBE, nullptr, nullptr, nullptr, nullptr, nullptr, 0},
+    // startSweepProbe packs chirpSamples+nPasses into one builder parameter
+    // (teensyBuildMessage caps at 5 slots for 6 logical args), exactly like
+    // setCompBand above - the router still splits it back into 6 args.
+    {CMD_START_SWEEP_PROBE, "255", "50", "20.00", "20000.00", "131072 2", 6},
     {CMD_SOLO_OUTPUT, "3", nullptr, nullptr, nullptr, nullptr, 1},
     {CMD_START_RECORDING, nullptr, nullptr, nullptr, nullptr, nullptr, 0},
     {CMD_STOP_RECORDING, nullptr, nullptr, nullptr, nullptr, nullptr, 0},

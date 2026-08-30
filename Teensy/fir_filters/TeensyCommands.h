@@ -1,6 +1,15 @@
 #ifndef TEENSY_COMMANDS_H
 #define TEENSY_COMMANDS_H
 
+// The handlers for the FIR upload/delete and measurement-sweep commands
+// below live outside fir_filters.ino (FirUpload.cpp, DelayProbe.cpp); pull
+// their declarations in here so fir_filters.ino's existing
+// "#include "TeensyCommands.h"" is enough to see them when this list is
+// expanded into router.on(...) registrations - no sketch edits needed to
+// wire a new command up.
+#include "FirUpload.h"
+#include "DelayProbe.h"
+
 // Single source of truth for the serial commands the Teensy accepts over the
 // ESP link. fir_filters.ino expands this list to register its handlers with
 // the SerialCommandRouter; the host-native test suite expands it to verify
@@ -27,6 +36,11 @@
   X(setFirEnabled, handleSetFIREnabled) \
   X(loadFirFiles, handleLoadFirFiles) \
   X(getFiles, handleGetFiles) \
+  X(firPutBegin, handleFirPutBegin) \
+  X(firPut, handleFirPut) \
+  X(firPutEnd, handleFirPutEnd) \
+  X(firPutAbort, handleFirPutAbort) \
+  X(firDelete, handleFirDelete) \
   X(setDelaysEnabled, handleSetDelaysEnabled) \
   X(setSpeakerGains, handleSetSpeakerGains) \
   X(setInputGains, handleSetInputGains) \
@@ -47,6 +61,7 @@
   X(setGrm, handleSetGrm) \
   X(startDelayProbe, handleStartDelayProbe) \
   X(stopDelayProbe, handleStopDelayProbe) \
+  X(startSweepProbe, handleStartSweepProbe) \
   X(soloOutput, handleSoloOutput) \
   X(startRecording, handleStartRecording) \
   X(stopRecording, handleStopRecording) \

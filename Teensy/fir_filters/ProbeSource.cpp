@@ -2,15 +2,23 @@
 
 #include <math.h>
 
-void ProbeSource::start(uint8_t nChirps, float amplitude) {
+void ProbeSource::start(uint8_t nChirps, float amplitude, double f0Hz, double f1Hz,
+                        uint32_t chirpSamples, uint32_t fadeSamples,
+                        uint32_t preRollSamples, uint32_t spacingSamples) {
   nChirps_ = nChirps;
   amp_ = amplitude;
+  f0Hz_ = f0Hz;
+  f1Hz_ = f1Hz;
+  chirpSamples_ = chirpSamples;
+  fadeSamples_ = fadeSamples;
+  preRollSamples_ = preRollSamples;
+  spacingSamples_ = spacingSamples;
   chirpIdx_ = 0;
   inChirp_ = false;
-  untilChirp_ = PROBE_PRE_ROLL_SAMPLES;
+  untilChirp_ = preRollSamples_;
   intoChirp_ = 0;
   sampleCount_ = 0;
-  ratio_ = exp(log(PROBE_F1_HZ / PROBE_F0_HZ) / (double)PROBE_CHIRP_SAMPLES);
+  ratio_ = exp(log(f1Hz_ / f0Hz_) / (double)chirpSamples_);
   finished_ = false;
   running_ = true;
 }
@@ -29,14 +37,14 @@ void ProbeSource::stop() {
 int16_t ProbeSource::chirpSample() {
   if (intoChirp_ == 0) {
     phase_ = 0.0;
-    freq_ = PROBE_F0_HZ;
+    freq_ = f0Hz_;
   }
   float w = 1.0f;
   const uint32_t n = intoChirp_;
-  if (n < PROBE_FADE_SAMPLES) {
-    w = 0.5f * (1.0f - cosf((float)M_PI * n / PROBE_FADE_SAMPLES));
-  } else if (n > PROBE_CHIRP_SAMPLES - 1 - PROBE_FADE_SAMPLES) {
-    w = 0.5f * (1.0f - cosf((float)M_PI * (PROBE_CHIRP_SAMPLES - 1 - n) / PROBE_FADE_SAMPLES));
+  if (n < fadeSamples_) {
+    w = 0.5f * (1.0f - cosf((float)M_PI * n / fadeSamples_));
+  } else if (n > chirpSamples_ - 1 - fadeSamples_) {
+    w = 0.5f * (1.0f - cosf((float)M_PI * (chirpSamples_ - 1 - n) / fadeSamples_));
   }
   float s = amp_ * w * sinf((float)phase_);
   phase_ += 2.0 * M_PI * freq_ / (double)PROBE_SAMPLE_RATE;
@@ -70,11 +78,11 @@ void ProbeSource::update(void) {
     int16_t s = 0;
     if (inChirp_) {
       s = chirpSample();
-      if (intoChirp_ >= PROBE_CHIRP_SAMPLES) {
+      if (intoChirp_ >= chirpSamples_) {
         inChirp_ = false;
         chirpIdx_++;
         untilChirp_ = (chirpIdx_ < nChirps_)
-                          ? PROBE_SPACING_SAMPLES - PROBE_CHIRP_SAMPLES
+                          ? spacingSamples_ - chirpSamples_
                           : PROBE_TAIL_SAMPLES;
       }
     } else if (untilChirp_ > 0) {

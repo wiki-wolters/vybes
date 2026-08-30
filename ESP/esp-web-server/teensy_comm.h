@@ -71,6 +71,59 @@ long getCachedFirFileSize(const char* name);
 // call from any task.
 long getCachedFirFileTaps(const char* name);
 
+// --- FIR file upload/delete (docs/AUTO_FIR_CONTRACTS.md, Slice A) ---
+//
+// Unlike every other Teensy command, these block the calling (httpd) task
+// until the matching reply arrives or timeoutMs elapses: the HTTP contract
+// needs the Teensy's actual FIRPUT/FIRDEL outcome (name/size/taps, or the
+// ERR reason) in the response body, not a fire-and-forget "requested". The
+// wire write still goes through the normal sendToTeensy() queue (marked as
+// an ordered/non-coalescing command, like setConfigHold), so ordering with
+// every other command is preserved; only the wait for the reply is new.
+//
+// Single-flight guard: only one upload or delete may be in flight at a
+// time (contract: 409 busy). Callers must pair a successful TryBegin with
+// exactly one Release.
+bool firUploadTryBegin();
+void firUploadRelease();
+
+// True if "firPutBegin <name> <size> <crc32>" fits TEENSY_MSG_MAX. Nearly
+// always true (FIR_FILENAME_LEN's 63 chars plus the size/crc32 overhead can
+// exceed the 80-byte line for the longest names combined with a >=5-digit
+// size - the wizard's own naming scheme is nowhere near this bound). Callers
+// should reject with 400 rather than send a line that would be silently
+// truncated.
+bool firUploadNameFits(const char* name, uint32_t size);
+
+enum FirUploadStatus { FIR_UPLOAD_OK, FIR_UPLOAD_ERR, FIR_UPLOAD_TIMEOUT };
+
+// Sends "firPutBegin <name> <size> <crc32hex>" and blocks for FIRPUT
+// BEGIN/ERR. errReason (>=16 bytes) is filled on FIR_UPLOAD_ERR.
+FirUploadStatus firUploadBegin(const char* name, uint32_t size, const char* crc32hex,
+                               unsigned long timeoutMs, char* errReason, size_t errReasonSize);
+
+// Sends "firPut <seq> <base64>", first blocking (if needed) for the ESP's
+// own flow-control window - at most FIR_PUT_ACK_STRIDE lines beyond the
+// last ACK'd seq - to clear. Returns FIR_UPLOAD_ERR if the Teensy aborted
+// the transfer (an ERR arrived, at this line or an earlier one not yet
+// observed) instead of sending the line.
+FirUploadStatus firUploadPutLine(int32_t seq, const char* base64Payload,
+                                 unsigned long timeoutMs, char* errReason, size_t errReasonSize);
+
+// Sends "firPutEnd" and blocks for FIRPUT OK/ERR.
+FirUploadStatus firUploadEnd(unsigned long timeoutMs, uint32_t* outSize, uint32_t* outTaps,
+                             char* errReason, size_t errReasonSize);
+
+// Fire-and-forget "firPutAbort" - best-effort cleanup after an ESP-side
+// failure (timeout, disconnect, oversize body) so the Teensy's temp file
+// doesn't linger. Does not wait for FIRPUT STOP.
+void firUploadAbort();
+
+// Sends "firDelete <name>" and blocks for FIRDEL OK/ERR. notFound is set
+// when the reason is "notfound" (maps to HTTP 404 rather than 502).
+FirUploadStatus firUploadDelete(const char* name, unsigned long timeoutMs,
+                                char* errReason, size_t errReasonSize, bool* notFound);
+
 // --- SD recorder / player (see the recorder section of teensy_protocol.h) ---
 
 // Mirror of the Teensy's last "REC STATE" line. Recording names are

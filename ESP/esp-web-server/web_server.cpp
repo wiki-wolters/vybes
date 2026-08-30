@@ -185,8 +185,21 @@ static void registerRoutes(PsychicHttpServer &s, PsychicWebSocketHandler *ws) {
 
     // API Routes - FIR Filter Management
     s.on("/fir/files", HTTP_GET, handleGetFirFiles);
+    s.on("/fir/files", HTTP_DELETE, handleDeleteFirFile);
     s.on("/preset/fir/enabled", HTTP_PUT, handlePutPresetFirEnabled);
     s.on("/preset/fir/pool", HTTP_GET, handleGetPresetFirPool);
+
+    // POST /fir/upload?name=<file> - raw file bytes streamed to the Teensy's
+    // SD card (docs/AUTO_FIR_CONTRACTS.md, Slice A). Same upload-handler
+    // split as /restore below: chunks stream through handleFirUploadChunk,
+    // the actual work (CRC, UART handshake, response) happens once the body
+    // is complete in handleFirUploadComplete. This listener's stack_size is
+    // already 10240 (see the /restore note further down) - comfortably
+    // covers this handler's own small fixed buffers too.
+    PsychicUploadHandler *firUploadHandler = new PsychicUploadHandler();
+    firUploadHandler->onUpload(handleFirUploadChunk);
+    firUploadHandler->onRequest(handleFirUploadComplete);
+    s.on("/fir/upload", HTTP_POST, firUploadHandler);
 
     // API Routes - Signal Generator
     s.on("/generate/tone/stop", HTTP_PUT, handlePutToneStop);

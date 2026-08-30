@@ -36,4 +36,18 @@ void firPoolErrorsToJson(bool isActive, JsonObject pool);
 // before that load's own FIRERR lines arrive.
 void broadcastFirPool(const Preset& preset);
 
+// --- FIR file upload/delete (docs/AUTO_FIR_CONTRACTS.md, Slice A) ---
+
+// PsychicUploadHandler pair for POST /fir/upload?name=<file>: the body
+// (raw file bytes, no multipart wrapper) streams to a small LittleFS temp
+// file chunk by chunk as it arrives; handleFirUploadComplete runs once the
+// whole body has landed, computes its CRC and does the actual UART
+// handshake with the Teensy.
+esp_err_t handleFirUploadChunk(PsychicRequest *request, const String& filename,
+                               uint64_t index, uint8_t *data, size_t len, bool last);
+esp_err_t handleFirUploadComplete(PsychicRequest *request);
+
+// DELETE /fir/files?name=<file>
+esp_err_t handleDeleteFirFile(PsychicRequest *request);
+
 #endif // API_FIR_H

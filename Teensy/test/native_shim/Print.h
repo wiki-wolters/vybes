@@ -5,6 +5,7 @@
 // virtual/non-virtual split of the real class so OutputStream compiles
 // unchanged.
 
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -40,6 +41,19 @@ public:
     size_t println() { return write("\n"); }
     template <typename T>
     size_t println(const T& v) { return print(v) + println(); }
+
+    // Matches the real Print::printf's signature closely enough for the
+    // firmware sources under test (e.g. DelayProbe.cpp, FirUpload.cpp).
+    size_t printf(const char* fmt, ...) {
+        char buf[256];
+        va_list args;
+        va_start(args, fmt);
+        int n = vsnprintf(buf, sizeof(buf), fmt, args);
+        va_end(args);
+        if (n <= 0) return 0;
+        size_t len = (size_t)n < sizeof(buf) ? (size_t)n : sizeof(buf) - 1;
+        return write(buf, len);
+    }
 
 private:
     template <typename T>

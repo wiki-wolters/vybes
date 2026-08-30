@@ -238,3 +238,276 @@ esp_err_t handlePutPresetFirEnabled(PsychicRequest *request) {
     doc["FIRFiltersEnabled"] = enabled;
     return sendJsonAndBroadcast(request, doc);
 }
+
+// --- FIR file upload/delete (docs/AUTO_FIR_CONTRACTS.md, Slice A) ---
+//
+// The browser body is raw file bytes (no multipart wrapper - PsychicHttp's
+// upload handler supports this directly, dispatching to its
+// non-multipart/"basic" path since the request has no multipart boundary).
+// It streams to a small LittleFS temp file chunk by chunk as it arrives -
+// the same discipline /restore already uses for its own bounded upload -
+// because the wire protocol needs the whole file's CRC32 in firPutBegin
+// before a single firPut line goes out, which only a completed body can
+// provide; staging through flash (not a heap buffer) is what keeps that
+// requirement compatible with "never buffer the whole file in RAM". Once
+// the body is complete, handleFirUploadComplete does the actual work: CRC,
+// the Teensy UART handshake, and the HTTP response.
+#define FIR_UPLOAD_TIMEOUT_MS 5000UL
+static const char* FIR_UPLOAD_TMP_PATH = "/fir_upload.tmp";
+
+static File firUploadStagingFile;
+static bool firUploadStagingError = false;
+// Set when Phase 1's single-flight TryBegin lost the race - Phase 2 must
+// not call firUploadRelease() in that case (no guard was ever acquired).
+static bool firUploadRejectedBusy = false;
+static uint64_t firUploadStagedBytes = 0;
+
+esp_err_t handleFirUploadChunk(PsychicRequest *request, const String& filename,
+                               uint64_t index, uint8_t *data, size_t len, bool last) {
+    if (index == 0) {
+        firUploadStagingError = false;
+        firUploadRejectedBusy = false;
+        firUploadStagedBytes = 0;
+
+        if (!firUploadTryBegin()) {
+            // Another upload or delete is already in flight - let the
+            // request drain harmlessly (returning ESP_FAIL here would abort
+            // the connection with a generic 500 before Phase 2 could reply
+            // 409); Phase 2 sends the real response.
+            firUploadRejectedBusy = true;
+        } else if (request->contentLength() > FIR_UPLOAD_MAX_SIZE) {
+            // Oversized: don't bother staging it, Phase 2 rejects with 400.
+            firUploadStagingError = true;
+        } else {
+            LittleFS.remove(FIR_UPLOAD_TMP_PATH);
+            firUploadStagingFile = LittleFS.open(FIR_UPLOAD_TMP_PATH, "w");
+            if (!firUploadStagingFile) firUploadStagingError = true;
+        }
+    }
+
+    if (!firUploadRejectedBusy && !firUploadStagingError && len > 0) {
+        if (firUploadStagingFile.write(data, len) != len) {
+            firUploadStagingError = true;
+        } else {
+            firUploadStagedBytes += len;
+        }
+    }
+
+    if (last && firUploadStagingFile) {
+        firUploadStagingFile.close();
+    }
+    return ESP_OK; // keep draining the socket; Phase 2 reports any failure
+}
+
+// Encodes one JSON error object {"error": reason} into a fresh String.
+static String firErrorJson(const char* reason) {
+    JsonDocument doc;
+    doc["error"] = reason;
+    String out;
+    serializeJson(doc, out);
+    return out;
+}
+
+esp_err_t handleFirUploadComplete(PsychicRequest *request) {
+    if (firUploadRejectedBusy) {
+        return request->reply(409, "application/json", firErrorJson("busy").c_str());
+    }
+
+    // Phase 1 successfully acquired the single-flight guard - every exit
+    // path below must release it exactly once, and the temp file is done
+    // with either way.
+    struct UploadGuard {
+        ~UploadGuard() {
+            firUploadRelease();
+            LittleFS.remove(FIR_UPLOAD_TMP_PATH);
+        }
+    } guard;
+
+    if (firUploadStagingError) {
+        return request->reply(400, "text/plain", "Upload too large or failed to stage");
+    }
+    if (!request->hasParam("name")) {
+        return request->reply(400, "text/plain", "Missing name parameter");
+    }
+    String name = request->getParam("name")->value();
+    if (name.length() == 0 || !isValidFirFilename(name)) {
+        return request->reply(400, "text/plain", "Invalid FIR filename");
+    }
+    size_t nameLen = name.length();
+    bool isBin = nameLen > 4 && strcasecmp(name.c_str() + nameLen - 4, ".bin") == 0;
+    bool isWav = nameLen > 4 && strcasecmp(name.c_str() + nameLen - 4, ".wav") == 0;
+    bool isTxt = nameLen > 4 && strcasecmp(name.c_str() + nameLen - 4, ".txt") == 0;
+    if (!isBin && !isWav && !isTxt) {
+        return request->reply(400, "text/plain", "Name must end in .bin, .wav, or .txt");
+    }
+
+    uint64_t size = firUploadStagedBytes;
+    if (size < FIR_UPLOAD_MIN_SIZE || size > FIR_UPLOAD_MAX_SIZE) {
+        return request->reply(400, "text/plain", "Size must be 4-51200 bytes");
+    }
+    if (isBin && (size % 4) != 0) {
+        return request->reply(400, "text/plain", "A .bin size must be a multiple of 4");
+    }
+    // firPutBegin's line ("firPutBegin <name> <size> <crc32>") must itself
+    // fit TEENSY_MSG_MAX - the longest names FIR_FILENAME_LEN otherwise
+    // allows can overflow it once the size/crc32 overhead is counted (see
+    // teensy_comm.h). Rejecting here (400) beats silently truncating the
+    // wire line.
+    if (!firUploadNameFits(name.c_str(), (uint32_t)size)) {
+        return request->reply(400, "text/plain", "Filename too long for a firPutBegin line");
+    }
+
+    // Changing SD contents while the recorder/player holds the card would
+    // race its own streaming I/O.
+    if (isRecordingActive()) {
+        return request->reply(409, "application/json", firErrorJson("recording").c_str());
+    }
+
+    // CRC32 over the staged bytes: one sequential pass with a small fixed
+    // buffer, so this never holds the whole file in memory either.
+    File in = LittleFS.open(FIR_UPLOAD_TMP_PATH, "r");
+    if (!in) {
+        return request->reply(500, "text/plain", "Failed to read staged upload");
+    }
+    uint32_t crc = crc32Init();
+    {
+        uint8_t buf[512];
+        int n;
+        while ((n = in.read(buf, sizeof(buf))) > 0) {
+            crc = crc32Update(crc, buf, (size_t)n);
+        }
+    }
+    char crcHex[9];
+    crc32ToHex(crc32Finish(crc), crcHex);
+
+    char errReason[16] = "";
+    FirUploadStatus status = firUploadBegin(name.c_str(), (uint32_t)size, crcHex,
+                                            FIR_UPLOAD_TIMEOUT_MS, errReason, sizeof(errReason));
+    if (status == FIR_UPLOAD_TIMEOUT) {
+        in.close();
+        firUploadAbort();
+        return request->reply(504, "text/plain", "Teensy did not respond");
+    }
+    if (status == FIR_UPLOAD_ERR) {
+        in.close();
+        return request->reply(502, "application/json", firErrorJson(errReason).c_str());
+    }
+
+    // Stream the staged file to the Teensy as base64 lines - one small
+    // fixed buffer per chunk, the same heap discipline as the HTTP side.
+    in.seek(0);
+    int32_t seq = 0;
+    bool timedOut = false;
+    for (;;) {
+        uint8_t chunk[FIR_PUT_CHUNK_BYTES];
+        int r = in.read(chunk, sizeof(chunk));
+        if (r <= 0) break;
+        char b64[FIR_PUT_B64_MAX + 1];
+        base64Encode(chunk, (size_t)r, b64, sizeof(b64));
+        status = firUploadPutLine(seq, b64, FIR_UPLOAD_TIMEOUT_MS, errReason, sizeof(errReason));
+        if (status != FIR_UPLOAD_OK) {
+            timedOut = (status == FIR_UPLOAD_TIMEOUT);
+            break;
+        }
+        seq++;
+    }
+    in.close();
+
+    if (status != FIR_UPLOAD_OK) {
+        if (timedOut) {
+            firUploadAbort();
+            return request->reply(504, "text/plain", "Teensy did not respond");
+        }
+        return request->reply(502, "application/json", firErrorJson(errReason).c_str());
+    }
+
+    uint32_t finalSize = 0, finalTaps = 0;
+    status = firUploadEnd(FIR_UPLOAD_TIMEOUT_MS, &finalSize, &finalTaps, errReason, sizeof(errReason));
+    if (status == FIR_UPLOAD_TIMEOUT) {
+        firUploadAbort();
+        return request->reply(504, "text/plain", "Teensy did not respond");
+    }
+    if (status == FIR_UPLOAD_ERR) {
+        return request->reply(502, "application/json", firErrorJson(errReason).c_str());
+    }
+
+    // The upload just changed the SD's file set - invalidate the cache so
+    // an immediate GET /fir/files sees it (the standing "first list after a
+    // change is stale" trap).
+    requestFirFilesRefresh();
+
+    JsonDocument doc;
+    doc["name"] = name;
+    doc["size"] = finalSize;
+    doc["taps"] = finalTaps;
+    String body;
+    serializeJson(doc, body);
+    return request->reply(200, "application/json", body.c_str());
+}
+
+esp_err_t handleDeleteFirFile(PsychicRequest *request) {
+    if (!request->hasParam("name")) {
+        return request->reply(400, "text/plain", "Missing name parameter");
+    }
+    String name = request->getParam("name")->value();
+    if (name.length() == 0 || !isValidFirFilename(name)) {
+        return request->reply(400, "text/plain", "Invalid FIR filename");
+    }
+
+    if (isRecordingActive()) {
+        return request->reply(409, "application/json", firErrorJson("recording").c_str());
+    }
+
+    // Refuse to delete a file any preset's output still references (copied
+    // out under the config lock so nothing holds a pointer into
+    // current_config past its scope).
+    char referencingPresets[MAX_PRESETS][PRESET_NAME_MAX_LEN];
+    int referencingCount = 0;
+    {
+        ConfigLock lock;
+        for (int p = 0; p < MAX_PRESETS; p++) {
+            const Preset& preset = current_config.presets[p];
+            if (preset.name[0] == '\0') continue;
+            for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
+                if (strcmp(preset.outputs[ch].fir, name.c_str()) == 0) {
+                    strlcpy(referencingPresets[referencingCount], preset.name, PRESET_NAME_MAX_LEN);
+                    referencingCount++;
+                    break;
+                }
+            }
+        }
+    }
+    if (referencingCount > 0) {
+        JsonDocument doc;
+        doc["error"] = "referenced";
+        JsonArray arr = doc.createNestedArray("presets");
+        for (int i = 0; i < referencingCount; i++) arr.add(referencingPresets[i]);
+        String body;
+        serializeJson(doc, body);
+        return request->reply(409, "application/json", body.c_str());
+    }
+
+    if (!firUploadTryBegin()) {
+        return request->reply(409, "application/json", firErrorJson("busy").c_str());
+    }
+    char errReason[16] = "";
+    bool notFound = false;
+    FirUploadStatus status = firUploadDelete(name.c_str(), FIR_UPLOAD_TIMEOUT_MS,
+                                             errReason, sizeof(errReason), &notFound);
+    firUploadRelease();
+
+    if (status == FIR_UPLOAD_TIMEOUT) {
+        return request->reply(504, "text/plain", "Teensy did not respond");
+    }
+    if (status == FIR_UPLOAD_ERR) {
+        if (notFound) return request->reply(404, "text/plain", "No such FIR file");
+        return request->reply(502, "application/json", firErrorJson(errReason).c_str());
+    }
+
+    requestFirFilesRefresh();
+    JsonDocument doc;
+    doc["name"] = name;
+    String body;
+    serializeJson(doc, body);
+    return request->reply(200, "application/json", body.c_str());
+}

@@ -8,6 +8,7 @@
 // Teensy-side parser. Keep it that way.
 
 #include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 
 // Output channel commands (V1, docs/CHANNEL_ARCHITECTURE.md). Channels are
@@ -70,6 +71,52 @@
 #define CMD_SET_FIR_ENABLED "setFirEnabled"
 #define CMD_LOAD_FIR_FILES "loadFirFiles"
 #define CMD_GET_FILES "getFiles"
+
+// FIR file upload/delete (docs/AUTO_FIR_CONTRACTS.md, Slice A). Raw file
+// bytes stream from the browser through the ESP to the Teensy's SD card in
+// base64-encoded lines, so no side ever needs to buffer the whole file.
+//
+//   firPutBegin <name> <size> <crc32>  -> FIRPUT BEGIN <name>
+//                                      |  FIRPUT ERR <reason>
+//   firPut <seq> <base64>              -> FIRPUT ACK <seq>   (every
+//                                         FIR_PUT_ACK_STRIDE'th line and the
+//                                         final line)
+//                                      |  FIRPUT ERR <reason> (aborts)
+//   firPutEnd                          -> FIRPUT OK <name> <size> <taps>
+//                                      |  FIRPUT ERR <reason>
+//   firPutAbort                        -> FIRPUT STOP
+//   firDelete <name>                   -> FIRDEL OK <name>
+//                                      |  FIRDEL ERR <reason>
+//
+// seq counts from 0, decimal. base64 payload is <= FIR_PUT_B64_MAX chars
+// (FIR_PUT_CHUNK_BYTES raw bytes), so a full-pool file is ~1,100 lines. Flow
+// control: the ESP sends at most FIR_PUT_ACK_STRIDE lines beyond the last
+// ACK'd seq. crc32 is IEEE 802.3 (reflected, init/final XOR 0xFFFFFFFF),
+// 8 lowercase hex chars, over the raw file bytes.
+//
+// ERR reasons (single tokens): badName, badSize (bad/mismatched size, incl.
+// a non-multiple-of-4 .bin or a firPut that would overrun the claimed size),
+// badSeq (gap or repeat), badB64 (malformed or oversize payload), crc
+// (mismatch, or a malformed crc32 argument), sd, noSpace, busy (recording or
+// another transfer active), state (firPut/firPutEnd without a live Begin).
+// firDelete adds notfound (no such file - reusing the recorder's token
+// above, not part of the firPut vocabulary).
+//
+// The Teensy writes FIR_UPLOAD_TMP_NAME on the SD, and on firPutEnd verifies
+// byte count and CRC, removes any existing target, renames, then replies. A
+// failed verify leaves the SD exactly as it was (temp file removed).
+#define CMD_FIR_PUT_BEGIN "firPutBegin"
+#define CMD_FIR_PUT "firPut"
+#define CMD_FIR_PUT_END "firPutEnd"
+#define CMD_FIR_PUT_ABORT "firPutAbort"
+#define CMD_FIR_DELETE "firDelete"
+
+#define FIR_UPLOAD_MIN_SIZE 4
+#define FIR_UPLOAD_MAX_SIZE 51200
+#define FIR_PUT_CHUNK_BYTES 45   // raw bytes per firPut line (3-byte aligned)
+#define FIR_PUT_B64_MAX 60       // 4/3 * FIR_PUT_CHUNK_BYTES
+#define FIR_PUT_ACK_STRIDE 16    // ack cadence, and the ESP's flow-control window
+#define FIR_UPLOAD_TMP_NAME "upload.tmp"
 
 // Preset-level master delay toggle: setDelaysEnabled <0|1>
 #define CMD_SET_DELAYS_ENABLED "setDelaysEnabled"
@@ -162,6 +209,41 @@
 #define PROBE_F0_HZ 60.0
 #define PROBE_F1_HZ 8000.0
 
+// Measurement sweep probe (docs/AUTO_FIR_CONTRACTS.md). Reuses the delay
+// probe's waveform/soloing/keepalive machinery, parameterized at runtime
+// instead of the PROBE_* constants above (which the delay probe keeps using
+// unchanged):
+//
+//   startSweepProbe <mask> <level%> <f0> <f1> <chirpSamples> <nPasses>
+//     -> SWEEP START <mask> <nPasses> <preRoll> <spacing> <chirpSamples>
+//                    <f0> <f1> <fade>
+//     |  SWEEP CHIRP <slot> <ch>
+//     |  SWEEP WARN unrouted <ch>
+//     |  SWEEP DONE | SWEEP STOP | SWEEP ERR <reason>
+//
+// There is no separate stop command: stopDelayProbe stops whichever kind of
+// probe (delay or sweep) is currently active, since both share the one
+// underlying chirp sequencer and are mutually exclusive.
+//
+// Slot order: masked outputs ascending, then the same list repeated
+// nPasses times - NOT reversed like the delay probe, since sweep passes are
+// a pass-to-pass drift/consistency check on the SAME output rather than a
+// drift-cancelling forward/reverse pair.
+//
+// spacing = chirpSamples + SWEEP_MIN_TAIL_SAMPLES (>= 1.5s IR tail at
+// device rate). The values echoed in SWEEP START are the single source of
+// truth for the browser's reference generator - it never assumes compiled-in
+// constants. ERR reasons: emptyMask, badParam (f0/f1/chirpSamples/nPasses
+// out of the ranges DelayProbe.cpp enforces), aborted firLoad (a FIR load
+// interrupted the sequence, like the delay probe).
+#define CMD_START_SWEEP_PROBE "startSweepProbe"
+#define SWEEP_MIN_TAIL_SAMPLES 66150UL
+#define SWEEP_MAX_PASSES 16
+#define SWEEP_DEFAULT_F0_HZ 20.0
+#define SWEEP_DEFAULT_F1_HZ 20000.0
+#define SWEEP_DEFAULT_CHIRP_SAMPLES 131072UL
+#define SWEEP_DEFAULT_N_PASSES 2
+
 // SD recorder / player. Recordings live in /recordings on the Teensy's SD
 // card as 16-bit 44.1kHz stereo WAVs named rec-NNN.wav; filenames on the
 // wire are bare names (no paths). Only available while a card is present,
@@ -240,6 +322,150 @@ static inline size_t teensyBuildMessage(char* out, size_t outSize, const char* c
         offset = outSize - 1;
     }
     return offset;
+}
+
+// --- CRC32 (IEEE 802.3: reflected, init/final XOR 0xFFFFFFFF) ---
+// Used by the FIR upload path (docs/AUTO_FIR_CONTRACTS.md) to verify a
+// transferred file. Implemented once here so the ESP (encoder) and the
+// Teensy (verifier) can never drift apart, and so the native test suite
+// exercises the exact bytes both firmwares run.
+
+// Feed raw bytes through a running CRC32 accumulator. Seed with
+// crc32Init() and finish with crc32Finish() to get the standard value.
+static inline uint32_t crc32Init(void) { return 0xFFFFFFFFu; }
+
+static inline uint32_t crc32Update(uint32_t crc, const uint8_t* data, size_t len) {
+    for (size_t i = 0; i < len; i++) {
+        crc ^= (uint32_t)data[i];
+        for (int bit = 0; bit < 8; bit++) {
+            uint32_t mask = (uint32_t)(-(int32_t)(crc & 1u));
+            crc = (crc >> 1) ^ (0xEDB88320u & mask);
+        }
+    }
+    return crc;
+}
+
+static inline uint32_t crc32Finish(uint32_t crc) { return crc ^ 0xFFFFFFFFu; }
+
+// One-shot helper over a whole buffer.
+static inline uint32_t crc32Of(const uint8_t* data, size_t len) {
+    return crc32Finish(crc32Update(crc32Init(), data, len));
+}
+
+// 8 lowercase hex chars + a terminating null; out must be >= 9 bytes.
+static inline void crc32ToHex(uint32_t crc, char* out) {
+    static const char digits[] = "0123456789abcdef";
+    for (int i = 0; i < 8; i++) {
+        out[i] = digits[(crc >> (28 - i * 4)) & 0xFu];
+    }
+    out[8] = '\0';
+}
+
+// Strict parse of exactly 8 lowercase hex chars (nothing more, nothing
+// less - uppercase or any other length is rejected, matching the wire
+// format). Returns false without touching *out on malformed input.
+static inline bool crc32FromHex(const char* s, uint32_t* out) {
+    if (s == NULL || strlen(s) != 8) return false;
+    uint32_t v = 0;
+    for (int i = 0; i < 8; i++) {
+        char c = s[i];
+        int d;
+        if (c >= '0' && c <= '9') d = c - '0';
+        else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+        else return false;
+        v = (v << 4) | (uint32_t)d;
+    }
+    *out = v;
+    return true;
+}
+
+// --- base64 (standard alphabet, '=' padding) ---
+// Used to carry raw FIR bytes over the line-based UART protocol. Shared here
+// (rather than reusing e.g. the ESP32 Arduino core's encode-only `base64`
+// class) so the encoder and decoder are provably the same algorithm on both
+// firmwares, and so the native test suite can round-trip real payloads.
+
+static inline int base64DecodeChar(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+// Encodes len bytes of data into out (which must be able to hold at least
+// base64EncodedLength(len) + 1 bytes, including the terminating null).
+// Returns the encoded length, or 0 if it wouldn't fit in outCap.
+static inline size_t base64EncodedLength(size_t len) {
+    return ((len + 2) / 3) * 4;
+}
+
+static inline size_t base64Encode(const uint8_t* data, size_t len, char* out, size_t outCap) {
+    static const char table[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t needed = base64EncodedLength(len);
+    if (needed + 1 > outCap) return 0;
+    size_t o = 0, i = 0;
+    while (i + 3 <= len) {
+        uint32_t n = ((uint32_t)data[i] << 16) | ((uint32_t)data[i + 1] << 8) | data[i + 2];
+        out[o++] = table[(n >> 18) & 0x3F];
+        out[o++] = table[(n >> 12) & 0x3F];
+        out[o++] = table[(n >> 6) & 0x3F];
+        out[o++] = table[n & 0x3F];
+        i += 3;
+    }
+    size_t rem = len - i;
+    if (rem == 1) {
+        uint32_t n = (uint32_t)data[i] << 16;
+        out[o++] = table[(n >> 18) & 0x3F];
+        out[o++] = table[(n >> 12) & 0x3F];
+        out[o++] = '=';
+        out[o++] = '=';
+    } else if (rem == 2) {
+        uint32_t n = ((uint32_t)data[i] << 16) | ((uint32_t)data[i + 1] << 8);
+        out[o++] = table[(n >> 18) & 0x3F];
+        out[o++] = table[(n >> 12) & 0x3F];
+        out[o++] = table[(n >> 6) & 0x3F];
+        out[o++] = '=';
+    }
+    out[o] = '\0';
+    return o;
+}
+
+// Decodes a base64 string (length must be a multiple of 4; '=' padding only
+// valid in the final two positions) into out. Returns the decoded length, or
+// -1 on any malformed input (bad length, character, or padding placement) or
+// if it wouldn't fit in outCap - the caller maps that to a "badB64" error.
+static inline long base64Decode(const char* in, size_t inLen, uint8_t* out, size_t outCap) {
+    if (inLen == 0 || (inLen % 4) != 0) return -1;
+    size_t o = 0;
+    for (size_t g = 0; g < inLen; g += 4) {
+        bool lastGroup = (g + 4 == inLen);
+        int quad[4];
+        int padCount = 0;
+        for (int k = 0; k < 4; k++) {
+            char c = in[g + k];
+            if (c == '=') {
+                if (!lastGroup || k < 2) return -1; // '=' only pads the last group's tail
+                padCount++;
+                quad[k] = 0;
+            } else {
+                if (padCount > 0) return -1; // no data after a pad char
+                int v = base64DecodeChar(c);
+                if (v < 0) return -1;
+                quad[k] = v;
+            }
+        }
+        uint32_t n = ((uint32_t)quad[0] << 18) | ((uint32_t)quad[1] << 12) |
+                     ((uint32_t)quad[2] << 6) | (uint32_t)quad[3];
+        int bytesOut = 3 - padCount;
+        if (o + (size_t)bytesOut > outCap) return -1;
+        out[o++] = (uint8_t)((n >> 16) & 0xFF);
+        if (bytesOut >= 2) out[o++] = (uint8_t)((n >> 8) & 0xFF);
+        if (bytesOut >= 3) out[o++] = (uint8_t)(n & 0xFF);
+    }
+    return (long)o;
 }
 
 #endif // TEENSY_PROTOCOL_H
