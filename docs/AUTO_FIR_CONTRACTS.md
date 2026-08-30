@@ -37,19 +37,27 @@ probe schedule contract).
   buffers the whole file (heap discipline; the /restore stack-size lesson
   applies: this handler declares its own httpd stack size ≥ 10240).
 - Success: `200 {"name": "...", "size": N, "taps": N}` — taps as reported by
-  the Teensy's `FIRPUT OK`. The ESP invalidates its cached SD file list before
-  responding, so an immediate `GET /fir/files` sees the new file.
+  the Teensy's `FIRPUT OK`. Before responding, the ESP re-reads the SD file
+  list **and waits for the reply to land**, so an immediate `GET /fir/files`
+  sees the new file. Merely *requesting* a refresh is not enough: reads are
+  served from whatever is cached at that instant and the reply arrives later
+  on the loop task, which left the next read one refresh behind.
 - Errors: `400` bad name/size, `409 {"error":"recording"}` while the recorder
   is busy (SD contention), `409 {"error":"busy"}` if another upload is in
   flight (one at a time), `502` with the Teensy's `FIRPUT ERR` reason if the
   device rejects it, `504` on UART timeout (no ACK for 5 s).
 
+**`GET /fir/files`** serves the cache and kicks an asynchronous refresh for
+the next read — except on the very first read after a boot, when nothing has
+ever been cached: an empty cache is indistinguishable from "the card has no
+FIR files", so that one call waits for a real answer rather than lying.
+
 **`DELETE /fir/files?name=<file>`**
 
 - `409 {"error":"referenced","presets":[...]}` if any preset's output
-  references the name; otherwise relays `firDelete`, invalidates the cached
-  list, returns `200 {"name":"..."}`. `404` if the device reports no such
-  file. Same `409 recording` guard.
+  references the name; otherwise relays `firDelete`, re-reads the cached list
+  and waits for it (as upload does), returns `200 {"name":"..."}`. `404` if
+  the device reports no such file. Same `409 recording` guard.
 
 ### UART grammar (ESP → Teensy; replies Teensy → ESP)
 

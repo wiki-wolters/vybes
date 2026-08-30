@@ -45,6 +45,11 @@ static SemaphoreHandle_t firCacheMutex = nullptr;
 static char firFilesPending[FIR_CACHE_MAX];
 static size_t firFilesPendingLen = 0;
 static bool collectingFiles = false;
+// Bumped every time an "EOT" commits a list into firFilesCache. Lets a caller
+// that just changed the file set wait for its own refresh to land instead of
+// serving the cache it already knows is stale - see refreshFirFilesAndWait().
+// Starts at 0, so "never populated" is distinguishable from "refreshed once".
+static uint32_t firFilesGeneration = 0;
 
 // Recordings list cache, same scheme, from "RECFILES <sd> ... EOT" replies.
 // Guarded by firCacheMutex like everything else the RX path caches.
@@ -355,6 +360,34 @@ long getCachedFirFileTaps(const char* name) {
 
 void requestFirFilesRefresh() {
     sendToTeensy(CMD_GET_FILES, nullptr);
+}
+
+bool firFilesCacheIsPopulated() {
+    xSemaphoreTake(firCacheMutex, portMAX_DELAY);
+    const bool populated = firFilesGeneration > 0;
+    xSemaphoreGive(firCacheMutex);
+    return populated;
+}
+
+bool refreshFirFilesAndWait(unsigned long timeoutMs) {
+    // Snapshot the generation BEFORE asking, or a reply that lands between
+    // the send and the snapshot would be invisible and we'd wait out the
+    // whole timeout for a refresh that already happened.
+    xSemaphoreTake(firCacheMutex, portMAX_DELAY);
+    const uint32_t seen = firFilesGeneration;
+    xSemaphoreGive(firCacheMutex);
+
+    sendToTeensy(CMD_GET_FILES, nullptr);
+
+    const unsigned long start = millis();
+    for (;;) {
+        xSemaphoreTake(firCacheMutex, portMAX_DELAY);
+        const bool landed = firFilesGeneration != seen;
+        xSemaphoreGive(firCacheMutex);
+        if (landed) return true;
+        if (millis() - start >= timeoutMs) return false;
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
 }
 
 // --- SD recorder / player state ---
@@ -795,6 +828,7 @@ static void handleTeensyLine(const char* line) {
             xSemaphoreTake(firCacheMutex, portMAX_DELAY);
             memcpy(firFilesCache, firFilesPending, firFilesPendingLen);
             firFilesCache[firFilesPendingLen] = '\0';
+            firFilesGeneration++;
             xSemaphoreGive(firCacheMutex);
             collectingFiles = false;
             DebugSerial.println("FIR file list updated");

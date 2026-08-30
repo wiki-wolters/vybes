@@ -17,6 +17,10 @@ using namespace ArduinoJson;
 // must stay under TEENSY_MSG_MAX or buildMessage truncates it.
 #define FIR_FILENAME_MAX FIR_FILENAME_LEN
 
+// One UART round-trip for the file list. Only ever waited on after the file
+// set changed, or on the very first read of an unpopulated cache.
+#define FIR_FILES_REFRESH_TIMEOUT_MS 2000UL
+
 bool isValidFirFilename(const String& filename) {
     if (filename.length() > FIR_FILENAME_MAX) {
         return false;
@@ -85,7 +89,15 @@ esp_err_t handleGetFirFiles(PsychicRequest *request) {
     // The file list is served from a cache that is refreshed asynchronously
     // over the Teensy link (at boot, when the Teensy reboots, and after each
     // request so the next fetch is fresh).
-    requestFirFilesRefresh();
+    if (!firFilesCacheIsPopulated()) {
+        // Nothing has ever been cached, so serving it now would report "no
+        // FIR files" rather than "not known yet" - the long-standing trap
+        // where the first call after a boot lies. Wait this one out; every
+        // later read stays on the fast asynchronous path below.
+        refreshFirFilesAndWait(FIR_FILES_REFRESH_TIMEOUT_MS);
+    } else {
+        requestFirFilesRefresh();
+    }
 
     // strtok modifies its input, so work on a copy of the cache (a stack
     // copy - this handler runs concurrently on both server tasks)
@@ -431,10 +443,14 @@ esp_err_t handleFirUploadComplete(PsychicRequest *request) {
         return request->reply(502, "application/json", firErrorJson(errReason).c_str());
     }
 
-    // The upload just changed the SD's file set - invalidate the cache so
-    // an immediate GET /fir/files sees it (the standing "first list after a
-    // change is stale" trap).
-    requestFirFilesRefresh();
+    // The upload just changed the SD's file set. Wait for the refreshed list
+    // to actually land: requesting it and returning would leave the very next
+    // GET /fir/files serving the pre-upload cache, since reads are served from
+    // whatever is cached now and the reply arrives on the loop task later.
+    // Worth one round-trip on a path that already took seconds. A timeout is
+    // not an upload failure - the file is on the card either way - so the
+    // reply stays 200 and the next read reconciles.
+    refreshFirFilesAndWait(FIR_FILES_REFRESH_TIMEOUT_MS);
 
     JsonDocument doc;
     doc["name"] = name;
@@ -504,7 +520,8 @@ esp_err_t handleDeleteFirFile(PsychicRequest *request) {
         return request->reply(502, "application/json", firErrorJson(errReason).c_str());
     }
 
-    requestFirFilesRefresh();
+    // Same as upload: the caller must not see the deleted file still listed.
+    refreshFirFilesAndWait(FIR_FILES_REFRESH_TIMEOUT_MS);
     JsonDocument doc;
     doc["name"] = name;
     String body;

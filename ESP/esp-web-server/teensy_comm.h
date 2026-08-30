@@ -54,7 +54,20 @@ void teensyCommLoop();
 // yet) under the cache lock, so it is safe to call from any task. Returns
 // the list length.
 size_t copyCachedFirFiles(char* dst, size_t dstSize);
+// Fire-and-forget: asks the Teensy for the list and returns immediately, so
+// the *next* fetch is fresh. A read taken straight after this one still sees
+// the old cache - use refreshFirFilesAndWait() when you just changed the file
+// set and the caller must observe its own change.
 void requestFirFilesRefresh();
+// Asks for the list and blocks until the reply has been committed to the
+// cache (or timeoutMs elapses; returns whether it landed). Costs one UART
+// round-trip, so it belongs on the mutating paths - upload and delete - not
+// on every read.
+bool refreshFirFilesAndWait(unsigned long timeoutMs);
+// False until the first list reply has ever been committed. The cache reads
+// as an empty list before that, which is indistinguishable from "the card
+// really has no FIR files" - the standing "first call after boot lies" trap.
+bool firFilesCacheIsPopulated();
 
 // Per-output result of the last FIR load. Cleared when a load is requested,
 // repopulated from the Teensy's FIRERR lines. Returns false when the output
