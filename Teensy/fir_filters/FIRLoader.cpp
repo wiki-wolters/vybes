@@ -1,5 +1,4 @@
 #include "FIRLoader.h"
-#include <new>
 #ifndef VYBES_NATIVE
 #include <SPI.h> // Usually needed for SD card
 
@@ -16,66 +15,76 @@ long FIRLoader::countTxtTaps(File& file) {
 }
 #endif // VYBES_NATIVE
 
-// See the header comment: exact frame count from the WAV header chunks only.
-long FIRLoader::countWavTaps(CoeffSource& src, const String& filename) {
-    if (src.size() < 44) {
-        return 0;
-    }
+// --- Shared RIFF chunk walk ---
+// The tap counter and the stream reader both need the same facts out of a
+// WAV header: the fmt fields and the data chunk's position and size. One
+// walk serves both (they used to carry separate copies of this loop, and
+// fixes like the failed-seek guard had to land twice); what each caller
+// tolerates - a missing fmt, a truncated data chunk - stays caller policy.
+
+namespace {
+struct WavHeader {
+    uint16_t audioFormat = 0;
+    uint16_t numChannels = 0;
+    uint32_t sampleRate = 0;
+    uint16_t bitsPerSample = 0;
+    bool fmtFound = false;      // a fmt chunk of at least the 16 core bytes
+    uint32_t dataPos = 0;       // first byte of sample data
+    uint32_t dataSize = 0;      // declared data chunk size
+    bool dataFound = false;
+    bool dataTruncated = false; // declared size runs past the end of the file
+};
+} // namespace
+
+// Returns false when this isn't a RIFF/WAVE file at all (too small, or the
+// magic is missing); everything else is reported through the out fields.
+static bool walkWavChunks(CoeffSource& src, WavHeader& h) {
+    if (src.size() < 44) return false;
 
     char riff_id[4];
     char wave_id[4];
     src.seek(0);
-    if (src.read(riff_id, 4) != 4) return 0;
+    if (src.read(riff_id, 4) != 4) return false;
     src.seek(8);
-    if (src.read(wave_id, 4) != 4) return 0;
+    if (src.read(wave_id, 4) != 4) return false;
     if (strncmp(riff_id, "RIFF", 4) != 0 || strncmp(wave_id, "WAVE", 4) != 0) {
-        logError("Not a valid WAV file (missing RIFF/WAVE): " + filename);
-        return 0;
+        return false;
     }
 
     src.seek(12); // Move past 'RIFF', size, and 'WAVE'
-    uint16_t bitsPerSample = 0;
-    uint16_t numChannels = 1;
-    bool fmtChunkFound = false;
-    uint32_t dataChunkSize = 0;
-    bool dataChunkFound = false;
-
-    while (src.available() && !(fmtChunkFound && dataChunkFound)) {
+    while (src.available() && !(h.fmtFound && h.dataFound)) {
         char chunk_id[4];
         uint32_t chunk_size;
         if (src.read(chunk_id, 4) != 4) break;
-        if (src.read(&chunk_size, 4) != 4) break;
+        if (src.read((uint8_t*)&chunk_size, 4) != 4) break;
 
-        if (strncmp(chunk_id, "fmt ", 4) == 0) {
+        if (strncmp(chunk_id, "fmt ", 4) == 0 && chunk_size >= 16) {
             uint64_t fmt_data_start = src.position();
-            // numChannels is at offset 2, bitsPerSample at offset 14
-            src.seek(fmt_data_start + 2);
-            src.read((uint8_t*)&numChannels, 2);
-            if (numChannels == 0) numChannels = 1; // Safety check
+            if (src.read((uint8_t*)&h.audioFormat, 2) != 2) break;
+            if (src.read((uint8_t*)&h.numChannels, 2) != 2) break;
+            if (src.read((uint8_t*)&h.sampleRate, 4) != 4) break;
+            // Skip byte rate (4 bytes) and block align (2 bytes)
             src.seek(fmt_data_start + 14);
-            src.read((uint8_t*)&bitsPerSample, 2);
-            fmtChunkFound = true;
-            src.seek(fmt_data_start + chunk_size);
+            if (src.read((uint8_t*)&h.bitsPerSample, 2) != 2) break;
+            h.fmtFound = true;
+            // Skip any remaining fmt chunk data (e.g. extended format info)
+            if (!src.seek(fmt_data_start + chunk_size)) break;
         } else {
             if (strncmp(chunk_id, "data", 4) == 0) {
+                h.dataPos = (uint32_t)src.position();
+                h.dataSize = chunk_size;
+                h.dataFound = true;
                 // A declared size past the end of the file means the file is
-                // truncated or the header is corrupt. Report "unknown" rather
-                // than a count derived from it: an inflated figure would
-                // otherwise drive the shared pool accounting and the load
-                // allocation. The loader rejects such a file outright - a
-                // truncated impulse response is a different filter, not a
-                // shorter one.
+                // truncated or the header is corrupt; the position past it is
+                // meaningless, so stop here and let the caller reject.
                 if (chunk_size > src.size() - src.position()) {
-                    logError("Data chunk (" + String(chunk_size) +
-                             " bytes) runs past the end of: " + filename);
-                    return 0;
+                    h.dataTruncated = true;
+                    break;
                 }
-                dataChunkSize = chunk_size;
-                dataChunkFound = true;
             }
-            // Skip the chunk body ('data' included - only its size matters).
-            // A failed seek leaves the position untouched, which would re-read
-            // this same header forever - stop instead.
+            // Skip the chunk body ('data' included - only its size and
+            // position matter). A failed seek leaves the position untouched,
+            // which would re-read this same header forever - stop instead.
             if (!src.seek(src.position() + chunk_size)) break;
         }
         // Handle odd-sized chunks (must be word-aligned)
@@ -83,30 +92,47 @@ long FIRLoader::countWavTaps(CoeffSource& src, const String& filename) {
             src.seek(src.position() + 1);
         }
     }
+    return true;
+}
 
-    if (!dataChunkFound) {
+// See the header comment: exact frame count from the WAV header chunks only.
+long FIRLoader::countWavTaps(CoeffSource& src, const String& filename) {
+    WavHeader h;
+    if (!walkWavChunks(src, h)) {
+        logError("Not a valid WAV file (missing RIFF/WAVE): " + filename);
+        return 0;
+    }
+    if (!h.dataFound) {
         logError("Could not find 'data' chunk to count taps in: " + filename);
         return 0;
     }
-
-    long count;
-    if (fmtChunkFound) {
-        // Only whole-byte sample widths can be counted (the loader supports
-        // 8/16/32). Anything narrower would make the divisor below zero, so
-        // report "unknown" rather than dividing by it - the caller falls back
-        // to its own estimate and the reader rejects the file by bit depth.
-        uint32_t bytesPerFrame = (uint32_t)(bitsPerSample / 8) * numChannels;
-        if (bitsPerSample % 8 != 0 || bytesPerFrame == 0) {
-            logError("Unsupported bit depth (" + String(bitsPerSample) +
-                     ") counting taps in: " + filename);
-            return 0;
-        }
-        count = (long)(dataChunkSize / bytesPerFrame);
-    } else {
-        // Fallback for safety, assume 16-bit mono if fmt chunk is weird
-        count = dataChunkSize / 2;
+    // Report "unknown" rather than a count derived from a truncated data
+    // chunk: an inflated figure would otherwise drive the shared pool
+    // accounting and the load allocation. The loader rejects such a file
+    // outright - a truncated impulse response is a different filter, not a
+    // smaller one.
+    if (h.dataTruncated) {
+        logError("Data chunk (" + String(h.dataSize) +
+                 " bytes) runs past the end of: " + filename);
+        return 0;
     }
-    return count;
+
+    if (!h.fmtFound) {
+        // Fallback for safety, assume 16-bit mono if fmt chunk is weird
+        return h.dataSize / 2;
+    }
+    // Only whole-byte sample widths can be counted (the loader supports
+    // 8/16/32). Anything narrower would make the divisor below zero, so
+    // report "unknown" rather than dividing by it - the caller falls back
+    // to its own estimate and the reader rejects the file by bit depth.
+    uint16_t channels = (h.numChannels == 0) ? 1 : h.numChannels; // safety check
+    uint32_t bytesPerFrame = (uint32_t)(h.bitsPerSample / 8) * channels;
+    if (h.bitsPerSample % 8 != 0 || bytesPerFrame == 0) {
+        logError("Unsupported bit depth (" + String(h.bitsPerSample) +
+                 ") counting taps in: " + filename);
+        return 0;
+    }
+    return (long)(h.dataSize / bytesPerFrame);
 }
 
 // See the header comment: token count with the TXT reader's delimiter set.
@@ -197,127 +223,33 @@ uint16_t FIRLoader::Stream::read(float* dst, uint16_t want) {
     }
 }
 
-// Chunk walk for the reader: unlike the counter this also resolves the
-// sample encoding and validates it, since these are the formats the
+// Chunk walk for the reader: unlike the counter this insists on a fmt chunk
+// and validates the sample encoding, since these are the formats the
 // conversions in readWav() can actually handle.
 bool FIRLoader::Stream::prepareWav() {
-    if (src->size() < 44) {
-        logError("WAV file too small (less than minimum header size).");
+    WavHeader h;
+    if (!walkWavChunks(*src, h)) {
+        logError("Invalid WAV file (RIFF/WAVE header missing or too small)");
         return false;
     }
-
-    src->seek(0);
-
-    // Read and validate RIFF header
-    char riff_id[4];
-    uint32_t file_size;
-    char wave_id[4];
-
-    if (src->read(riff_id, 4) != 4) {
-        logError("Failed to read RIFF ID");
-        return false;
-    }
-    if (src->read((uint8_t*)&file_size, 4) != 4) {
-        logError("Failed to read file size");
-        return false;
-    }
-    if (src->read(wave_id, 4) != 4) {
-        logError("Failed to read WAVE ID");
-        return false;
-    }
-
-    if (strncmp(riff_id, "RIFF", 4) != 0 || strncmp(wave_id, "WAVE", 4) != 0) {
-        logError("Invalid WAV file format (RIFF/WAVE header missing)");
-        return false;
-    }
-
-    audioFormat = 0;
-    numChannels = 0;
-    bitsPerSample = 0;
-    dataSize = 0;
-    bytesProcessed = 0;
-    uint32_t sampleRate = 0;
-    uint32_t dataChunkPos = 0;
-    bool fmtFound = false;
-    bool dataFound = false;
-
-    // Parse all chunks to find fmt and data
-    src->seek(12); // Skip past RIFF header (12 bytes: "RIFF" + size + "WAVE")
-
-    while (src->available()) {
-        char chunk_id[4];
-        uint32_t chunk_size;
-
-        if (src->read(chunk_id, 4) != 4) break;
-        if (src->read((uint8_t*)&chunk_size, 4) != 4) break;
-
-        if (strncmp(chunk_id, "fmt ", 4) == 0) {
-            // Read fmt chunk
-            if (chunk_size < 16) {
-                logError("fmt chunk too small");
-                return false;
-            }
-
-            if (src->read((uint8_t*)&audioFormat, 2) != 2) break;
-            if (src->read((uint8_t*)&numChannels, 2) != 2) break;
-            if (src->read((uint8_t*)&sampleRate, 4) != 4) break;
-
-            // Skip byte rate (4 bytes) and block align (2 bytes)
-            src->seek(src->position() + 6);
-
-            if (src->read((uint8_t*)&bitsPerSample, 2) != 2) break;
-
-            fmtFound = true;
-
-            // Skip any remaining fmt chunk data (e.g., extended format info)
-            uint32_t bytesRead = 16; // We've read 16 bytes of the fmt chunk
-            if (chunk_size > bytesRead) {
-                src->seek(src->position() + (chunk_size - bytesRead));
-            }
-
-            // Handle odd-sized chunks (must be word-aligned)
-            if (chunk_size % 2 != 0) {
-                src->seek(src->position() + 1);
-            }
-
-        } else if (strncmp(chunk_id, "data", 4) == 0) {
-            // Found data chunk
-            dataChunkPos = (uint32_t)src->position(); // Right after the header
-            dataSize = chunk_size;
-            dataFound = true;
-
-            // Don't read the data yet - we might need to find fmt first
-            // Just skip past it. A failed seek leaves the position untouched,
-            // which would re-read this same header forever - stop instead.
-            if (!src->seek(src->position() + chunk_size)) break;
-            if (chunk_size % 2 != 0) {
-                src->seek(src->position() + 1);
-            }
-
-        } else {
-            // Unknown chunk, skip it (see above on the failed-seek guard)
-            if (!src->seek(src->position() + chunk_size)) break;
-            if (chunk_size % 2 != 0) {
-                src->seek(src->position() + 1);
-            }
-        }
-
-        // If we've found both chunks, we can stop searching
-        if (fmtFound && dataFound) {
-            break;
-        }
-    }
-
-    // Validate that we found both required chunks
-    if (!fmtFound) {
+    if (!h.fmtFound) {
         logError("WAV file: 'fmt ' chunk not found");
         return false;
     }
-
-    if (!dataFound) {
+    if (!h.dataFound) {
         logError("WAV file: 'data' chunk not found");
         return false;
     }
+    if (h.dataTruncated) {
+        logError("WAV file: data chunk runs past the end of the file");
+        return false;
+    }
+
+    audioFormat = h.audioFormat;
+    numChannels = h.numChannels;
+    bitsPerSample = h.bitsPerSample;
+    dataSize = h.dataSize;
+    bytesProcessed = 0;
 
     // Log format information
     Serial.print("FIR Info: WAV Format - ");
@@ -325,7 +257,7 @@ bool FIRLoader::Stream::prepareWav() {
     Serial.print(", ");
     Serial.print(numChannels);
     Serial.print(" channel(s), ");
-    Serial.print(sampleRate);
+    Serial.print(h.sampleRate);
     Serial.print(" Hz, ");
     Serial.print(bitsPerSample);
     Serial.println(" bits");
@@ -361,7 +293,7 @@ bool FIRLoader::Stream::prepareWav() {
     }
 
     // Position at the first sample; readWav() carries the cursor from here
-    src->seek(dataChunkPos);
+    src->seek(h.dataPos);
     return true;
 }
 
@@ -483,87 +415,6 @@ uint16_t FIRLoader::Stream::readBin(float* dst, uint16_t want) {
     }
     if (n < want) starvedFlag = true;
     return n;
-}
-
-// --- Whole-file load (see the header: Stream is the streaming path) ---
-
-float* FIRLoader::loadCoefficients(CoeffSource& src, const String& filename,
-                                   uint16_t& actualTaps, uint16_t maxTaps,
-                                   bool truncateToMax) {
-    actualTaps = 0;
-
-    Stream stream;
-    long coeffCount = stream.begin(src, filename);
-
-    if (coeffCount <= 0) {
-        logError("No valid coefficients found in file: " + filename);
-        return nullptr;
-    }
-
-    if (maxTaps > 0 && coeffCount > maxTaps) {
-        if (!truncateToMax) {
-            // Report the requested size so the caller can relay it (capped
-            // to the out-parameter's range; the exact figure is in the log)
-            actualTaps = (coeffCount > 65535) ? 65535 : (uint16_t)coeffCount;
-            logError("File " + filename + " has " + String(coeffCount) +
-                     " taps but only " + String(maxTaps) + " fit - load rejected");
-            return nullptr;
-        }
-        Serial.print("FIR Info: File has ");
-        Serial.print(coeffCount);
-        Serial.print(" taps, limiting to ");
-        Serial.println(maxTaps);
-        coeffCount = maxTaps;
-    }
-
-    // Uncapped callers (maxTaps == 0) take coeffCount straight from the file
-    // header, where a corrupt size can name more taps than actualTaps can
-    // report or the allocation below can size. Refuse instead of wrapping.
-    if (coeffCount > 65535) {
-        actualTaps = 65535;
-        logError("File " + filename + " has " + String(coeffCount) +
-                 " taps - more than the 65535 one filter can hold");
-        return nullptr;
-    }
-
-    if (!stream.prepare()) {
-        // Unsupported sample encoding - the count was readable, the data isn't
-        return nullptr;
-    }
-
-    // Now that we know how many coefficients we have, allocate the array
-    Serial.print("FIR Info: Attempting to allocate ");
-    Serial.print(coeffCount * sizeof(float));
-    Serial.print(" bytes for ");
-    Serial.print(coeffCount);
-    Serial.println(" taps...");
-    // nothrow: the Teensy core's operator new returns nullptr rather than
-    // throwing, but the compiler assumes throwing-new can't - without
-    // std::nothrow this null check is dead code.
-    float* coeffs = new (std::nothrow) float[coeffCount];
-    if (!coeffs) {
-        logError("Allocation failed (" + String((unsigned long)(coeffCount * sizeof(float))) +
-                 " bytes) - load rejected: " + filename);
-        return nullptr;
-    }
-    logInfo("Memory allocated successfully.");
-
-    if (stream.read(coeffs, (uint16_t)coeffCount) != (uint16_t)coeffCount) {
-        logError("Mismatch in expected and loaded coefficient count");
-        delete[] coeffs;
-        return nullptr;
-    }
-
-    actualTaps = (uint16_t)coeffCount;
-
-    // Coefficients are used verbatim - no normalization or scaling - so the
-    // filter applies exactly the response designed in the file.
-    Serial.print("FIR Info: Successfully loaded FIR coefficients: ");
-    Serial.print(filename);
-    Serial.print(" (");
-    Serial.print(actualTaps);
-    Serial.println(" taps)");
-    return coeffs;
 }
 
 void FIRLoader::logError(String message) {

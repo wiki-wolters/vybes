@@ -45,10 +45,6 @@ bool AudioFilterFIRFloat::loadCoefficients(CoeffFeed& feed, uint16_t newNumTaps)
   return true;
 }
 
-bool AudioFilterFIRFloat::reserveCoefficients(uint16_t newNumTaps) {
-  return engine.reservePending(newNumTaps);
-}
-
 size_t AudioFilterFIRFloat::reservedFloats(uint16_t numTaps) const {
   return engine.pendingFloats(numTaps);
 }

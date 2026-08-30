@@ -104,21 +104,6 @@ public:
     // the SD listing and the loader can't drift apart.
     static long countTxtTaps(CoeffSource& src);
 
-    // Load a whole file into a freshly allocated array (caller deletes it).
-    // Convenient for tests and one-shot uses, but it holds the filter in RAM
-    // twice while the engine builds - use Stream for anything loaded into a
-    // filter. 'filename' is only used for format detection (extension) and
-    // log messages.
-    //
-    // A file with more than maxTaps coefficients is truncated by default;
-    // with truncateToMax = false the load is rejected instead (returns
-    // nullptr with actualTaps set to the file's tap count, capped to
-    // uint16_t range, so the caller can report how much was asked for -
-    // this is how the shared FIR tap pool refuses oversized loads).
-    static float* loadCoefficients(CoeffSource& src, const String& filename,
-                                   uint16_t& actualTaps, uint16_t maxTaps = 0,
-                                   bool truncateToMax = true);
-
 private:
     static void logError(String message);
     static void logInfo(String message);

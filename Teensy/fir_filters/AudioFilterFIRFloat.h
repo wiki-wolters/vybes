@@ -35,16 +35,14 @@ public:
 
   // The same load split in two, so a caller loading several filters can
   // claim every buffer before any file I/O happens - see the header note on
-  // FirEngine::reservePending. reserveCoefficients allocates; fillReserved
-  // reads the feed in and commits; discardReservation drops an unused one.
-  bool reserveCoefficients(uint16_t numTaps);
-  bool fillReserved(CoeffFeed& feed);
-  void discardReservation();
-
-  // Floats reserveCoefficientsIn needs for numTaps, and the reservation
-  // itself against caller-owned storage - see FirEngine::reservePendingIn.
+  // FirEngine::reservePendingIn. reserveCoefficientsIn reserves against
+  // caller-owned storage (reservedFloats says how much for numTaps);
+  // fillReserved reads the feed in and commits; discardReservation drops an
+  // unused reservation.
   size_t reservedFloats(uint16_t numTaps) const;
   bool reserveCoefficientsIn(float* storage, uint16_t numTaps);
+  bool fillReserved(CoeffFeed& feed);
+  void discardReservation();
 
   volatile unsigned long max_update_us = 0;
 

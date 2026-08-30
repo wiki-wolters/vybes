@@ -113,11 +113,27 @@ static std::vector<uint8_t> buildWav(const std::vector<uint8_t>& dataBytes,
     return wav;
 }
 
-// Convenience: load through the FIRLoader core, returning a managed pointer
-static float* load(std::vector<uint8_t> bytes, const char* name,
-                   uint16_t& taps, uint16_t maxTaps = 0) {
+// Convenience: load a whole fixture through Stream (begin/prepare/read) -
+// the same path the firmware loads through - returning a new[]'d array
+// (caller deletes) or nullptr with taps 0 on any failure.
+static float* load(std::vector<uint8_t> bytes, const char* name, uint16_t& taps) {
+    taps = 0;
     MemorySource src(std::move(bytes));
-    return FIRLoader::loadCoefficients(src, String(name), taps, maxTaps);
+    FIRLoader::Stream stream;
+    long count = stream.begin(src, String(name));
+    if (count <= 0 || count > 65535) return nullptr;
+    if (!stream.prepare()) return nullptr;
+    float* coeffs = new float[count];
+    if (stream.read(coeffs, (uint16_t)count) != (uint16_t)count) {
+        delete[] coeffs;
+        return nullptr;
+    }
+    taps = (uint16_t)count;
+    return coeffs;
+}
+
+static float* loadText(const std::string& text, const char* name, uint16_t& taps) {
+    return load(std::vector<uint8_t>(text.begin(), text.end()), name, taps);
 }
 
 // --- WAV tests ---
@@ -334,8 +350,7 @@ static void test_count_taps_oversized_data_chunk_is_zero(void) {
 
 static void test_valid_txt_loads_exact_coefficients(void) {
     uint16_t taps = 0;
-    MemorySource src(std::string("0.5,-0.25\n1.0e-3 2\t7\n"));
-    float* coeffs = FIRLoader::loadCoefficients(src, String("coeffs.txt"), taps);
+    float* coeffs = loadText("0.5,-0.25\n1.0e-3 2\t7\n", "coeffs.txt", taps);
     TEST_ASSERT_NOT_NULL(coeffs);
     TEST_ASSERT_EQUAL_UINT16(5, taps);
     const float expected[] = {0.5f, -0.25f, 1.0e-3f, 2.0f, 7.0f};
@@ -345,8 +360,7 @@ static void test_valid_txt_loads_exact_coefficients(void) {
 
 static void test_txt_without_trailing_newline(void) {
     uint16_t taps = 0;
-    MemorySource src(std::string("0.125 -0.5"));
-    float* coeffs = FIRLoader::loadCoefficients(src, String("tail.txt"), taps);
+    float* coeffs = loadText("0.125 -0.5", "tail.txt", taps);
     TEST_ASSERT_NOT_NULL(coeffs);
     TEST_ASSERT_EQUAL_UINT16(2, taps);
     TEST_ASSERT_EQUAL_FLOAT(0.125f, coeffs[0]);
@@ -356,8 +370,7 @@ static void test_txt_without_trailing_newline(void) {
 
 static void test_empty_txt_fails_cleanly(void) {
     uint16_t taps = 123;
-    MemorySource src(std::string("  \n\t \n"));
-    float* coeffs = FIRLoader::loadCoefficients(src, String("empty.txt"), taps);
+    float* coeffs = loadText("  \n\t \n", "empty.txt", taps);
     TEST_ASSERT_NULL(coeffs);
     TEST_ASSERT_EQUAL_UINT16(0, taps);
 }
@@ -389,8 +402,7 @@ static void test_count_txt_matches_loader_tokenization(void) {
     TEST_ASSERT_EQUAL_INT32(6, counted);
 
     uint16_t taps = 0;
-    MemorySource src(text);
-    float* coeffs = FIRLoader::loadCoefficients(src, String("mixed.txt"), taps);
+    float* coeffs = loadText(text, "mixed.txt", taps);
     TEST_ASSERT_NOT_NULL(coeffs);
     TEST_ASSERT_EQUAL_UINT16((uint16_t)counted, taps);
     delete[] coeffs;
@@ -417,8 +429,7 @@ static void test_count_txt_nul_bytes_do_not_split_tokens(void) {
 
 static void test_unsupported_extension_fails_cleanly(void) {
     uint16_t taps = 123;
-    MemorySource src(std::string("0.5 0.25"));
-    float* coeffs = FIRLoader::loadCoefficients(src, String("coeffs.dat"), taps);
+    float* coeffs = loadText("0.5 0.25", "coeffs.dat", taps);
     TEST_ASSERT_NULL(coeffs);
     TEST_ASSERT_EQUAL_UINT16(0, taps);
 }
@@ -444,33 +455,10 @@ static void test_empty_bin_fails_cleanly(void) {
     TEST_ASSERT_EQUAL_UINT16(0, taps);
 }
 
-// --- reject-over-limit (the shared tap pool's refusal path) ---
-
-static void test_reject_over_limit_returns_requested_taps(void) {
-    std::vector<uint8_t> data;
-    for (int i = 0; i < 10; i++) putFloat(data, (float)i);
-    uint16_t taps = 0;
-    MemorySource src(buildWav(data));
-    float* coeffs = FIRLoader::loadCoefficients(src, String("long.wav"), taps, 4,
-                                                /*truncateToMax=*/false);
-    TEST_ASSERT_NULL(coeffs);
-    TEST_ASSERT_EQUAL_UINT16(10, taps); // reports what the file asked for
-}
-
-static void test_max_taps_limits_load(void) {
-    std::vector<uint8_t> data;
-    for (int i = 0; i < 10; i++) putFloat(data, (float)i);
-    uint16_t taps = 0;
-    float* coeffs = load(buildWav(data), "long.wav", taps, 4);
-    TEST_ASSERT_NOT_NULL(coeffs);
-    TEST_ASSERT_EQUAL_UINT16(4, taps);
-    for (int i = 0; i < 4; i++) TEST_ASSERT_EQUAL_FLOAT((float)i, coeffs[i]);
-    delete[] coeffs;
-}
-
-// --- Stream: the incremental path the FIR engine loads through ---
-// Same parse, same coefficients, but handed out a few at a time, so a
-// partition-sized pull off the SD card never needs the filter in RAM.
+// --- Stream bite-size independence ---
+// The engine pulls a partition at a time, so a chunked read must produce
+// exactly what one full-size read does - including bites that split WAV
+// frames and TXT tokens.
 
 // Drains a Stream in fixed-size bites and returns everything it produced.
 static std::vector<float> drain(FIRLoader::Stream& stream, long taps, uint16_t bite) {
@@ -487,8 +475,8 @@ static std::vector<float> drain(FIRLoader::Stream& stream, long taps, uint16_t b
     return out;
 }
 
-// Every fixture must stream to exactly what a whole-file load produces, at
-// any bite size - including bites that split WAV frames and TXT tokens.
+// Every fixture must stream to the same coefficients at any bite size,
+// with a single full-size read as the reference.
 static void assertStreamMatchesWholeFile(const std::vector<uint8_t>& bytes, const char* name) {
     uint16_t taps = 0;
     std::unique_ptr<float[]> whole(load(bytes, name, taps));
@@ -623,8 +611,6 @@ int main(int, char**) {
     RUN_TEST(test_unsupported_extension_fails_cleanly);
     RUN_TEST(test_valid_bin_loads_verbatim);
     RUN_TEST(test_empty_bin_fails_cleanly);
-    RUN_TEST(test_max_taps_limits_load);
-    RUN_TEST(test_reject_over_limit_returns_requested_taps);
     RUN_TEST(test_stream_float32_wav_matches_whole_file);
     RUN_TEST(test_stream_multichannel_wav_matches_whole_file);
     RUN_TEST(test_stream_pcm16_wav_matches_whole_file);
