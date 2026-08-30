@@ -69,6 +69,13 @@ firDelete <name>                      ->  FIRDEL OK <name> | FIRDEL ERR <reason>
 - `seq` counts from 0, decimal. Base64 payload ≤ 60 chars (45 raw bytes), so
   a full-pool file is ~1,100 lines (~7 s at 115200 baud).
 - Flow control: the ESP sends at most 16 lines beyond the last ACK'd `seq`.
+  **The receiver's UART RX buffer must hold that whole window** (16 lines x
+  75 bytes = 1,200 B; `FIR_PUT_MAX_IN_FLIGHT_BYTES` in `teensy_protocol.h`,
+  which `fir_filters.ino` static_asserts `espRxBuffer` against). A buffer
+  smaller than the window drops a line under burst and the transfer dies
+  with `badSeq` — a 512-byte buffer failed 100% of kernels over ~1,500 taps
+  on hardware (2026-08-31) while passing every native test, since the fake
+  stream has no buffer limit.
 - `crc32` is IEEE 802.3 (reflected, init `0xFFFFFFFF`, final XOR
   `0xFFFFFFFF`), 8 lowercase hex chars, computed over the raw file bytes.
 - Teensy writes to `upload.tmp` on the SD, and on `firPutEnd` verifies byte
@@ -77,6 +84,12 @@ firDelete <name>                      ->  FIRDEL OK <name> | FIRDEL ERR <reason>
 - `ERR` reasons (single tokens): `badName`, `badSize`, `badSeq` (gap or
   repeat), `badB64`, `crc`, `sd`, `noSpace`, `busy` (recording or another
   transfer active), `state` (firPut/firPutEnd without Begin).
+- **The reason reported for a failed transfer is the *first* `ERR` of that
+  transfer, not the last.** When the Teensy aborts it resets its session, so
+  every line already in flight draws its own `ERR state`; reporting the last
+  one would mask the real cause behind `state` for every failure. The ESP
+  latches the first error per single-flight op (`firFirstErrReason` in
+  `teensy_comm.cpp`).
 - Uploading never touches running filters. Overwriting a name currently
   loaded by the active preset leaves the loaded coefficients stale until the
   next assignment or preset activation — the wizard uses fresh versioned

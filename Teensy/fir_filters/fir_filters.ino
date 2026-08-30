@@ -10,6 +10,7 @@
 #include "MultibandCompressor.h"
 #include "SerialCommandRouter.h"
 #include "TeensyCommands.h"
+#include "teensy_protocol.h" // FIR_PUT_* - espRxBuffer is sized against these
 #include "OutputStream.h"
 #include "AudioFilterFIRFloat.h"
 #include "IntervalTimer.h"
@@ -382,10 +383,17 @@ void setup() {
 #undef VYBES_REGISTER_COMMAND
   router.begin(ESP_LINK_BAUD);
 
-  // Extra RX buffering so command bursts survive long SD-card reads.
+  // Extra RX buffering so command bursts survive long SD-card reads, and so
+  // a FIR upload's in-flight window fits: the ESP sends up to
+  // FIR_PUT_ACK_STRIDE firPut lines before waiting for an ACK, and if they
+  // don't all fit here a line is dropped and the transfer dies with badSeq.
+  // Lives in RAM2 (DMAMEM) because RAM1 has only ~13KB left for the stack.
   // (addMemoryForRead is on the concrete HardwareSerialIMXRT class, so it's
   // called here on Serial1 rather than inside the generic router.)
-  static uint8_t espRxBuffer[512];
+  static DMAMEM uint8_t espRxBuffer[2048];
+  static_assert(sizeof(espRxBuffer) > FIR_PUT_MAX_IN_FLIGHT_BYTES,
+                "Serial1 RX buffer must hold a full firPut flow-control "
+                "window or uploads desync with badSeq");
   Serial1.addMemoryForRead(espRxBuffer, sizeof(espRxBuffer));
 
   // Extra TX buffering: an RTA frame is 247 bytes, and the core's default
@@ -864,13 +872,15 @@ void applyDelays() {
 // can't complete - status() returns 0, which mediaPresent() reads as "card
 // removed" (SD.cpp). The false removal then made the next call here re-mount
 // the volume UNDER the recorder's open file, killing every recording ~2s in.
-// While a stream is running - or the card may still be programming just
-// after one closed - trust the mount and let the stream's own read/write
+// While a stream is running - a recording, a playback, or a FIR upload
+// holding its temp file open - or the card may still be programming just
+// after one closed, trust the mount and let the stream's own read/write
 // failures be the removal detector; the recorder already stops cleanly on a
-// failed write.
+// failed write. Probing mid-write is not harmless: SD.mediaPresent() reads
+// as card-removed during a transfer and the remount orphans the open handle.
 #define SD_PROBE_HOLDOFF_MS 500
 bool sdReady() {
-  if (sdRecorder.isActive() || sdPlayer.isActive() ||
+  if (sdRecorder.isActive() || sdPlayer.isActive() || firUploadHasOpenFile() ||
       (sdLastStreamActivityMs != 0 &&
        millis() - sdLastStreamActivityMs < SD_PROBE_HOLDOFF_MS)) {
     return sdCardInitialized;

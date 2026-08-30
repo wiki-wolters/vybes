@@ -82,6 +82,12 @@ private:
 // startup; the native test suite injects a fake. Never null after either.
 void firUploadSetStorage(FirUploadStorage* storage);
 
+// True while a transfer holds the temp file open. sdReady() has to treat this
+// like a recorder/player stream: probing SD.mediaPresent() mid-write reads as
+// card-removed and the remount orphans our open handle, which surfaces as a
+// short write (reported "noSpace"). Same trap the recorder hit in d945a7f.
+bool firUploadHasOpenFile();
+
 // SerialCommandRouter handlers (TeensyCommands.h registers these).
 void handleFirPutBegin(const String& command, String* args, int argCount, OutputStream& stream);
 void handleFirPut(const String& command, String* args, int argCount, OutputStream& stream);

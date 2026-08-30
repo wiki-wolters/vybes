@@ -92,6 +92,10 @@ void firUploadSetStorage(FirUploadStorage* s) {
     storage = s;
 }
 
+bool firUploadHasOpenFile() {
+    return session.phase == FirUploadPhase::Writing;
+}
+
 #ifdef VYBES_NATIVE
 void firUploadResetForTest() {
     if (storage) {
@@ -333,6 +337,10 @@ bool SdFirUploadStorage::openTemp() {
 
 bool SdFirUploadStorage::writeTemp(const uint8_t* data, size_t len) {
     if (!tempFile) return false;
+    // Same stamp the recorder keeps: holds sdReady()'s media probe off for a
+    // window past the last write, so the close/rename at firPutEnd is covered
+    // too (firUploadHasOpenFile() only spans the writing phase).
+    sdLastStreamActivityMs = millis();
     return tempFile.write(data, len) == len;
 }
 

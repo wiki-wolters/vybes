@@ -89,6 +89,15 @@ struct FirUploadReply {
     char reason[16] = "";
 };
 static FirUploadReply firReply;
+// The first FIRPUT ERR of the current op, latched. When the Teensy aborts a
+// transfer it resets its session, so every firPut line already on the wire
+// draws its own "ERR state" reply - and each one would overwrite
+// firReply.reason before the sender (which only looks between lines) got to
+// read it. That reported "state" for every failure and hid the badSeq/badB64/
+// noSpace that actually killed the transfer. Latching the first error keeps
+// the real cause; cleared per op in firUploadTryBegin().
+static char firFirstErrReason[sizeof(FirUploadReply::reason)] = "";
+static bool firHasFirstErr = false;
 static int32_t firLastAckedSeq = -1;
 static SemaphoreHandle_t firUploadMutex = nullptr;
 static bool firUploadBusy = false; // ESP-side single-flight guard
@@ -421,9 +430,24 @@ bool getFirLoadError(int output, char* code, size_t codeSize,
 bool firUploadTryBegin() {
     xSemaphoreTake(firUploadMutex, portMAX_DELAY);
     bool wasBusy = firUploadBusy;
-    if (!wasBusy) firUploadBusy = true;
+    if (!wasBusy) {
+        firUploadBusy = true;
+        firFirstErrReason[0] = '\0';
+        firHasFirstErr = false;
+    }
     xSemaphoreGive(firUploadMutex);
     return !wasBusy;
+}
+
+// The reason to report for a failed transfer: the latched first error when
+// there is one, else this reply's own (a begin/end that failed outright).
+static void copyFirErrReason(const FirUploadReply& reply, char* out, size_t outSize) {
+    xSemaphoreTake(firUploadMutex, portMAX_DELAY);
+    const bool haveFirst = firHasFirstErr;
+    char first[sizeof(firFirstErrReason)];
+    strlcpy(first, firFirstErrReason, sizeof(first));
+    xSemaphoreGive(firUploadMutex);
+    strlcpy(out, haveFirst ? first : reply.reason, outSize);
 }
 
 void firUploadRelease() {
@@ -502,7 +526,7 @@ FirUploadStatus firUploadBegin(const char* name, uint32_t size, const char* crc3
     xSemaphoreGive(firUploadMutex);
 
     if (strcmp(reply.kind, "err") == 0) {
-        strlcpy(errReason, reply.reason, errReasonSize);
+        copyFirErrReason(reply, errReason, errReasonSize);
         return FIR_UPLOAD_ERR;
     }
     return FIR_UPLOAD_OK;
@@ -519,8 +543,11 @@ FirUploadStatus firUploadPutLine(int32_t seq, const char* base64Payload,
         xSemaphoreTake(firUploadMutex, portMAX_DELAY);
         bool changed = firReply.seqNum != firPutConsumedSeqNum;
         bool isErr = changed && strcmp(firReply.kind, "err") == 0;
-        char reasonCopy[16];
-        strlcpy(reasonCopy, firReply.reason, sizeof(reasonCopy));
+        // Report the latched first error, not whatever "state" the lines
+        // still in flight drew after the Teensy tore the session down.
+        char reasonCopy[sizeof(firFirstErrReason)];
+        strlcpy(reasonCopy, firHasFirstErr ? firFirstErrReason : firReply.reason,
+                sizeof(reasonCopy));
         if (changed) firPutConsumedSeqNum = firReply.seqNum;
         int32_t lastAcked = firLastAckedSeq;
         xSemaphoreGive(firUploadMutex);
@@ -548,7 +575,7 @@ FirUploadStatus firUploadEnd(unsigned long timeoutMs, uint32_t* outSize, uint32_
     FirUploadReply reply;
     if (!waitForFirReply(timeoutMs, kinds, 2, &reply)) return FIR_UPLOAD_TIMEOUT;
     if (strcmp(reply.kind, "err") == 0) {
-        strlcpy(errReason, reply.reason, errReasonSize);
+        copyFirErrReason(reply, errReason, errReasonSize);
         return FIR_UPLOAD_ERR;
     }
     if (outSize) *outSize = reply.size;
@@ -655,6 +682,10 @@ static void handleTeensyLine(const char* line) {
         } else if (strncmp(rest, "ERR ", 4) == 0) {
             strlcpy(firReply.kind, "err", sizeof(firReply.kind));
             strlcpy(firReply.reason, rest + 4, sizeof(firReply.reason));
+            if (!firHasFirstErr) {
+                strlcpy(firFirstErrReason, firReply.reason, sizeof(firFirstErrReason));
+                firHasFirstErr = true;
+            }
         } else if (strcmp(rest, "STOP") == 0) {
             strlcpy(firReply.kind, "stop", sizeof(firReply.kind));
         }

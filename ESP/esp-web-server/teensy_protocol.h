@@ -116,6 +116,18 @@
 #define FIR_PUT_CHUNK_BYTES 45   // raw bytes per firPut line (3-byte aligned)
 #define FIR_PUT_B64_MAX 60       // 4/3 * FIR_PUT_CHUNK_BYTES
 #define FIR_PUT_ACK_STRIDE 16    // ack cadence, and the ESP's flow-control window
+// Longest "firPut <seq> <base64>\n" line the ESP can put on the wire:
+// command + space + seq digits + space + payload + newline. The largest
+// upload is FIR_UPLOAD_MAX_SIZE / FIR_PUT_CHUNK_BYTES ~= 1,138 lines, so 6
+// digits of seq is generous headroom.
+#define FIR_PUT_LINE_MAX (6 + 1 + 6 + 1 + FIR_PUT_B64_MAX + 1)
+// The flow-control window above lets the ESP put FIR_PUT_ACK_STRIDE lines on
+// the wire before it waits for an ACK, so the Teensy's Serial1 RX buffer has
+// to be able to hold that much. Undersize it and a burst overruns the buffer,
+// a line is lost, and the transfer dies with badSeq - which is exactly what a
+// 512-byte buffer did to every kernel over ~1,500 taps. fir_filters.ino
+// static_asserts espRxBuffer against this.
+#define FIR_PUT_MAX_IN_FLIGHT_BYTES (FIR_PUT_ACK_STRIDE * FIR_PUT_LINE_MAX)
 #define FIR_UPLOAD_TMP_NAME "upload.tmp"
 
 // Preset-level master delay toggle: setDelaysEnabled <0|1>
