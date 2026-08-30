@@ -6,6 +6,7 @@
 #include "CrossoverMath.h"       // CrossoverType
 #include "AudioFilterFIRFloat.h"
 #include "ProbeSource.h"
+#include "SdRecorder.h"
 #include "SdWavPlayer.h"
 #include "RtaFFT4096.h"
 #include "MultibandCompressor.h"
@@ -96,6 +97,7 @@ extern AudioMixer4 Left_Aux_mixer;
 extern AudioMixer4 Right_Aux_mixer;
 extern AudioMixer4 Generator_mixer;
 extern ProbeSource probeSource;
+extern SdRecorder sdRecorder;
 extern SdWavPlayer sdPlayer;
 
 // Telemetry sources (TelemetryStreams.cpp reads these for its frames)
@@ -106,6 +108,11 @@ extern PeakMeter inputMeter;
 // Set so recorderStatusLoop() sends a fresh "REC STATE" line on its next
 // pass (the probe stopping SD playback sets it too).
 extern bool recStateDirty;
+
+// Last time the recorder or player had a file open; sdReady() holds off
+// media-presence probes for a window past this (see the comments at both
+// definitions).
+extern unsigned long sdLastStreamActivityMs;
 
 // Shared sketch services, defined in fir_filters.ino:
 
