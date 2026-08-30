@@ -99,9 +99,9 @@ static bool firUploadBusy = false; // ESP-side single-flight guard
 // test suite); this wrapper just adds the debug log on truncation.
 static size_t buildMessage(char* out, size_t outSize, const char* command,
                            const char* p1, const char* p2, const char* p3, const char* p4,
-                           const char* p5) {
+                           const char* p5, const char* p6) {
     bool truncated = false;
-    size_t offset = teensyBuildMessage(out, outSize, command, p1, p2, p3, p4, p5, &truncated);
+    size_t offset = teensyBuildMessage(out, outSize, command, p1, p2, p3, p4, p5, p6, &truncated);
     if (truncated) {
         DebugSerial.print("Teensy command truncated: ");
         DebugSerial.println(out);
@@ -234,9 +234,11 @@ static bool enqueueMessage(const char* msg) {
 // --- Public send API ---
 
 bool sendToTeensy(const char* command, const char* param1, const char* param2,
-                  const char* param3, const char* param4, const char* param5) {
+                  const char* param3, const char* param4, const char* param5,
+                  const char* param6) {
     char message[TEENSY_MSG_MAX];
-    buildMessage(message, sizeof(message), command, param1, param2, param3, param4, param5);
+    buildMessage(message, sizeof(message), command, param1, param2, param3, param4, param5,
+                 param6);
     xSemaphoreTake(queueMutex, portMAX_DELAY);
     if (strcmp(command, CMD_RESET_INPUT_EQ) == 0 || strcmp(command, CMD_RESET_OUTPUT_EQ) == 0) {
         cancelSupersededEqCommands(message);
@@ -248,14 +250,15 @@ bool sendToTeensy(const char* command, const char* param1, const char* param2,
 
 bool sendToTeensy(const char* command, const String& param1,
                   const String& param2, const String& param3, const String& param4,
-                  const String& param5) {
+                  const String& param5, const String& param6) {
     return sendToTeensy(
         command,
         param1.length() > 0 ? param1.c_str() : nullptr,
         param2.length() > 0 ? param2.c_str() : nullptr,
         param3.length() > 0 ? param3.c_str() : nullptr,
         param4.length() > 0 ? param4.c_str() : nullptr,
-        param5.length() > 0 ? param5.c_str() : nullptr
+        param5.length() > 0 ? param5.c_str() : nullptr,
+        param6.length() > 0 ? param6.c_str() : nullptr
     );
 }
 

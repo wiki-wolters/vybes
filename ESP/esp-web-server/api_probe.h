@@ -12,4 +12,15 @@
 esp_err_t handlePutProbeDelayStart(PsychicRequest *request);
 esp_err_t handlePutProbeDelayStop(PsychicRequest *request);
 
+// Measurement sweep session (auto-FIR wizard; docs/AUTO_FIR_CONTRACTS.md).
+// PUT /probe/sweep/start?level=..&f0=..&f1=..&chirpSamples=..&passes=..
+//   - sweep every enabled output of the active preset, ascending, repeated
+//   `passes` times. Unlike the delay probe, the schedule (preRoll/spacing/
+//   fade) is derived on the Teensy, so the authoritative numbers arrive in
+//   the SWEEP START probeEvent websocket message - this response only
+//   echoes the request and the output order.
+// PUT /probe/sweep/stop - cancel (stops either kind of probe session).
+esp_err_t handlePutProbeSweepStart(PsychicRequest *request);
+esp_err_t handlePutProbeSweepStop(PsychicRequest *request);
+
 #endif // API_PROBE_H

@@ -292,18 +292,19 @@ static inline size_t teensyProtocolStrlcpy(char* dst, const char* src, size_t ds
     return srcLen;
 }
 
-// Build "<command> <p1> ... <p5>\n" into out (null parameters are skipped).
+// Build "<command> <p1> ... <p6>\n" into out (null parameters are skipped).
 // Returns the message length (excluding the terminating null). A message
 // that doesn't fit is truncated but stays newline-terminated; *truncated
 // (when non-null) reports that so the caller can log it.
 static inline size_t teensyBuildMessage(char* out, size_t outSize, const char* command,
                                         const char* p1, const char* p2, const char* p3,
-                                        const char* p4, const char* p5, bool* truncated) {
+                                        const char* p4, const char* p5, const char* p6,
+                                        bool* truncated) {
     if (truncated) *truncated = false;
     size_t offset = teensyProtocolStrlcpy(out, command, outSize);
     if (offset >= outSize) offset = outSize - 1; // strlcpy reports intended length
-    const char* params[5] = {p1, p2, p3, p4, p5};
-    for (int i = 0; i < 5; i++) {
+    const char* params[6] = {p1, p2, p3, p4, p5, p6};
+    for (int i = 0; i < 6; i++) {
         if (!params[i]) continue;
         if (offset < outSize - 1) {
             out[offset++] = ' ';

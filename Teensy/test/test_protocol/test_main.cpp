@@ -57,9 +57,10 @@ struct TestRig {
 static size_t roundTrip(TestRig& rig, const char* cmd,
                         const char* p1 = nullptr, const char* p2 = nullptr,
                         const char* p3 = nullptr, const char* p4 = nullptr,
-                        const char* p5 = nullptr, bool* truncated = nullptr) {
+                        const char* p5 = nullptr, bool* truncated = nullptr,
+                        const char* p6 = nullptr) {
     char msg[TEENSY_MSG_MAX];
-    size_t len = teensyBuildMessage(msg, sizeof(msg), cmd, p1, p2, p3, p4, p5, truncated);
+    size_t len = teensyBuildMessage(msg, sizeof(msg), cmd, p1, p2, p3, p4, p5, p6, truncated);
     rig.port.feedInput(msg, len);
     rig.router.loop();
     return len;
@@ -214,7 +215,8 @@ static void test_overlong_message_truncates_but_keeps_framing(void) {
     char msg[TEENSY_MSG_MAX];
     bool truncated = false;
     size_t len = teensyBuildMessage(msg, sizeof(msg), CMD_SET_FIR, "7",
-                                    filename.c_str(), nullptr, nullptr, nullptr, &truncated);
+                                    filename.c_str(), nullptr, nullptr, nullptr, nullptr,
+                                    &truncated);
     TEST_ASSERT_TRUE(truncated);
     TEST_ASSERT_EQUAL_UINT32(TEENSY_MSG_MAX - 1, (uint32_t)len);
     TEST_ASSERT_EQUAL_CHAR('\n', msg[len - 1]);
@@ -237,9 +239,9 @@ static void test_newline_framing_across_bursts(void) {
     resetCapture();
     char m1[TEENSY_MSG_MAX], m2[TEENSY_MSG_MAX];
     size_t l1 = teensyBuildMessage(m1, sizeof(m1), CMD_SET_MUTE, "1",
-                                   nullptr, nullptr, nullptr, nullptr, nullptr);
+                                   nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
     size_t l2 = teensyBuildMessage(m2, sizeof(m2), CMD_SET_VOLUME, "0.50",
-                                   nullptr, nullptr, nullptr, nullptr, nullptr);
+                                   nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
 
     // Burst 1: all of message 1 plus the first half of message 2
     std::string burst1 = std::string(m1, l1) + std::string(m2, 5);

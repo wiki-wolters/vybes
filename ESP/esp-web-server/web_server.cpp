@@ -209,6 +209,8 @@ static void registerRoutes(PsychicHttpServer &s, PsychicWebSocketHandler *ws) {
     // API Routes - Auto delay alignment probe
     s.on("/probe/delay/start", HTTP_PUT, handlePutProbeDelayStart);
     s.on("/probe/delay/stop", HTTP_PUT, handlePutProbeDelayStop);
+    s.on("/probe/sweep/start", HTTP_PUT, handlePutProbeSweepStart);
+    s.on("/probe/sweep/stop", HTTP_PUT, handlePutProbeSweepStop);
 
     s.on("/preset/active", HTTP_PUT, handlePutActivePreset);
 
