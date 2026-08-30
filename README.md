@@ -61,66 +61,103 @@ Teensy for the list of available files and tells it which file to load per chann
 
 ## Presets
 
-Up to 8 presets are stored (see `ESP/esp-web-server/config.h`). Each preset contains:
+Up to 8 presets are stored (see `ESP/esp-web-server/config.h`). Presets follow the
+8-output channel architecture (see `docs/CHANNEL_ARCHITECTURE.md`): a routing matrix
+into eight identical output channels rather than a fixed left/right/sub set. Each
+preset contains:
 
-* Name (max 15 characters)
-* Speaker gains (left, right, sub)
-* Speaker delays in microseconds (left, right, sub) + enabled flag
-* Subwoofer crossover: frequency + enabled flag
-* Preference curve EQ: up to 3 PEQ sets of up to 15 points each (frequency, gain, Q),
-  plus an enabled flag. Each set carries an SPL value for future volume-dependent EQ,
-  but currently only the default set (spl = 0) is used.
-* FIR filters: a filter filename per channel (left, right, sub) + enabled flag
+* Name (max 15 characters) and a speaker-setup template reference
+* Input EQ (the shared "preference curve"): PEQ sets of up to 15 points each
+  (frequency, gain, Q), plus an enabled flag. Each set carries an SPL value for
+  future volume-dependent EQ, but currently only the default set (spl = 0) is used.
+* Crossover points: named frequency + enabled pairs that outputs reference for
+  their high- and low-pass filters (a shared point keeps linked outputs in sync)
+* Eight outputs, each with: label, enable, source mix (per-bus gains), high-pass
+  and low-pass crossover assignment, gain, delay in microseconds, FIR filter
+  filename, a per-output PEQ (up to 10 points) + enabled flag, mute, and invert
+* Preset-level enable flags for delays and FIR filtering
 * Master volume (0-100): each preset remembers the level it was last played at,
   and activating a preset restores it
 
-Global (non-preset) state includes mute state and mute percentage, input gains
-(spdif, bluetooth, usb, tone, analog), and the tone/noise generator settings.
+Global (non-preset) state includes dim (volume-reduction) state and percentage,
+input gains (bluetooth, spdif, usb, analog, plus the tone/noise and SD-playback
+levels), and the tone/pink-noise generator settings.
 
 ## Web UI
 
-A Vue 3 + Vite single-page app (in `/WebUI`), served by the ESP32. Four views:
+A Vue 3 + Vite single-page app (in `/WebUI`), served by the ESP32. Three views, plus
+a persistent generator dock (tone / pink noise with a start/stop button — frequency
+for the tone, and a level per source) available from every view:
 
 ### Home
 * Presets: a button for each, and a plus icon to add new. Tapping the active preset's
-  edit icon navigates to the preset editor.
+  edit icon navigates to the preset editor. Switching is locked while recording.
 * Master volume slider (the active preset's stored level)
-* Input source gain sliders: Bluetooth, TV (SPDIF), USB, Tone, Analog
-* Speaker on/off toggles: left, right, subwoofer
-* Mute: volume-reduction percentage slider and on/off toggle
-* Configuration: backup and restore buttons (download/upload the full device config)
-
-### Tools
-* Tone generator: frequency and volume sliders with a start/stop button
-* Pink noise generator: volume slider with a start/stop button
+* Speaker on/off toggles
+* Dim: volume-reduction percentage slider and on/off toggle
+* Input source: a stereo peak meter on the summed input bus (all sources plus SD
+  playback — the point that clips when sources stack up, and exactly what the
+  recorder captures), and gain sliders in dB for Bluetooth, TV (SPDIF), USB, and
+  Analog
+* Dynamics: the multiband compressor controls
+* Recorder: record the input mix or playback to the Teensy's SD card, and play
+  recordings back
+* Configuration: backup and restore buttons (download/upload the full device config;
+  restore is locked while recording)
 
 ### Analyzer
 Real-time 31-band (1/3-octave) spectrum overlay:
 * Source trace: the Teensy taps the L+R input mix (pre-DSP) with an FFT and
   streams band levels while the page is open
 * Microphone trace: captured in the browser via Web Audio, aggregated into the
-  same bands, with optional REW-style calibration file import (persisted in the
-  browser)
-* The mic trace is auto level-aligned to the source (median mid-band offset),
-  and a delta chart shows mic − source: where the room and system boost or lose
-  energy. Play pink noise for the most meaningful delta.
+  same bands. Mic calibration is applied from a built-in profile (a generic
+  smartphone high-pass model, or an iPhone 17 Pro curve digitised from Faber
+  Acoustical's anechoic measurement) or an imported REW-style cal file
+  (.txt/.cal/.frd/.csv); the choice persists in the browser.
+* The capture is requested raw (no echo cancellation, noise suppression, or auto
+  gain) and what the browser actually granted is read back and displayed —
+  including an explicit "unknown" when the browser won't say
+* The mic trace is auto level-aligned to the source (median offset over the
+  analysis band), and a delta chart shows mic − source: where the room and system
+  boost or lose energy. Play pink noise for the most meaningful delta.
 * Exponential averaging (0.5–8 s) smooths both traces and absorbs the timing
   difference between the device tap and the mic path
+* Auto-EQ ("EQ Correction"): capture the delta at one or more mic positions
+  (power-domain averaged), pick a target curve (flat, tilt, Harman, B&K, or a
+  custom REW import), set correction strength and boost/cut limits, preview the
+  fitted bands, and apply — either to the shared input EQ, or to a single output
+  (the device solos that output while measuring, and the fit is confined to its
+  crossover passband)
 * Note: browsers only expose the microphone on secure origins (HTTPS or
   localhost), so the mic overlay doesn't work on a phone browsing the device
   over plain HTTP. On a laptop, Chrome's
   `#unsafely-treat-insecure-origin-as-secure` flag is the workaround.
 
 ### Preset editor
-Rename, copy, and delete buttons for the selected preset, plus collapsible sections
-(each with its own enable toggle):
-* EQ: interactive parametric EQ chart with draggable points and a calculated
-  frequency-response curve
-* FIR filters: a dropdown per channel (left, right, sub) listing the filter files on
-  the device's SD card (with a free-text fallback when the list is unavailable)
-* Subwoofer crossover: frequency slider
-* Speaker delays: an input per speaker, in microseconds
+Rename, copy, and delete buttons and a speaker-setup template badge, then two tabs:
+
+**Tuning** — the day-to-day controls:
+* EQ: the shared input EQ — an interactive parametric chart with draggable points
+  and a calculated frequency-response curve, plus REW import (paste REW's "Export
+  filter settings as text" output or choose the exported .txt; peaking (PK)
+  filters are imported, up to the band limit)
+* FIR filters: a file dropdown per enabled output listing the filter files on the
+  device's SD card (a configured-but-missing file stays selectable rather than
+  being silently blanked, and there's a free-text fallback when the list is
+  unavailable), with a taps-used counter against the device's FIR pool
+* Crossovers: the preset's named crossover points (frequency + enable), each
+  showing which outputs' high-/low-pass filters reference it
+* Speaker delays: an input per enabled output, in microseconds, plus an
+  "Auto-align with phone mic" wizard on the active preset — it plays chirps
+  through each output and measures arrival times with the phone's microphone
+* Output levels: a gain slider per enabled output
 * Master volume: the level this preset plays at, restored whenever it is activated
+
+**Channels** — the full 8-output matrix, one strip per output: editable label,
+enable toggle, source mix, high-pass and low-pass crossover assignment (with a
+protected floor when one is set), gain, delay, FIR file, a per-output PEQ (up to
+10 bands, same editor and REW import as the input EQ), and mute/invert toggles.
+A FIR pool bar tracks tap usage and load errors across outputs.
 
 ## API
 
