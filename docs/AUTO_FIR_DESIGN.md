@@ -168,7 +168,10 @@ budget that matters, and it's unchanged from today's worst case.
    adjust; defaults should be right for any topology.
 1. **Setup** — stationary mic at the seat (explicitly framed as different from
    the moving-mic pink-noise flow). Capture-chain readback check; Wide
-   Spectrum guidance on iOS. Preset `firEnabled` off for the session.
+   Spectrum guidance on iOS. Preset `firEnabled` **and** `inputEq.enabled`
+   off for the session (input EQ is room-band correction that re-runs after
+   the wizard, so it must not be baked into the driver measurement); output
+   PEQ and crossovers stay active. Both flags restored afterwards.
 2. **Measure** — one continuous capture session; sequencer solos each output
    in turn (existing keepalive + amp ramp), two ESS sweeps per output
    (consistency check, drift estimate, average). Shared timebase → relative
