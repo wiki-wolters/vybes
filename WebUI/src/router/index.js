@@ -2,6 +2,7 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import HomeView from '../views/HomeView.vue'
 import AnalyzerView from '../views/AnalyzerView.vue'
 import PresetView from '../views/PresetEditorView.vue'
+import FirWizardView from '../views/FirWizardView.vue'
 
 const routes = [
   {
@@ -27,6 +28,14 @@ const routes = [
     props: true,
     meta: {
       title: 'Preset Configuration'
+    }
+  },
+  {
+    path: '/fir-wizard',
+    name: 'FirWizard',
+    component: FirWizardView,
+    meta: {
+      title: 'Auto-FIR Wizard'
     }
   },
   {

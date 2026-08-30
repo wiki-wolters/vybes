@@ -748,6 +748,104 @@ app.put('/probe/delay/stop', wrap(async (req, res) => {
   res.json({ status: 'ok' });
 }));
 
+// ===== Auto-FIR measurement sweep - api_probe.cpp handlePutProbeSweepStart/Stop =====
+// Reuses the delay probe's mask-derivation (active preset's enabled outputs)
+// and its probeEvent relay/timer array - the real device shares one
+// sequencer between the two probe kinds and they're mutually exclusive, so
+// the mock does too. preRoll/fade mirror the firmware's fixed
+// PROBE_PRE_ROLL_SAMPLES/PROBE_FADE_SAMPLES; spacing is chirpSamples plus
+// SWEEP_MIN_TAIL_SAMPLES, matching teensy_protocol.h. Unlike the delay
+// probe, slot order is ascending outputs repeated `passes` times, not
+// reversed (pass-to-pass drift/consistency check on the SAME output).
+const SWEEP_SAMPLE_RATE = 44100;
+const SWEEP_PRE_ROLL_SAMPLES = 65536;
+const SWEEP_FADE_SAMPLES = 512;
+const SWEEP_MIN_TAIL_SAMPLES = 66150;
+// Compresses the sweep's wall-clock timeline for local dev/testing -
+// docs/AUTO_FIR_CONTRACTS.md explicitly allows this ("on a compressed
+// timeline is fine"). Does not change any sample-count in the schedule
+// itself, only how fast the mock's setTimeout calls fire.
+const SWEEP_TIME_SCALE = 0.15;
+
+function parseRangedNumber(req, name, lo, hi, fallback) {
+  if (req.query[name] === undefined) return { value: fallback };
+  const v = Number(req.query[name]);
+  if (!Number.isFinite(v) || v < lo || v > hi) {
+    return { error: `${name} must be a number in ${lo}..${hi}` };
+  }
+  return { value: v };
+}
+
+app.put('/probe/sweep/start', wrap(async (req, res) => {
+  const fields = [
+    ['level', 0, 100, 50],
+    ['f0', 5, 20000, 20],
+    ['f1', 100, 22050, 20000],
+    ['chirpSamples', 8192, 1048576, 131072],
+    ['passes', 1, 16, 2],
+  ];
+  const values = {};
+  for (const [name, lo, hi, fallback] of fields) {
+    const parsed = parseRangedNumber(req, name, lo, hi, fallback);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    values[name] = parsed.value;
+  }
+  if (values.f0 >= values.f1) {
+    return res.status(400).json({ error: 'f0 must be below f1' });
+  }
+  const level = Math.round(values.level);
+  const f0 = values.f0;
+  const f1 = values.f1;
+  const chirpSamples = Math.round(values.chirpSamples);
+  const passes = Math.round(values.passes);
+
+  const row = await dbGet("SELECT name, config FROM presets WHERE is_current = 1");
+  const config = JSON.parse(row.config);
+  const forward = [];
+  let mask = 0;
+  config.outputs.forEach((output, ch) => {
+    if (output.enabled) {
+      forward.push(ch);
+      mask |= 1 << ch;
+    }
+  });
+  if (forward.length === 0) {
+    return res.status(400).json({ error: 'Active preset has no enabled outputs' });
+  }
+
+  const spacing = chirpSamples + SWEEP_MIN_TAIL_SAMPLES;
+  const nSlots = forward.length * passes;
+  const msPerSample = (1000 / SWEEP_SAMPLE_RATE) * SWEEP_TIME_SCALE;
+
+  clearProbeTimers();
+  const probeEvent = (line) => broadcast({ messageType: 'probeEvent', line });
+  probeEvent(`START ${mask} ${passes} ${SWEEP_PRE_ROLL_SAMPLES} ${spacing} ${chirpSamples} ` +
+    `${f0.toFixed(2)} ${f1.toFixed(2)} ${SWEEP_FADE_SAMPLES}`);
+  for (let slot = 0; slot < nSlots; slot++) {
+    // The firmware announces each solo switch at the gap midpoint before the
+    // chirp; slot 0 is announced by START, so mirror the firmware and skip it
+    if (slot === 0) continue;
+    const ch = forward[slot % forward.length];
+    const atMs = (SWEEP_PRE_ROLL_SAMPLES + slot * spacing - spacing / 2) * msPerSample;
+    probeTimers.push(setTimeout(() => probeEvent(`CHIRP ${slot} ${ch}`), atMs));
+  }
+  const doneMs = (SWEEP_PRE_ROLL_SAMPLES + nSlots * spacing) * msPerSample;
+  probeTimers.push(setTimeout(() => probeEvent('DONE'), doneMs));
+
+  // Per docs/AUTO_FIR_CONTRACTS.md: this response only confirms what was
+  // requested - the authoritative schedule (preRoll/spacing/fade) is the
+  // SWEEP START probeEvent above.
+  res.json({ status: 'ok', sampleRate: SWEEP_SAMPLE_RATE, f0, f1, chirpSamples, passes, level, order: forward });
+}));
+
+app.put('/probe/sweep/stop', wrap(async (req, res) => {
+  if (probeTimers.length > 0) {
+    clearProbeTimers();
+    broadcast({ messageType: 'probeEvent', line: 'STOP' });
+  }
+  res.json({ status: 'ok' });
+}));
+
 // Speaker & Input gains - api_gains.cpp handlePutSpeakerGain: query params
 // speaker + value, 0-100 percent (the ESP stores value/100 internally)
 app.put('/gains/speaker', async (req, res) => {
@@ -1709,12 +1807,93 @@ app.put('/preset/eq/enabled', wrap(async (req, res) => {
   res.json(payload);
 }));
 
-// ===== FIR file listing =====
+// ===== FIR file listing / upload / delete (docs/AUTO_FIR_CONTRACTS.md, slice A) =====
 // Plain array of filenames, like the Teensy's getFiles reply relayed by the
 // ESP ([] when the list is unavailable)
 app.get('/fir/files', (req, res) => {
   res.json(Object.keys(FIR_FILE_TAPS));
 });
+
+// Mirrors api_fir.cpp's isValidFirFilename: <=63 chars, no spaces/control chars.
+function isValidFirFilename(name) {
+  if (typeof name !== 'string' || name.length === 0 || name.length > 63) return false;
+  for (let i = 0; i < name.length; i++) {
+    const c = name.charCodeAt(i);
+    if (c <= 32 || c === 127) return false;
+  }
+  return true;
+}
+
+// One upload/delete in flight at a time, like the real device's single-
+// flight guard (firUploadTryBegin) - the mock only needs to reject an
+// overlapping request, not actually serialize anything.
+let firTransferBusy = false;
+
+// POST /fir/upload?name=<file> - raw file bytes (the wizard uploads .bin
+// only: little-endian float32 taps, no header, exact taps = size/4).
+app.post('/fir/upload', express.raw({ type: () => true, limit: '60kb' }), wrap(async (req, res) => {
+  const name = req.query.name;
+  if (!name || !isValidFirFilename(name)) {
+    return res.status(400).json({ error: 'Invalid FIR filename' });
+  }
+  const lower = name.toLowerCase();
+  const isBin = lower.endsWith('.bin');
+  if (!isBin && !lower.endsWith('.wav') && !lower.endsWith('.txt')) {
+    return res.status(400).json({ error: 'Name must end in .bin, .wav, or .txt' });
+  }
+
+  const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  const size = body.length;
+  if (size < 4 || size > 51200) {
+    return res.status(400).json({ error: 'Size must be 4-51200 bytes' });
+  }
+  if (isBin && size % 4 !== 0) {
+    return res.status(400).json({ error: 'A .bin size must be a multiple of 4' });
+  }
+  if (recorder.recording.active) {
+    return res.status(409).json({ error: 'recording' });
+  }
+  if (firTransferBusy) {
+    return res.status(409).json({ error: 'busy' });
+  }
+
+  firTransferBusy = true;
+  try {
+    const taps = isBin ? size / 4 : Math.ceil(size / 12);
+    FIR_FILE_TAPS[name] = taps;
+    res.json({ name, size, taps });
+  } finally {
+    firTransferBusy = false;
+  }
+}));
+
+// DELETE /fir/files?name=<file> - 409 referenced when a preset still uses it.
+app.delete('/fir/files', wrap(async (req, res) => {
+  const name = req.query.name;
+  if (!name || !isValidFirFilename(name)) {
+    return res.status(400).json({ error: 'Invalid FIR filename' });
+  }
+  if (recorder.recording.active) {
+    return res.status(409).json({ error: 'recording' });
+  }
+  if (firTransferBusy) {
+    return res.status(409).json({ error: 'busy' });
+  }
+
+  const rows = await dbAll("SELECT name, config FROM presets");
+  const referencing = rows
+    .filter((r) => JSON.parse(r.config).outputs.some((o) => o.fir === name))
+    .map((r) => r.name);
+  if (referencing.length > 0) {
+    return res.status(409).json({ error: 'referenced', presets: referencing });
+  }
+  if (!(name in FIR_FILE_TAPS)) {
+    return res.status(404).json({ error: 'No such FIR file' });
+  }
+
+  delete FIR_FILE_TAPS[name];
+  res.json({ name });
+}));
 
 // Backup and Restore
 app.get('/backup', (req, res) => {

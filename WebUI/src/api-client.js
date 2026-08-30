@@ -286,6 +286,54 @@ class VybesAPI {
     return this.request('PUT', '/probe/delay/stop');
   }
 
+  // ===== AUTO-FIR MEASUREMENT SWEEP =====
+  // docs/AUTO_FIR_CONTRACTS.md: the response here only echoes the request -
+  // the authoritative schedule (preRoll/spacing/fade, on the Teensy's own
+  // clock) arrives as a "SWEEP START ..." probeEvent on the same live-updates
+  // channel startDelayProbe uses, parsed by fir-wizard.js's
+  // parseSweepStartLine.
+  /**
+   * Start a measurement sweep: solos each enabled output of the active
+   * preset in turn, `passes` exponential sweeps each (back to back, not
+   * reversed - a pass-to-pass drift/consistency check on the same output).
+   * @param {Object} [opts]
+   * @param {number} [opts.level=50]           playback level, 0-100
+   * @param {number} [opts.f0=20]               sweep start frequency, Hz
+   * @param {number} [opts.f1=20000]            sweep end frequency, Hz
+   * @param {number} [opts.chirpSamples=131072] sweep length, device samples
+   * @param {number} [opts.passes=2]
+   */
+  async startSweepProbe(opts = {}) {
+    const { level = 50, f0 = 20, f1 = 20000, chirpSamples = 131072, passes = 2 } = opts;
+    const params = new URLSearchParams({
+      level: String(level), f0: String(f0), f1: String(f1),
+      chirpSamples: String(chirpSamples), passes: String(passes),
+    });
+    return this.request('PUT', `/probe/sweep/start?${params.toString()}`);
+  }
+
+  /** Cancel a running measurement sweep (shares stopDelayProbe's device command). */
+  async stopSweepProbe() {
+    return this.request('PUT', '/probe/sweep/stop');
+  }
+
+  // ===== FIR FILE UPLOAD / DELETE =====
+
+  /**
+   * Upload a raw FIR kernel: little-endian float32 taps, no header.
+   * @param {string} name           e.g. "a3-woofer-l.bin"
+   * @param {ArrayBuffer} arrayBuffer
+   * @returns {Promise<{name:string, size:number, taps:number}>}
+   */
+  async uploadFir(name, arrayBuffer) {
+    return this.request('POST', `/fir/upload?name=${encodeURIComponent(name)}`, arrayBuffer, true);
+  }
+
+  /** Delete a FIR file from the SD card. 409 {error:'referenced', presets:[...]} if a preset still uses it. */
+  async deleteFirFile(name) {
+    return this.request('DELETE', `/fir/files?name=${encodeURIComponent(name)}`);
+  }
+
   // ===== PRESET MANAGEMENT =====
 
   /**

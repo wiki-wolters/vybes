@@ -105,6 +105,17 @@
                 </span>
                 <button v-if="store.firFiles.length === 0" @click="store.loadFirFiles" class="btn-secondary">Refresh</button>
               </div>
+              <!-- Measures every enabled output and designs corrected filters
+                   for it, so (like the delay probe) it only makes sense on
+                   the preset that is actually playing -->
+              <div v-if="store.preset.isCurrent" class="mt-4">
+                <button class="btn-secondary" @click="router.push('/fir-wizard')">
+                  Auto-measure &amp; correct with phone mic…
+                </button>
+              </div>
+              <p v-else class="mt-4 text-sm text-vybes-text-secondary">
+                Activate this preset to measure and design FIR correction with your phone's microphone.
+              </p>
             </CollapsibleSection>
 
             <CrossoverCard :animate="animationsEnabled" />
