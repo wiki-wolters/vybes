@@ -1,14 +1,20 @@
 #ifndef SKETCH_STATE_H
 #define SKETCH_STATE_H
 
+#include <Audio.h>               // AudioMixer4
 #include "PEQProcessor.h"        // PEQBand, MAX_PEQ_BANDS
 #include "CrossoverMath.h"       // CrossoverType
 #include "AudioFilterFIRFloat.h"
+#include "ProbeSource.h"
+#include "SdWavPlayer.h"
+#include "RtaFFT4096.h"
+#include "MultibandCompressor.h"
+#include "PeakMeter.h"
 
 // The sketch-wide DSP state plus the objects and services other translation
-// units reach into (FirFiles.cpp today). Everything declared extern here is
-// defined in fir_filters.ino; this header is the sketch's exported surface,
-// not a home for logic.
+// units reach into (FirFiles.cpp, TelemetryStreams.cpp, DelayProbe.cpp).
+// Everything declared extern here is defined in fir_filters.ino; this header
+// is the sketch's exported surface, not a home for logic.
 
 // Number of output channels (octal I2S). Must match NUM_OUTPUTS on the ESP.
 #define NUM_OUTPUTS 8
@@ -81,6 +87,26 @@ extern State state;
 // graph in fir_filters.ino).
 extern AudioFilterFIRFloat firFilter[NUM_OUTPUTS];
 
+// Input-stage mixers and the chirp source: the delay probe silences the
+// normal inputs, opens the probe path, and restores from state (see
+// DelayProbe.cpp; the mixer channel map is at the definitions in the .ino).
+extern AudioMixer4 Left_mixer;
+extern AudioMixer4 Right_mixer;
+extern AudioMixer4 Left_Aux_mixer;
+extern AudioMixer4 Right_Aux_mixer;
+extern AudioMixer4 Generator_mixer;
+extern ProbeSource probeSource;
+extern SdWavPlayer sdPlayer;
+
+// Telemetry sources (TelemetryStreams.cpp reads these for its frames)
+extern RtaFFT4096 RTA_fft;
+extern MultibandCompressor inputComp;
+extern PeakMeter inputMeter;
+
+// Set so recorderStatusLoop() sends a fresh "REC STATE" line on its next
+// pass (the probe stopping SD playback sets it too).
+extern bool recStateDirty;
+
 // Shared sketch services, defined in fir_filters.ino:
 
 // SD media check and re-mount (see the comment at its definition for why
@@ -93,5 +119,13 @@ void applyDelays();
 
 // RAM2 heap and audio-block-pool stats, printed where the budget matters.
 void printMemoryStats(const char* tag);
+
+// Apply the five input gains and refresh every input-stage mixer from state
+// (the probe's restore path relies on this covering the player gain too).
+void setInputGains(float bluetoothGain, float opticalGain, float usbGain,
+                   float generatorGain, float analogGain);
+
+// Re-route the RTA FFT tap to match rtaStreaming() and the output solo.
+void updateRtaSource();
 
 #endif // SKETCH_STATE_H

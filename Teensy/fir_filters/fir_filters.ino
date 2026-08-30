@@ -20,9 +20,11 @@
 #include "SdWavPlayer.h"
 #include "WavFormat.h"
 #include "PeakMeter.h"
-#include "SketchState.h" // OutputState/State + the objects FirFiles.cpp shares
+#include "SketchState.h" // OutputState/State + the sketch's exported surface
 #include "AudioHold.h"
 #include "FirFiles.h"
+#include "TelemetryStreams.h"
+#include "DelayProbe.h"
 
 // V1 8-output architecture (docs/CHANNEL_ARCHITECTURE.md): a shared stereo
 // input stage (source mixing + input EQ) feeds eight identical output
@@ -235,41 +237,9 @@ unsigned long sdLastStreamActivityMs = 0;
 // rationale live in AudioHold.h.
 AudioHold audioHold;
 
-// --- RTA (real-time analyzer) state ---
-// The ESP refreshes the enable flag every couple of seconds while a web
-// client is listening ("setRta 1" keepalives); streaming stops on its own
-// when the keepalives stop. Bands are 1/12-octave in the base-10 sense
-// (centers 10^(k/40)), 20Hz-20kHz. The web UI (WebUI/src/rta.js) uses the
-// same definition and infers the resolution from the frame's band count,
-// so older 31-band firmware and this 121-band version both decode.
-#define RTA_NUM_BANDS 121
-#define RTA_BANDS_PER_DECADE 40
-#define RTA_K_LO 52 // 10^(52/40) = 20Hz
-#define RTA_FRAME_INTERVAL_MS 100
-#define RTA_KEEPALIVE_TIMEOUT_MS 7000
-static float RTA_BAND_CENTERS[RTA_NUM_BANDS]; // filled in setup()
-bool rtaEnabled = false;
-unsigned long rtaLastKeepaliveAt = 0;
-unsigned long rtaLastFrameAt = 0;
-
 // The preset/DSP state (struct definitions in SketchState.h, which also
 // externs this for FirFiles.cpp)
 State state;
-
-// --- Auto delay alignment probe state ---
-// The chirp schedule lives in probeSource (sample-clocked, ISR context);
-// everything here is loop()-context only: probeLoop() switches which output
-// is soloed between chirps, and outputTargetGain() consults probeSolo. The
-// solo rides the existing amp ramp, so switching is click-free. probeGain is
-// applied instead of the normal gain/mute/volume product so a muted device
-// or zero volume can't silence the measurement (invert is kept - the UI
-// correlates on magnitude).
-bool   probeActive = false;
-int    probeSolo = -1;               // output the current chirp leaves through
-float  probeGain = 0.0f;             // amp gain for the soloed output
-int8_t probeOrder[2 * NUM_OUTPUTS];  // masked outputs ascending, then reversed
-int    probeChirps = 0;
-int    probeLastSlot = -1;
 
 // --- Output solo (per-output EQ measurement) ---
 // Keepalive-driven like the RTA: the ESP refreshes "soloOutput <ch>" every
@@ -384,9 +354,7 @@ void setup() {
   // RTA tap: equal L+R mix, idle until the UI asks for it
   RTA_mixer.gain(0, 0.5);
   RTA_mixer.gain(1, 0.5);
-  for (int b = 0; b < RTA_NUM_BANDS; b++) {
-    RTA_BAND_CENTERS[b] = powf(10.0f, (float)(RTA_K_LO + b) / RTA_BANDS_PER_DECADE);
-  }
+  telemetryBegin(); // fill the RTA band-center table
   patchCord_RTAMixerToFFT.disconnect();
 
   // Apply the (neutral) boot state
@@ -529,7 +497,7 @@ void loop() {
   if (firFilesPending) {
     // A FIR load blocks loop() on SD reads and changes channel latencies -
     // either would corrupt a running measurement, so abort the probe first.
-    if (probeActive) {
+    if (probeIsActive()) {
       probeCleanup("PROBE ERR aborted firLoad\n");
     }
     loadFirFiles();
@@ -576,13 +544,13 @@ void outputSoloLoop() {
 
 // Route the FFT input to match the analyzer scope. Exactly one source feeds
 // RTA_fft at a time (its input port holds one connection), so both candidate
-// cords are torn down first. Call this whenever rtaEnabled or outputSolo
+// cords are torn down first. Call this whenever rtaStreaming() or outputSolo
 // changes - not on every solo keepalive, since re-binding the cord restarts
 // the FFT's accumulation window.
 void updateRtaSource() {
   patchCord_RTAMixerToFFT.disconnect();
   patchCord_SoloToFFT.disconnect();
-  if (!rtaEnabled) return; // idle: leave the FFT unfed
+  if (!rtaStreaming()) return; // idle: leave the FFT unfed
   if (outputSolo >= 0 && outputSolo < NUM_OUTPUTS) {
     // Post-crossover, pre-PEQ - the same "pre-EQ source" semantics the input
     // scope has (it taps the source mix ahead of the input EQ), so measuring
@@ -591,147 +559,6 @@ void updateRtaSource() {
   } else {
     patchCord_RTAMixerToFFT.connect();
   }
-}
-
-void setRtaEnabled(bool enabled) {
-  rtaLastKeepaliveAt = millis();
-  if (enabled == rtaEnabled) return;
-  rtaEnabled = enabled;
-  Serial.println(enabled ? "RTA started" : "RTA stopped");
-  updateRtaSource();
-}
-
-// Sum FFT power over [lo,hi) Hz. Edge bins contribute proportionally to
-// their overlap with the band, so bands narrower than one ~10.8Hz bin still
-// get a sensible share instead of double-counting or reading zero.
-static float rtaBandPower(float lo, float hi) {
-  const float binWidth = RtaFFT4096::binWidthHz();
-  int first = (int)roundf(lo / binWidth);
-  int last = (int)roundf(hi / binWidth);
-  if (first < 1) first = 1; // skip the DC bin
-  if (last > RtaFFT4096::NUM_BINS - 1) last = RtaFFT4096::NUM_BINS - 1;
-  float power = 0.0f;
-  for (int i = first; i <= last; i++) {
-    float overlap = min(hi, (i + 0.5f) * binWidth) - max(lo, (i - 0.5f) * binWidth);
-    if (overlap <= 0.0f) continue;
-    power += RTA_fft.readPower(i) * (overlap / binWidth);
-  }
-  return power;
-}
-
-// While enabled, send "RTA <242 hex chars>\n" frames at ~10Hz: one byte per
-// band, value = (dB + 100) * 2, i.e. -100dB..+27.5dB in 0.5dB steps. A frame
-// is 247 bytes - the ESP's RX line buffer (RX_LINE_MAX in teensy_comm.cpp)
-// and the Serial1 TX buffer (espTxBuffer in setup) are both sized for it.
-void rtaLoop() {
-  if (!rtaEnabled) return;
-  if (millis() - rtaLastKeepaliveAt > RTA_KEEPALIVE_TIMEOUT_MS) {
-    setRtaEnabled(false);
-    return;
-  }
-  if (millis() - rtaLastFrameAt < RTA_FRAME_INTERVAL_MS) return;
-  if (!RTA_fft.available()) return;
-  RTA_fft.analyze();
-
-  static const char HEX_DIGITS[] = "0123456789abcdef";
-  char frame[4 + RTA_NUM_BANDS * 2 + 1];
-  memcpy(frame, "RTA ", 4);
-  size_t pos = 4;
-  // Band edges are a twelfth of an octave apart: center * 10^(+/-1/80)
-  for (int b = 0; b < RTA_NUM_BANDS; b++) {
-    float power = rtaBandPower(RTA_BAND_CENTERS[b] * 0.971628f,
-                               RTA_BAND_CENTERS[b] * 1.029200f);
-    float dB = (power > 1e-10f) ? 10.0f * log10f(power) : -100.0f;
-    int v = (int)roundf((dB + 100.0f) * 2.0f);
-    if (v < 0) v = 0;
-    if (v > 255) v = 255;
-    frame[pos++] = HEX_DIGITS[v >> 4];
-    frame[pos++] = HEX_DIGITS[v & 0x0F];
-  }
-  frame[pos++] = '\n';
-
-  // Never block on the UART; skip the frame if the TX buffer is busy
-  if ((size_t)Serial1.availableForWrite() < pos) return;
-  Serial1.write((const uint8_t*)frame, pos);
-  rtaLastFrameAt = millis();
-}
-
-// --- GRM (compressor gain-reduction meter) streaming ---
-// Same keepalive scheme as the RTA: the ESP refreshes "setGrm 1" while a
-// web client is watching the meters; streaming stops on its own otherwise.
-#define GRM_FRAME_INTERVAL_MS 100
-#define GRM_KEEPALIVE_TIMEOUT_MS 7000
-bool grmEnabled = false;
-unsigned long grmLastKeepaliveAt = 0;
-unsigned long grmLastFrameAt = 0;
-
-// While enabled, send "GRM <6 hex chars>\n" frames at ~10Hz: one byte per
-// band, value = dB of reduction * 8 (0..31.9dB in 0.125dB steps).
-void grmLoop() {
-  if (!grmEnabled) return;
-  if (millis() - grmLastKeepaliveAt > GRM_KEEPALIVE_TIMEOUT_MS) {
-    grmEnabled = false;
-    return;
-  }
-  if (millis() - grmLastFrameAt < GRM_FRAME_INTERVAL_MS) return;
-
-  static const char HEX_DIGITS[] = "0123456789abcdef";
-  char frame[4 + COMP_NUM_BANDS * 2 + 2];
-  memcpy(frame, "GRM ", 4);
-  size_t pos = 4;
-  for (int b = 0; b < COMP_NUM_BANDS; b++) {
-    int v = (int)roundf(inputComp.gainReductionDb(b) * 8.0f);
-    if (v < 0) v = 0;
-    if (v > 255) v = 255;
-    frame[pos++] = HEX_DIGITS[v >> 4];
-    frame[pos++] = HEX_DIGITS[v & 0x0F];
-  }
-  frame[pos++] = '\n';
-
-  if ((size_t)Serial1.availableForWrite() < pos) return;
-  Serial1.write((const uint8_t*)frame, pos);
-  grmLastFrameAt = millis();
-}
-
-// --- VU (input bus peak meter) streaming ---
-// Same keepalive scheme as the RTA/GRM: the ESP refreshes "setVu 1" while a
-// web client shows the level bars; streaming stops on its own otherwise.
-// Frames go out at 20Hz as "VU llrrf\n": one byte per channel mapping peak
-// dBFS -60..0 onto 0..255 (0 = silence), plus one hex flag digit (bit0 =
-// left clipped, bit1 = right clipped - a flat-topped run of full-scale
-// samples, not just a peak touching 0dBFS; see PeakMeter.h). Peaks
-// accumulate max-wise in the meter between frames, so nothing is missed.
-#define VU_FRAME_INTERVAL_MS 50
-#define VU_KEEPALIVE_TIMEOUT_MS 7000
-bool vuEnabled = false;
-unsigned long vuLastKeepaliveAt = 0;
-unsigned long vuLastFrameAt = 0;
-
-static uint8_t vuByte(float peak) {
-  if (peak <= 0.001f) return 0; // below -60dBFS
-  float dB = 20.0f * log10f(peak);
-  int v = (int)roundf((dB + 60.0f) * (255.0f / 60.0f));
-  return (uint8_t)constrain(v, 0, 255);
-}
-
-void vuLoop() {
-  if (!vuEnabled) return;
-  if (millis() - vuLastKeepaliveAt > VU_KEEPALIVE_TIMEOUT_MS) {
-    vuEnabled = false;
-    return;
-  }
-  if (millis() - vuLastFrameAt < VU_FRAME_INTERVAL_MS) return;
-
-  PeakMeter::Reading r = inputMeter.read();
-  char frame[16];
-  int len = snprintf(frame, sizeof(frame), "VU %02x%02x%x\n",
-                     vuByte(r.peak[0]), vuByte(r.peak[1]),
-                     (r.clip[0] ? 1 : 0) | (r.clip[1] ? 2 : 0));
-
-  // Never block on the UART; skip the frame if the TX buffer is busy
-  if (Serial1.availableForWrite() < len) return;
-  Serial1.write((const uint8_t*)frame, len);
-  vuLastFrameAt = millis();
 }
 
 // Move 'current' toward 'target' with an exponential ramp whose speed is
@@ -764,9 +591,9 @@ static float outputTargetGain(int ch, const OutputState& o) {
   // until the whole picture is in place; updateAudioVolume's ramp makes the
   // release click-free.
   if (audioHold.held()) return 0.0f;
-  if (probeActive) {
-    if (ch != probeSolo) return 0.0f;
-    return o.invert ? -probeGain : probeGain;
+  if (probeIsActive()) {
+    float gain = probeGainForOutput(ch);
+    return o.invert ? -gain : gain;
   }
   // Per-output EQ measurement: everything but the soloed output is silenced;
   // the soloed one keeps its normal product so the mic measures reality.
@@ -883,123 +710,6 @@ void stopTone() {
 void setNoise(float volumePercent) {
   Serial.println("Set pink noise: " + String(volumePercent) + "%");
   pink1.amplitude(volumePercent / 100.0f);
-}
-
-// --- Auto delay alignment probe ---
-// Protocol and chirp contract: teensy_protocol.h. PROBE lines go straight
-// to the ESP link (Serial1), which relays them to the web UI as probeEvent
-// websocket messages.
-
-// Restore everything the probe touched and report why it ended. Idempotent;
-// the amp targets revert through the normal ramp, so ending is click-free.
-void probeCleanup(const char* message) {
-  AudioNoInterrupts();
-  probeSource.stop();
-  AudioInterrupts();
-  probeActive = false;
-  probeSolo = -1;
-  probeLastSlot = -1;
-  // Reopen the tone/noise paths, close the probe path, and restore every
-  // input-mixer gain from state (setInputGains also restores the generator
-  // aux gain the probe forced to 1.0).
-  Generator_mixer.gain(0, 1.0f);
-  Generator_mixer.gain(1, 1.0f);
-  Generator_mixer.gain(2, 0.0f);
-  setInputGains(state.gainBluetooth, state.gainOptical, state.gainUSB,
-                state.gainGenerator, state.gainAnalog);
-  if (message) Serial1.print(message);
-}
-
-void startDelayProbe(int mask, float levelPercent) {
-  // Masked outputs ascending, then the same list reversed: the UI averages
-  // each output's two arrivals to cancel linear phone-clock drift.
-  int forward[NUM_OUTPUTS];
-  int count = 0;
-  for (int ch = 0; ch < NUM_OUTPUTS; ch++) {
-    if (mask & (1 << ch)) forward[count++] = ch;
-  }
-  if (count == 0) {
-    Serial1.print("PROBE ERR emptyMask\n");
-    return;
-  }
-  if (probeActive) probeCleanup(nullptr); // implicit clean restart
-
-  // The probe needs silence between chirps; SD playback rides the aux
-  // mixer's input 2, which the probe's input muting leaves open.
-  if (sdPlayer.isActive()) {
-    sdPlayer.stop();
-    recStateDirty = true;
-  }
-
-  probeChirps = 2 * count;
-  for (int i = 0; i < count; i++) {
-    probeOrder[i] = (int8_t)forward[i];
-    probeOrder[probeChirps - 1 - i] = (int8_t)forward[i];
-  }
-
-  // Silence the external inputs and the tone/noise generators for the
-  // duration (direct mixer writes; state is untouched and restored by
-  // probeCleanup), and open the probe path at unity regardless of the
-  // user's generator input gain.
-  Left_mixer.gain(0, 0.0f);
-  Right_mixer.gain(0, 0.0f);
-  Left_mixer.gain(1, 0.0f);
-  Right_mixer.gain(1, 0.0f);
-  Left_mixer.gain(2, 0.0f);
-  Right_mixer.gain(2, 0.0f);
-  Left_Aux_mixer.gain(1, 0.0f);
-  Right_Aux_mixer.gain(1, 0.0f);
-  Generator_mixer.gain(0, 0.0f);
-  Generator_mixer.gain(1, 0.0f);
-  Generator_mixer.gain(2, 1.0f);
-  Left_Aux_mixer.gain(0, 1.0f);
-  Right_Aux_mixer.gain(0, 1.0f);
-
-  probeGain = constrain(levelPercent, 0.0f, 100.0f) / 100.0f;
-  probeSolo = probeOrder[0];
-  probeLastSlot = 0;
-  probeActive = true;
-
-  AudioNoInterrupts();
-  probeSource.start((uint8_t)probeChirps, 0.5f); // -6dBFS headroom pre-amp
-  AudioInterrupts();
-
-  // An output routed with zero source gains can't emit the chirp - the UI
-  // should expect a missing correlation peak rather than a probe failure.
-  for (int i = 0; i < count; i++) {
-    const OutputState& o = state.outputs[forward[i]];
-    if (o.sourceLeft == 0.0f && o.sourceRight == 0.0f) {
-      Serial1.printf("PROBE WARN unrouted %d\n", forward[i]);
-    }
-  }
-  Serial1.printf("PROBE START %d %d %lu %lu %lu\n", mask, probeChirps,
-                 (unsigned long)PROBE_PRE_ROLL_SAMPLES,
-                 (unsigned long)PROBE_SPACING_SAMPLES,
-                 (unsigned long)PROBE_CHIRP_SAMPLES);
-}
-
-// Track the chirp schedule from loop(): switch the soloed output at the
-// midpoint of each inter-chirp gap (557ms before the chirp - the ramp fully
-// settles in ~342ms, and the previous chirp ended 186ms earlier). Timing
-// here is deliberately non-critical; only the chirps themselves are
-// sample-exact, and they live in ProbeSource.
-void probeLoop() {
-  if (!probeActive) return;
-  if (probeSource.isFinished()) {
-    probeCleanup("PROBE DONE\n");
-    return;
-  }
-  uint32_t s = probeSource.samplesElapsed();
-  int slot = 0;
-  if (s + PROBE_SPACING_SAMPLES / 2 >= PROBE_PRE_ROLL_SAMPLES) {
-    slot = (int)((s + PROBE_SPACING_SAMPLES / 2 - PROBE_PRE_ROLL_SAMPLES) / PROBE_SPACING_SAMPLES);
-  }
-  if (slot >= probeChirps) slot = probeChirps - 1;
-  if (slot != probeLastSlot) {
-    probeLastSlot = slot;
-    probeSolo = probeOrder[slot];
-    Serial1.printf("PROBE CHIRP %d %d\n", slot, probeSolo);
-  }
 }
 
 // --- Shared input EQ ---
@@ -1509,7 +1219,7 @@ void handleStartDelayProbe(const String& command, String* args, int argCount, Ou
 }
 
 void handleStopDelayProbe(const String& command, String* args, int argCount, OutputStream& stream) {
-  if (probeActive) {
+  if (probeIsActive()) {
     probeCleanup("PROBE STOP\n");
   }
 }
@@ -1590,8 +1300,7 @@ void handleSetCompVoicePriority(const String& command, String* args, int argCoun
 // keepalive while it repeats); "setGrm 0" stops it immediately.
 void handleSetGrm(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 1) {
-    grmLastKeepaliveAt = millis();
-    grmEnabled = args[0].toInt() == 1;
+    setGrmEnabled(args[0].toInt() == 1);
   }
 }
 
@@ -1599,8 +1308,7 @@ void handleSetGrm(const String& command, String* args, int argCount, OutputStrea
 // while it repeats); "setVu 0" stops it immediately.
 void handleSetVu(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 1) {
-    vuLastKeepaliveAt = millis();
-    vuEnabled = args[0].toInt() == 1;
+    setVuEnabled(args[0].toInt() == 1);
   }
 }
 
