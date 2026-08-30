@@ -19,6 +19,7 @@
  */
 
 import { minimumPhaseFromLogGrid, unwrapAcrossGrid, detrendVsFreq } from './sweep-math.js';
+import { fft, nextPow2 } from './fft.js';
 
 /** Pool geometry (mirrors ESP config.h / teensy_protocol.h). */
 export const FIR_TAP_POOL = 12288;
@@ -107,7 +108,162 @@ export function planTapBudget(outputs, opts = {}) {
  * @returns {Float32Array} the kernel, length opts.taps
  */
 export function designKernel(measurement, opts) {
-  throw new Error('not implemented - see docs/AUTO_FIR_CONTRACTS.md');
+  const { freqs, magDb, excessPhaseRad } = measurement;
+  const {
+    taps,
+    sampleRate,
+    latencyBudgetSamples,
+    band,
+    targetDb = null,
+    maxBoostDb = 6,
+    maxCutDb = 12,
+    presenceCap = { fLo: 1000, fHi: 5000, db: 3 },
+  } = opts;
+
+  // Reference level: the in-band median of (measurement - target), so
+  // "corrected to target" means the level the output already plays at, not
+  // an absolute one - the measurement's absolute level is mic gain and
+  // distance, which the kernel must not try to undo.
+  const deviations = [];
+  for (let i = 0; i < freqs.length; i++) {
+    if (freqs[i] >= band.fLo && freqs[i] <= band.fHi) {
+      deviations.push(magDb[i] - (targetDb ? targetDb[i] : 0));
+    }
+  }
+  deviations.sort((a, b) => a - b);
+  const ref = deviations.length ? deviations[(deviations.length - 1) >> 1] : 0;
+
+  const corrOnGrid = new Float64Array(freqs.length);
+  for (let i = 0; i < freqs.length; i++) {
+    corrOnGrid[i] = (targetDb ? targetDb[i] : 0) + ref - magDb[i];
+  }
+
+  // Per-bin desired kernel gain and excess-phase correction on a linear
+  // grid fine enough that the log-grid interpolation, not the bin spacing,
+  // sets the resolution.
+  const N = Math.max(nextPow2(taps * 4), 8192);
+  const half = N / 2;
+  const gainDb = new Float64Array(half + 1);
+  const excCorr = new Float64Array(half + 1);
+  // Phase lead is bought with latency, and the purchase reaches down to
+  // roughly one period of the budget: zero correction below that frequency,
+  // full correction an octave above it.
+  const reach = latencyBudgetSamples > 0 ? sampleRate / latencyBudgetSamples : Infinity;
+  for (let k = 1; k <= half; k++) {
+    const f = (k * sampleRate) / N;
+    const taper = bandTaper(f, band.fLo, band.fHi);
+    if (taper === 0) continue;
+    let c = interpLogFreqClamped(corrOnGrid, freqs, f) * taper;
+    c = Math.min(maxBoostDb, Math.max(-maxCutDb, c));
+    if (presenceCap && f >= presenceCap.fLo && f <= presenceCap.fHi) {
+      c = Math.min(presenceCap.db, Math.max(-presenceCap.db, c));
+    }
+    gainDb[k] = c;
+    if (latencyBudgetSamples > 0 && f > reach) {
+      const r = f >= 2 * reach ? 1 : 0.5 * (1 - Math.cos((Math.PI * Math.log(f / reach)) / Math.log(2)));
+      excCorr[k] = -interpLogFreqClamped(excessPhaseRad, freqs, f) * taper * r;
+    }
+  }
+
+  // Magnitude -> minimum phase, then the excess-phase correction rotates in
+  // on top; the result is Hermitian by construction.
+  const magLin = new Float64Array(half + 1);
+  for (let k = 0; k <= half; k++) magLin[k] = Math.pow(10, gainDb[k] / 20);
+  const mp = cepstralMinPhase(magLin, N);
+
+  const re = new Float64Array(N);
+  const im = new Float64Array(N);
+  for (let k = 0; k <= half; k++) {
+    const c = Math.cos(excCorr[k]);
+    const s = Math.sin(excCorr[k]);
+    re[k] = mp.re[k] * c - mp.im[k] * s;
+    im[k] = mp.re[k] * s + mp.im[k] * c;
+    if (k > 0 && k < half) {
+      re[N - k] = re[k];
+      im[N - k] = -im[k];
+    }
+  }
+  im[0] = 0;
+  im[half] = 0;
+  fft(re, im, true);
+
+  // The ideal response is zero-centred (acausal support = the phase
+  // correction's lookahead, which the reach ramp confines to ~budget
+  // samples); delaying by the budget realises it causally, and every kernel
+  // of a render shares that same bulk lead. Truncate to `taps` with a tail
+  // fade so the cut edge doesn't ring.
+  const kernel = new Float32Array(taps);
+  const B = latencyBudgetSamples;
+  const fadeLen = Math.max(16, taps >> 3);
+  for (let n = 0; n < taps; n++) {
+    let v = re[(((n - B) % N) + N) % N];
+    const fromEnd = taps - 1 - n;
+    if (fromEnd < fadeLen) v *= 0.5 * (1 - Math.cos((Math.PI * fromEnd) / fadeLen));
+    kernel[n] = v;
+  }
+  return kernel;
+}
+
+// --- designKernel internals ---
+
+// Linear interpolation in log-frequency, clamped to the grid's edge values
+// outside its range (the band taper is what takes over out there).
+function interpLogFreqClamped(values, freqs, f) {
+  const last = freqs.length - 1;
+  if (f <= freqs[0]) return values[0];
+  if (f >= freqs[last]) return values[last];
+  let lo = 0;
+  let hi = last;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (freqs[mid] <= f) lo = mid;
+    else hi = mid;
+  }
+  const t = Math.log(f / freqs[lo]) / Math.log(freqs[hi] / freqs[lo]);
+  return values[lo] + t * (values[hi] - values[lo]);
+}
+
+// Raised-cosine confinement taper: 1 across [fLo, fHi], falling to 0 over
+// one transition width OUTSIDE each band edge (correction stays full
+// strength to the very edge of the band - the fitter's band limits already
+// chose where correction is trusted).
+function bandTaper(f, fLo, fHi, edgeOct = 1 / 3) {
+  const e = Math.pow(2, edgeOct);
+  if (f >= fLo && f <= fHi) return 1;
+  if (f <= fLo / e || f >= fHi * e) return 0;
+  const t = f < fLo ? Math.log((f * e) / fLo) / Math.log(e) : Math.log((fHi * e) / f) / Math.log(e);
+  return 0.5 * (1 - Math.cos(Math.PI * t));
+}
+
+// Minimum-phase complex spectrum for a magnitude on linear FFT bins
+// (0..N/2), via the real cepstrum. Same construction as the test harness
+// uses - the acceptance checks that matter (corrected-system flatness and
+// group delay) are measured with a direct DFT, independent of this.
+function cepstralMinPhase(magLin, N) {
+  const floor = 1e-6;
+  const half = N / 2;
+  const re = new Float64Array(N);
+  const im = new Float64Array(N);
+  for (let k = 0; k <= half; k++) {
+    const v = Math.log(Math.max(magLin[k], floor));
+    re[k] = v;
+    if (k > 0 && k < half) re[N - k] = v;
+  }
+  fft(re, im, true);
+  for (let q = 1; q < half; q++) {
+    re[q] *= 2;
+    re[N - q] = 0;
+  }
+  im.fill(0);
+  fft(re, im, false);
+  const outRe = new Float64Array(half + 1);
+  const outIm = new Float64Array(half + 1);
+  for (let k = 0; k <= half; k++) {
+    const mag = Math.exp(re[k]);
+    outRe[k] = mag * Math.cos(im[k]);
+    outIm[k] = mag * Math.sin(im[k]);
+  }
+  return { re: outRe, im: outIm };
 }
 
 /**

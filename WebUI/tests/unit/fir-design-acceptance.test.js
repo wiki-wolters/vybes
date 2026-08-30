@@ -122,7 +122,7 @@ describe('criterion 2: clock drift is estimated and correctable', () => {
   });
 });
 
-describe.skip('criteria 3-6: kernel design', () => {
+describe('criteria 3-6: kernel design', () => {
   const designOpts = (taps, latencyBudgetSamples, extra = {}) => ({
     taps,
     sampleRate: RATE,
