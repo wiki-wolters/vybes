@@ -17,6 +17,12 @@ const long MAX_BACKLIGHT_MILLIS = 5000;
 const unsigned long SCREEN_BOOT_WAIT_MS = 1000;
 const unsigned long SCREEN_PROBE_INTERVAL_MS = 2000;
 
+// The PCF8574 ACKs from ~2.5V, but the HD44780 behind it needs its own 5V
+// power-on reset to finish before it will accept instructions. An ACK is
+// therefore not proof the display is ready: always let the rail settle
+// before the init sequence, however early the backpack started answering.
+const unsigned long LCD_SETTLE_MS = 100;
+
 unsigned long messageStart = 0;
 unsigned long messageDuration = 0;
 unsigned long backlightStart = 0;
@@ -29,9 +35,15 @@ static unsigned long lastProbeMillis = 0;
 // terminate the String).
 #define REC_DOT_CHAR 1
 
-// The HD44780 accepts its init sequence exactly once and begin() checks no
-// ACKs, so an LCD that isn't powered and settled at this moment stays dark
-// until the next power cycle even though every later print() "succeeds".
+// begin() checks no ACKs, so a display that isn't powered and settled when
+// this runs ignores the sequence and stays dark while every later print()
+// "succeeds". Nothing recovers that on its own - hence probeScreenPresence(),
+// which calls this again the moment the backpack reappears. Re-running it is
+// safe: the HD44780's "Initializing by Instruction" sequence is idempotent.
+//
+// begin() is also the only thing that binds the library's TwoWire pointer -
+// the constructor leaves it null - so this has to run at boot even when
+// nothing answered. See setupScreen().
 static void initLcd() {
     lcd.begin(16, 2);  // Initialize for 16x2 display
     lcd.setBacklight(0);  // Turn off backlight initially
@@ -45,8 +57,8 @@ static void initLcd() {
 
 // The library binds its TwoWire pointer inside begin() and nowhere else -
 // the constructor leaves it null - so lcd.isConnected() faults on a null
-// port until the one-shot init has run. That is precisely the probe this
-// code has to make *before* init, so probe the bus directly instead.
+// port until initLcd() has run. That is precisely the probe this code has to
+// make *before* init, so probe the bus directly instead.
 // Wire is already up: initI2C() runs ahead of setupScreen().
 static bool backpackAcks() {
     Wire.beginTransmission(LCD_I2C_ADDR);
@@ -66,16 +78,20 @@ void setupScreen() {
             delay(50);
             screenPresent = backpackAcks();
         }
-        if (!screenPresent) {
-            DebugSerial.println("LCD not responding; will keep probing");
-            return;
-        }
-        // The PCF8574 ACKs from ~2.5V but the HD44780 behind it needs its
-        // 5V power-on reset to finish: give a rail we just watched come up
-        // a moment to settle before the one-shot init sequence.
-        delay(100);
     }
 
+    if (screenPresent) {
+        delay(LCD_SETTLE_MS);
+    } else {
+        DebugSerial.println("LCD not responding; will keep probing");
+    }
+
+    // Initialize either way. Returning early here left every lcd.* call with
+    // a null TwoWire pointer, and setup()'s very next line - writeToScreen()
+    // - faulted on it: the ESP panicked and rebooted a second into every
+    // boot, long before WiFi, so a screen that was merely late took the whole
+    // device into a boot loop and the probe below never got to run. Into an
+    // absent backpack the transfers just NAK and cost a few ms.
     initLcd();
 
     // Display a test message
@@ -100,7 +116,7 @@ static void probeScreenPresence() {
     bool present = backpackAcks();
     if (present && !screenPresent) {
         DebugSerial.println("LCD appeared; initializing");
-        delay(100); // same power-on-reset settle as in setupScreen()
+        delay(LCD_SETTLE_MS); // the rail just came up; let it settle
         initLcd();
         screenPresent = true;
         messageDuration = 0;
