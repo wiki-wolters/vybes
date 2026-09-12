@@ -209,6 +209,103 @@ static void test_bell_shape_anchors(void) {
     TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, calculateBellFilter(20000.0f, 20.0f, 9.0f, 4.0f, (float)kFs));
 }
 
+// --- high shelf (loudness compensation, DynamicEqMath.h) ---
+
+// RBJ audio-EQ-cookbook high-shelf filter at shelf slope S = 1, i.e.
+// alpha = sin(w0)/2 * sqrt((A + 1/A)*(1/S - 1) + 2) = sin(w0)/(2*Q) with
+// Q = 1/sqrt(2) - the reference peqComputeHighShelfSvf must realise.
+static Biquad rbjHighShelf(double f0, double gainDb, double fs) {
+    double A = pow(10.0, gainDb / 40.0);
+    double w0 = 2.0 * kPi * f0 / fs;
+    double alpha = sin(w0) / 2.0 * sqrt(2.0);
+    double c = cos(w0);
+    double sa = 2.0 * sqrt(A) * alpha;
+    Biquad b;
+    b.b0 = A * ((A + 1.0) + (A - 1.0) * c + sa);
+    b.b1 = -2.0 * A * ((A - 1.0) + (A + 1.0) * c);
+    b.b2 = A * ((A + 1.0) + (A - 1.0) * c - sa);
+    b.a0 = (A + 1.0) - (A - 1.0) * c + sa;
+    b.a1 = 2.0 * ((A - 1.0) - (A + 1.0) * c);
+    b.a2 = (A + 1.0) - (A - 1.0) * c - sa;
+    return b;
+}
+
+// Frequency response of the shelf difference equations PEQProcessor runs
+// (PEQProcessor::processShelf) - same state-space derivation as
+// svfMagnitudeDb above, but the output mixes all three SVF taps:
+//   y = m0*v0 + m1*v1 + m2*v2
+static double shelfSvfMagnitudeDb(const PeqShelfSvfCoeffs& c, double freq, double fs) {
+    double a1 = c.a1, a2 = c.a2, a3 = c.a3, m0 = c.m0, m1 = c.m1, m2 = c.m2;
+
+    double F[2][2] = {{2.0 * a1 - 1.0, -2.0 * a2},
+                      {2.0 * a2, 1.0 - 2.0 * a3}};
+    double G[2] = {2.0 * a2, 2.0 * a3};
+    double H[2] = {m1 * a1 + m2 * a2, -m1 * a2 + m2 * (1.0 - a3)};
+    double D = m0 + m1 * a2 + m2 * a3;
+
+    std::complex<double> z = std::polar(1.0, 2.0 * kPi * freq / fs);
+    std::complex<double> m00 = z - F[0][0], m01 = -F[0][1];
+    std::complex<double> m10 = -F[1][0], m11 = z - F[1][1];
+    std::complex<double> det = m00 * m11 - m01 * m10;
+    std::complex<double> x0 = (m11 * G[0] - m01 * G[1]) / det;
+    std::complex<double> x1 = (-m10 * G[0] + m00 * G[1]) / det;
+    std::complex<double> Hz = H[0] * x0 + H[1] * x1 + D;
+    return 20.0 * log10(std::abs(Hz));
+}
+
+// The SVF realisation and the exact helper must both BE the RBJ digital
+// high shelf, across the whole audio band and the whole gain range the
+// loudness compensation uses (0 to -15dB per shelf). Evaluated analytically
+// from the difference equations, not swept with sines.
+static void test_high_shelf_matches_rbj_cookbook(void) {
+    // The two corners the loudness compensation uses (DynamicEqMath.h);
+    // spelled out here so this suite stays about the filter, not the policy.
+    const double corners[] = {60.0, 300.0};
+    for (int ci = 0; ci < 2; ci++) {
+        double fc = corners[ci];
+        for (double gainDb = -15.0; gainDb <= 0.0001; gainDb += 0.5) {
+            PeqShelfSvfCoeffs c = peqComputeHighShelfSvf((float)fc, (float)gainDb, (float)kFs);
+            Biquad ref = rbjHighShelf(fc, gainDb, kFs);
+            for (int i = 0; i <= 400; i++) {
+                double f = 20.0 * pow(1000.0, i / 400.0); // 20Hz-20kHz
+                double expected = biquadMagnitudeDb(ref, f, kFs);
+                char msg[96];
+                snprintf(msg, sizeof(msg), "fc=%g gain=%g f=%g", fc, gainDb, f);
+                TEST_ASSERT_DOUBLE_WITHIN_MESSAGE(0.1, expected,
+                                                  shelfSvfMagnitudeDb(c, f, kFs), msg);
+                TEST_ASSERT_DOUBLE_WITHIN_MESSAGE(0.1, expected,
+                                                  highShelfDb((float)f, (float)fc,
+                                                              (float)gainDb, (float)kFs), msg);
+            }
+        }
+    }
+}
+
+// Shelf anchors: unity far below the corner, the full gain at the top, and
+// half of it (in dB) at the corner itself.
+static void test_high_shelf_anchors(void) {
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, 0.0f, highShelfDb(20.0f, 300.0f, -6.0f, (float)kFs));
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, -6.0f, highShelfDb(20000.0f, 300.0f, -6.0f, (float)kFs));
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, -3.0f, highShelfDb(300.0f, 300.0f, -6.0f, (float)kFs));
+    // A flat shelf is exactly flat, and at Nyquist the shelf is fully open
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, highShelfDb(1000.0f, 300.0f, 0.0f, (float)kFs));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, -6.0f,
+                             highShelfDb((float)kFs * 0.5f, 300.0f, -6.0f, (float)kFs));
+}
+
+// Shelves take the same gain and frequency clamps as the bells
+static void test_high_shelf_clamps(void) {
+    PeqShelfSvfCoeffs clamped = peqComputeHighShelfSvf(300.0f, -40.0f, (float)kFs);
+    PeqShelfSvfCoeffs atLimit = peqComputeHighShelfSvf(300.0f, -15.0f, (float)kFs);
+    TEST_ASSERT_EQUAL_FLOAT(atLimit.m0, clamped.m0);
+    TEST_ASSERT_EQUAL_FLOAT(atLimit.m1, clamped.m1);
+    TEST_ASSERT_EQUAL_FLOAT(atLimit.m2, clamped.m2);
+    TEST_ASSERT_EQUAL_FLOAT(atLimit.a1, clamped.a1);
+
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, highShelfDb(1000.0f, 20.0f, -6.0f, (float)kFs),
+                             highShelfDb(1000.0f, 5.0f, -6.0f, (float)kFs));
+}
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -221,5 +318,8 @@ int main(int, char**) {
     RUN_TEST(test_edge_clamps);
     RUN_TEST(test_freq_clamp_tracks_sample_rate);
     RUN_TEST(test_bell_shape_anchors);
+    RUN_TEST(test_high_shelf_matches_rbj_cookbook);
+    RUN_TEST(test_high_shelf_anchors);
+    RUN_TEST(test_high_shelf_clamps);
     return UNITY_END();
 }

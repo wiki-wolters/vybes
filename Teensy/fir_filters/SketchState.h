@@ -78,8 +78,24 @@ struct State {
 
   OutputState outputs[NUM_OUTPUTS];
 
-  // Shared input EQ bands (left and right run the same curve)
+  // Shared input EQ bands (left and right run the same curve). This is the
+  // REFERENCE anchor of the dynamic EQ (DynamicEqMath.h): the curve as it
+  // should sound at inputEqRefVolumePct on the volume slider.
   PEQBand inputEqBands[MAX_PEQ_BANDS];
+
+  // Loud anchor: same frequencies, same Qs, different gains. Only reached
+  // above the reference level, and only when inputEqLoudVolumePct names one.
+  float inputEqLoudGain[MAX_PEQ_BANDS] = {0.0f};
+
+  // Volume-slider percents the two anchors sit at. A loud percent at or
+  // below the reference means "no loud anchor" - the reference curve then
+  // holds at every level above it.
+  int inputEqRefVolumePct = 50;
+  int inputEqLoudVolumePct = 0;
+
+  // Automatic ISO 226-derived compensation below the reference level. Part
+  // of the preference curve, so inputEqEnabled ("Pure Direct") gates it too.
+  bool loudnessEnabled = true;
 };
 
 extern State state;

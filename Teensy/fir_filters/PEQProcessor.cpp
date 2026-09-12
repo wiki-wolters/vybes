@@ -1,11 +1,19 @@
 #include "PEQProcessor.h"
+#include "DynamicEqMath.h" // shelf corner frequencies
 #include <math.h>
 
 PEQProcessor::PEQProcessor() : AudioStream(1, inputQueue),
-                               sampleRate(44100.0f), initialized(false), bypassed(false) {
+                               sampleRate(44100.0f), initialized(false), bypassed(false),
+                               appliedPreEqBoostDb(NAN),
+                               shelfGainDb(0.0f), shelfStartGainDb(0.0f),
+                               shelfTargetGainDb(0.0f), shelfStartTime(0),
+                               shelfDuration(50), shelfMoving(false) {
   for (int i = 0; i < MAX_PEQ_BANDS; i++) {
     bands[i] = {1000.0f, 0.0f, 1.0f, false};
     svf[i] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, false};
+  }
+  for (int i = 0; i < LOUDNESS_SHELF_COUNT; i++) {
+    shelves[i] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, false};
   }
 
   animation.active = false;
@@ -101,6 +109,13 @@ int PEQProcessor::getActiveBandCount() const {
 }
 
 void PEQProcessor::applyPreEQGain(float maxBoost, AudioAmplifier& leftAmp, AudioAmplifier& rightAmp) {
+  // The dynamic EQ re-derives the pad on every volume tick, and this writes
+  // the amp gain straight in (no ramp) and logs a line. Both are wasted -
+  // and the log is noise in the middle of a slider drag - when the pad has
+  // not actually moved. NAN != NAN, so the first call always writes.
+  if (maxBoost == appliedPreEqBoostDb) return;
+  appliedPreEqBoostDb = maxBoost;
+
   float linearGain = 1.0f; // Default to 1.0 (0dB) if no boost or only cuts
   if (maxBoost > 0.0f) {
     // Convert dB to linear gain and apply as attenuation
@@ -167,6 +182,113 @@ void PEQProcessor::processBand(int bandIndex, float32_t* buffer, int numSamples)
   f.ic2eq = ic2;
 }
 
+// --- Loudness compensation shelves ---
+
+// Recompute both shelf stages for shelfGainDb. At 0dB they drop out of the
+// cascade entirely, so a preference curve with no compensation running costs
+// nothing per block.
+void PEQProcessor::updateShelves() {
+  static const float shelfFreq[LOUDNESS_SHELF_COUNT] = {
+      LOUDNESS_SHELF1_HZ, LOUDNESS_SHELF2_HZ};
+
+  bool active = shelfGainDb != 0.0f;
+  for (int i = 0; i < LOUDNESS_SHELF_COUNT; i++) {
+    SVFShelf& s = shelves[i];
+
+    if (!active) {
+      if (s.active) {
+        // Reset states so a later re-enable doesn't replay stale energy
+        s.ic1eq = 0.0f;
+        s.ic2eq = 0.0f;
+      }
+      s.active = false;
+      continue;
+    }
+
+    PeqShelfSvfCoeffs c = peqComputeHighShelfSvf(shelfFreq[i], shelfGainDb, sampleRate);
+
+    if (!s.active) {
+      s.ic1eq = 0.0f;
+      s.ic2eq = 0.0f;
+    }
+    s.a1 = c.a1;
+    s.a2 = c.a2;
+    s.a3 = c.a3;
+    s.m0 = c.m0;
+    s.m1 = c.m1;
+    s.m2 = c.m2;
+    s.active = true;
+  }
+}
+
+void PEQProcessor::setLoudnessShelves(float gainDb, unsigned long durationMs) {
+  if (!initialized) return;
+
+  // Serial (loop) context against the audio interrupt, same as the bands.
+  AudioNoInterrupts();
+
+  // Already there, or already on the way there - don't restart the morph
+  if (gainDb == shelfTargetGainDb) {
+    AudioInterrupts();
+    return;
+  }
+
+  if (durationMs == 0) {
+    shelfMoving = false;
+    shelfGainDb = gainDb;
+    shelfTargetGainDb = gainDb;
+    updateShelves();
+    AudioInterrupts();
+    return;
+  }
+
+  shelfStartGainDb = shelfGainDb;
+  shelfTargetGainDb = gainDb;
+  shelfStartTime = millis();
+  shelfDuration = durationMs;
+  shelfMoving = true;
+
+  AudioInterrupts();
+}
+
+// Same smoothstep the band morph uses, on its own clock: the shelves and the
+// bands are set by separate calls and must not reset each other's timer.
+void PEQProcessor::processShelfMorph() {
+  unsigned long elapsed = millis() - shelfStartTime;
+
+  if (elapsed >= shelfDuration) {
+    shelfGainDb = shelfTargetGainDb;
+    shelfMoving = false;
+    updateShelves();
+    return;
+  }
+
+  float progress = (float)elapsed / (float)shelfDuration;
+  progress = progress * progress * (3.0f - 2.0f * progress); // smoothstep
+  shelfGainDb = interpolate(shelfStartGainDb, shelfTargetGainDb, progress);
+  updateShelves();
+}
+
+void PEQProcessor::processShelf(int shelfIndex, float32_t* buffer, int numSamples) {
+  SVFShelf& s = shelves[shelfIndex];
+  float a1 = s.a1, a2 = s.a2, a3 = s.a3;
+  float m0 = s.m0, m1 = s.m1, m2 = s.m2;
+  float ic1 = s.ic1eq, ic2 = s.ic2eq;
+
+  for (int i = 0; i < numSamples; i++) {
+    float v0 = buffer[i];
+    float v3 = v0 - ic2;
+    float v1 = a1 * ic1 + a2 * v3;
+    float v2 = ic2 + a2 * ic1 + a3 * v3;
+    ic1 = 2.0f * v1 - ic1;
+    ic2 = 2.0f * v2 - ic2;
+    buffer[i] = m0 * v0 + m1 * v1 + m2 * v2; // shelf mixes all three outputs
+  }
+
+  s.ic1eq = ic1;
+  s.ic2eq = ic2;
+}
+
 void PEQProcessor::animateToBands(const PEQBand* targetBands, int numBands, unsigned long durationMs) {
   if (!initialized) return;
 
@@ -175,6 +297,7 @@ void PEQProcessor::animateToBands(const PEQBand* targetBands, int numBands, unsi
   AudioNoInterrupts();
 
   int maxBands = min(numBands, MAX_PEQ_BANDS);
+  bool anyMoving = false;
   for (int i = 0; i < MAX_PEQ_BANDS; i++) {
     animation.startBands[i] = bands[i];
     if (i < maxBands) {
@@ -188,6 +311,16 @@ void PEQProcessor::animateToBands(const PEQBand* targetBands, int numBands, unsi
         animation.startBands[i].gain != animation.targetBands[i].gain ||
         animation.startBands[i].q != animation.targetBands[i].q ||
         animation.startBands[i].enabled != animation.targetBands[i].enabled;
+    anyMoving = anyMoving || animation.bandMoving[i];
+  }
+
+  // The dynamic EQ re-pushes the whole curve on every volume tick, and below
+  // the reference level none of it moves. Don't run an animation that would
+  // recompute nothing for 50ms of audio interrupts.
+  if (!anyMoving) {
+    animation.active = false;
+    AudioInterrupts();
+    return;
   }
 
   if (durationMs == 0) {
@@ -217,6 +350,9 @@ void PEQProcessor::setAnimationSpeed(unsigned long durationMs) {
 void PEQProcessor::updateAnimationState() {
   if (animation.active) {
     processAnimation();
+  }
+  if (shelfMoving) {
+    processShelfMorph();
   }
 }
 
@@ -299,6 +435,14 @@ void PEQProcessor::update(void) {
   for (int i = 0; i < MAX_PEQ_BANDS; i++) {
     if (svf[i].active) {
       processBand(i, float_buffer, AUDIO_BLOCK_SAMPLES);
+    }
+  }
+
+  // Then the loudness shelves: part of the same preference curve, so they
+  // live behind the same bypass, but they are not user bands.
+  for (int i = 0; i < LOUDNESS_SHELF_COUNT; i++) {
+    if (shelves[i].active) {
+      processShelf(i, float_buffer, AUDIO_BLOCK_SAMPLES);
     }
   }
 

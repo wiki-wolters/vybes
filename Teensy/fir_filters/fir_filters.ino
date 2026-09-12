@@ -6,6 +6,7 @@
 #include "FIRLoader.h"
 #include "PEQProcessor.h"
 #include "HeadroomMath.h"
+#include "DynamicEqMath.h"
 #include "CrossoverFilter.h"
 #include "MultibandCompressor.h"
 #include "SerialCommandRouter.h"
@@ -370,7 +371,7 @@ void setup() {
   Serial.println("Applying state");
   setInputGains(state.gainBluetooth, state.gainOptical, state.gainUSB, state.gainGenerator, state.gainAnalog);
   setInputEqEnabled(state.inputEqEnabled);
-  applyInputEqFilters(0);
+  refreshDynamicEq(0); // snap, don't morph, into the boot curve
   setFIREnabled(state.firEnabled);
   applyDelays();
   updateTargetVolume();
@@ -642,12 +643,20 @@ void updateAudioVolume() {
 }
 
 void updateTargetVolume() {
+  float target;
   if (state.muted) {
     float reduction = state.mutePercent / 100.0;
-    state.targetVolume = state.volume * (1.0 - reduction);
+    target = state.volume * (1.0 - reduction);
   } else {
-    state.targetVolume = state.volume;
+    target = state.volume;
   }
+  if (target == state.targetVolume) return;
+  state.targetVolume = target;
+
+  // The preference curve is anchored to listening level, so every volume,
+  // mute and dim change re-resolves it. Silent by design: setVolume already
+  // prints one line per tick and a slider drag sends a lot of them.
+  refreshDynamicEq(EQ_MORPH_MS);
 }
 
 void setMute(bool mute) {
@@ -728,41 +737,102 @@ void setNoise(float volumePercent) {
   pink1.amplitude(volumePercent / 100.0f);
 }
 
-// --- Shared input EQ ---
+// --- Shared input EQ (the dynamic preference curve) ---
+//
+// The curve is anchored at two listening levels that share band frequencies
+// and Qs and differ only in gain: the reference (state.inputEqRefVolumePct)
+// and, optionally, a louder one. Above the reference the gains interpolate
+// in volume-dB toward the loud anchor and hold past it; below it the
+// automatic loudness compensation takes over, as two shelves inside the PEQ
+// processors. The math is in DynamicEqMath.h.
 
 // Attenuate the pre-EQ amps to compensate for the maximum net boost of the
-// current EQ curve (boost less the spectral allowance - HeadroomMath.h), so
-// boosted bands can't clip. Unity while the EQ is bypassed ("Pure Direct" -
-// no wasted headroom).
-void applyPreEQGainCompensation() {
+// EFFECTIVE curve (boost less the spectral allowance - HeadroomMath.h), so
+// boosted bands can't clip. The effective gains, not the stored reference
+// ones: past the reference level the loud anchor is what actually runs, and
+// it is the one that can boost. The loudness shelves only ever cut, so they
+// cost nothing here. Unity while the EQ is bypassed ("Pure Direct" - no
+// wasted headroom).
+void applyPreEQGainCompensation(const PEQBand* effectiveBands) {
+  // headroomMaxBoostDb sweeps 115 points across every band in double
+  // precision - milliseconds of loop() time. It used to run only when the
+  // user edited the EQ; the dynamic curve would now call it on every volume
+  // tick, so remember the curve it was last charged for and skip the sweep
+  // when nothing feeding it has moved. Below the reference level with no
+  // loud anchor the effective curve never changes with volume, so a slider
+  // drag costs nothing here at all.
+  static PEQBand chargedBands[MAX_PEQ_BANDS];
+  static bool chargedEqEnabled = false;
+  static bool everCharged = false;
+
+  bool changed = !everCharged || chargedEqEnabled != state.inputEqEnabled;
+  for (int i = 0; i < MAX_PEQ_BANDS && !changed; i++) {
+    changed = chargedBands[i].frequency != effectiveBands[i].frequency ||
+              chargedBands[i].gain != effectiveBands[i].gain ||
+              chargedBands[i].q != effectiveBands[i].q ||
+              chargedBands[i].enabled != effectiveBands[i].enabled;
+  }
+  if (!changed) return;
+
+  for (int i = 0; i < MAX_PEQ_BANDS; i++) chargedBands[i] = effectiveBands[i];
+  chargedEqEnabled = state.inputEqEnabled;
+  everCharged = true;
+
   float padDb = 0.0f;
   if (state.inputEqEnabled) {
-    padDb = headroomMaxBoostDb(state.inputEqBands, MAX_PEQ_BANDS, AUDIO_SAMPLE_RATE);
+    padDb = headroomMaxBoostDb(effectiveBands, MAX_PEQ_BANDS, AUDIO_SAMPLE_RATE);
   }
   peqLeft.applyPreEQGain(padDb, Left_Pre_EQ_amp, Right_Pre_EQ_amp);
 }
 
-// Apply all bands in state.inputEqBands to both PEQ processors. Disabled
-// bands are passed through too - the processors bypass them individually.
-void applyInputEqFilters(unsigned long animationDurationMs) {
-  peqLeft.animateToBands(state.inputEqBands, MAX_PEQ_BANDS, animationDurationMs);
-  peqRight.animateToBands(state.inputEqBands, MAX_PEQ_BANDS, animationDurationMs);
-  applyPreEQGainCompensation();
+// Resolve the preference curve for the level playing right now and push it
+// into both PEQ processors, their loudness shelves and the headroom pad.
+// Every path that can move either the curve or the level calls this, so it
+// runs on each volume tick - animateToBands, setLoudnessShelves and
+// applyPreEQGain each no-op when their own input hasn't changed.
+void refreshDynamicEq(unsigned long animationDurationMs) {
+  const float refDb = volumePctToDb(state.inputEqRefVolumePct);
+  const float loudDb = volumePctToDb(state.inputEqLoudVolumePct);
+  const bool hasLoud = state.inputEqLoudVolumePct > state.inputEqRefVolumePct;
+  // targetVolume, not volume: a dim is a real reduction in playback level
+  // and the curve should follow it.
+  const float volDb = volumeLinearToDb(state.targetVolume);
+
+  float gains[MAX_PEQ_BANDS];
+  dynamicEqGains(state.inputEqBands, state.inputEqLoudGain, MAX_PEQ_BANDS,
+                 refDb, loudDb, hasLoud, volDb, gains);
+
+  PEQBand effective[MAX_PEQ_BANDS];
+  for (int i = 0; i < MAX_PEQ_BANDS; i++) {
+    effective[i] = state.inputEqBands[i];
+    effective[i].gain = gains[i];
+  }
+
+  // Disabled bands are pushed too - the processors bypass them individually.
+  peqLeft.animateToBands(effective, MAX_PEQ_BANDS, animationDurationMs);
+  peqRight.animateToBands(effective, MAX_PEQ_BANDS, animationDurationMs);
+
+  const float shelfDb = state.loudnessEnabled
+                            ? loudnessShelfGainDb(loudnessDropDb(refDb, volDb))
+                            : 0.0f;
+  peqLeft.setLoudnessShelves(shelfDb, animationDurationMs);
+  peqRight.setLoudnessShelves(shelfDb, animationDurationMs);
+
+  applyPreEQGainCompensation(effective);
 }
 
 void setInputEqEnabled(bool enabled) {
   Serial.println(String("Set input EQ enabled: ") + (enabled ? "yes" : "no"));
   state.inputEqEnabled = enabled;
+  // "Pure Direct": the bypass takes out the loudness shelves along with the
+  // bands - the compensation is part of the preference curve, not a separate
+  // stage that survives it.
   peqLeft.setBypass(!enabled);
   peqRight.setBypass(!enabled);
 
-  if (enabled) {
-    // EQ is enabled, so apply the filters and the gain compensation
-    applyInputEqFilters(EQ_MORPH_MS);
-  } else {
-    // Unity pad while off
-    applyPreEQGainCompensation();
-  }
+  // Re-applies the curve when enabling, and drops the pad back to unity when
+  // disabling (applyPreEQGainCompensation charges nothing while bypassed).
+  refreshDynamicEq(EQ_MORPH_MS);
 }
 
 void resetInputEqBands(int fromIndex) {
@@ -772,8 +842,11 @@ void resetInputEqBands(int fromIndex) {
     state.inputEqBands[i].frequency = 1000.0f;
     state.inputEqBands[i].gain = 0.0f;
     state.inputEqBands[i].q = 1.0f;
+    // Both anchors are one curve: a band the UI dropped must not leave a
+    // loud gain behind to reappear the next time the volume goes up.
+    state.inputEqLoudGain[i] = 0.0f;
   }
-  applyInputEqFilters(EQ_MORPH_MS);
+  refreshDynamicEq(EQ_MORPH_MS);
 }
 
 // --- Per-output DSP ---
@@ -1052,7 +1125,7 @@ void handleSetInputEq(const String& command, String* args, int argCount, OutputS
       state.inputEqBands[index].gain = gain;
 
       // Morph smoothly to the new curve
-      applyInputEqFilters(EQ_MORPH_MS);
+      refreshDynamicEq(EQ_MORPH_MS);
     }
   }
 }
@@ -1066,6 +1139,41 @@ void handleResetInputEq(const String& command, String* args, int argCount, Outpu
 void handleSetInputEqEnabled(const String& command, String* args, int argCount, OutputStream& stream) {
   if (argCount == 1) {
     setInputEqEnabled(args[0].toInt() == 1);
+  }
+}
+
+// The loud anchor's gain for one band. Frequency, Q and enabled come from
+// the reference band of the same index (setInputEq) - the two anchors are
+// the same curve at two levels, not two independent EQs.
+void handleSetInputEqLoudGain(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 2) {
+    int index = args[0].toInt();
+    if (index >= 0 && index < MAX_PEQ_BANDS) {
+      state.inputEqLoudGain[index] = args[1].toFloat();
+      refreshDynamicEq(EQ_MORPH_MS);
+    }
+  }
+}
+
+// The volume-slider percents the two anchors sit at. A loud percent at or
+// below the reference means there is no loud anchor.
+void handleSetInputEqAnchors(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 2) {
+    int refPct = args[0].toInt();
+    int loudPct = args[1].toInt();
+    state.inputEqRefVolumePct = constrain(refPct, 0, 100);
+    state.inputEqLoudVolumePct = constrain(loudPct, 0, 100);
+    Serial.println("Set input EQ anchors: ref " + String(state.inputEqRefVolumePct) +
+                   "%, loud " + String(state.inputEqLoudVolumePct) + "%");
+    refreshDynamicEq(EQ_MORPH_MS);
+  }
+}
+
+void handleSetLoudness(const String& command, String* args, int argCount, OutputStream& stream) {
+  if (argCount == 1) {
+    state.loudnessEnabled = args[0].toInt() == 1;
+    Serial.println(String("Set loudness: ") + (state.loudnessEnabled ? "on" : "off"));
+    refreshDynamicEq(EQ_MORPH_MS);
   }
 }
 

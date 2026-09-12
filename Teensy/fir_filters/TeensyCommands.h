@@ -32,6 +32,9 @@
   X(setInputEq, handleSetInputEq) \
   X(resetInputEq, handleResetInputEq) \
   X(setInputEqEnabled, handleSetInputEqEnabled) \
+  X(setInputEqLoudGain, handleSetInputEqLoudGain) \
+  X(setInputEqAnchors, handleSetInputEqAnchors) \
+  X(setLoudness, handleSetLoudness) \
   X(setFir, handleSetFIR) \
   X(setFirEnabled, handleSetFIREnabled) \
   X(loadFirFiles, handleLoadFirFiles) \

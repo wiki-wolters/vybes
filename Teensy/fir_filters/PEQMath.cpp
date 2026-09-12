@@ -21,6 +21,16 @@ static void clampBandParams(float& freq, float& gain, float& q, float sampleRate
   gain = clampf(gain, -15.0f, 15.0f);
 }
 
+// Shelf slope S = 1 in RBJ's parameterisation, i.e. alpha = sin(w0)/(2*Q)
+// with Q = 1/sqrt(2).
+static const double PEQ_SHELF_Q = 0.70710678118654752440;
+
+// Shelves take the band clamps minus the Q, which is fixed above.
+static void clampShelfParams(float& fc, float& gain, float sampleRate) {
+  float q = PEQ_SHELF_Q;
+  clampBandParams(fc, gain, q, sampleRate);
+}
+
 PeqSvfCoeffs peqComputeBellSvf(float frequency, float gain, float q, float sampleRate) {
   float freq = frequency, gc = gain, qc = q;
   clampBandParams(freq, gc, qc, sampleRate);
@@ -63,4 +73,51 @@ float calculateBellFilter(float freq, float centerFreq, float gain, float q,
   double nb = A * O / (double)q;
   double db = O / (A * (double)q);
   return (float)(10.0 * log10((c + nb * nb) / (c + db * db)));
+}
+
+// Cytomic/Simper SVF, high-shelf configuration. The sqrt(A) on g is what
+// makes this the RBJ cookbook shelf and not some other one: RBJ normalises
+// its prototype to w0, the SVF normalises to a corner sqrt(A) above it, and
+// the two prototypes differ by exactly that substitution - so both bilinear
+// transforms land on the same digital filter (verified in test_peq_math).
+PeqShelfSvfCoeffs peqComputeHighShelfSvf(float fc, float gainDb, float sampleRate) {
+  float freq = fc, gc = gainDb;
+  clampShelfParams(freq, gc, sampleRate);
+
+  double A = pow(10.0, (double)gc / 40.0);
+  double g = tan(PEQ_PI * (double)freq / (double)sampleRate) * sqrt(A);
+  double k = 1.0 / PEQ_SHELF_Q;
+  double a1 = 1.0 / (1.0 + g * (g + k));
+
+  PeqShelfSvfCoeffs c;
+  c.a1 = (float)a1;
+  c.a2 = (float)(g * a1);
+  c.a3 = (float)(g * g * a1);
+  c.m0 = (float)(A * A);
+  c.m1 = (float)(k * (1.0 - A) * A);
+  c.m2 = (float)(1.0 - A * A);
+  return c;
+}
+
+// Exact high-shelf magnitude, the same way calculateBellFilter does it for
+// the bell: the analog prototype
+//   H(u) = (A^2*u^2 + (A/Q)*u + 1) / (u^2 + (1/Q)*u + 1)
+// evaluated at the warped ratio tan(pi*f/fs) / (tan(pi*fc/fs)*sqrt(A)),
+// which is the bilinear transform of that prototype and therefore the
+// response of the filter peqComputeHighShelfSvf builds.
+float highShelfDb(float freq, float fc, float gainDb, float sampleRate) {
+  if (gainDb == 0.0f || freq <= 0.0f || sampleRate <= 0.0f) return 0.0f;
+  float center = fc, gain = gainDb;
+  clampShelfParams(center, gain, sampleRate);
+  // The digital shelf reaches exactly its full gain at Nyquist
+  if (freq >= 0.5f * sampleRate) return gain;
+
+  double A = pow(10.0, (double)gain / 40.0);
+  double O = tan(PEQ_PI * (double)freq / (double)sampleRate) /
+             (tan(PEQ_PI * (double)center / (double)sampleRate) * sqrt(A));
+  double n = 1.0 - A * A * O * O;
+  double d = 1.0 - O * O;
+  double nb = A * O / PEQ_SHELF_Q;
+  double db = O / PEQ_SHELF_Q;
+  return (float)(10.0 * log10((n * n + nb * nb) / (d * d + db * db)));
 }

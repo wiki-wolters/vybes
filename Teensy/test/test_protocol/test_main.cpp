@@ -100,6 +100,11 @@ static const ProtocolCase kProtocolCases[] = {
     {CMD_SET_INPUT_EQ, "2", "1000.0 1.41 -4.50", nullptr, nullptr, nullptr, 4},
     {CMD_RESET_INPUT_EQ, "5", nullptr, nullptr, nullptr, nullptr, 1},
     {CMD_SET_INPUT_EQ_ENABLED, "1", nullptr, nullptr, nullptr, nullptr, 1},
+    // Dynamic EQ: the loud anchor's per-band gain, the two anchor percents
+    // and the loudness-compensation toggle (docs/DYNAMIC_EQ.md)
+    {CMD_SET_INPUT_EQ_LOUD_GAIN, "2", "3.50", nullptr, nullptr, nullptr, 2},
+    {CMD_SET_INPUT_EQ_ANCHORS, "50", "79", nullptr, nullptr, nullptr, 2},
+    {CMD_SET_LOUDNESS, "1", nullptr, nullptr, nullptr, nullptr, 1},
     {CMD_SET_FIR, "3", "DeskL.wav", nullptr, nullptr, nullptr, 2},
     {CMD_SET_FIR_ENABLED, "1", nullptr, nullptr, nullptr, nullptr, 1},
     {CMD_LOAD_FIR_FILES, nullptr, nullptr, nullptr, nullptr, nullptr, 0},

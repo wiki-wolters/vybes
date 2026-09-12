@@ -14,6 +14,11 @@
 // Must match MAX_PEQ_POINTS on the ESP and the point limit in the WebUI
 #define MAX_PEQ_BANDS 15
 
+// Internal loudness-compensation shelves, on top of the user bands (see
+// setLoudnessShelves). Not bands - they never appear in the band array, the
+// band count or the WebUI's point budget.
+#define LOUDNESS_SHELF_COUNT 2
+
 // PEQBand itself lives in PEQMath.h (included above) so the pure headroom
 // math can consume band arrays host-side.
 
@@ -52,6 +57,13 @@ public:
   // headroomMaxBoostDb (HeadroomMath.h).
   void applyPreEQGain(float maxBoost, AudioAmplifier& leftAmp, AudioAmplifier& rightAmp);
 
+  // Loudness compensation: two high shelves cascaded after the user bands,
+  // both at 'gainDb' (negative - see DynamicEqMath.h for why the
+  // compensation cuts rather than boosts). 0 switches them out of the
+  // cascade entirely. The gain morphs like a band does, so the volume
+  // slider can be dragged without clicking.
+  void setLoudnessShelves(float gainDb, unsigned long durationMs = 50);
+
   // Animation (smooth morph between curves)
   void animateToBands(const PEQBand* targetBands, int numBands, unsigned long durationMs = 50);
   void setAnimationSpeed(unsigned long durationMs);
@@ -76,6 +88,15 @@ private:
     bool active;      // enabled && gain != 0
   };
 
+  // Same SVF in its shelf configuration: a shelf mixes the input and the
+  // lowpass output too, so it carries m0/m2 as well as the bell's m1.
+  struct SVFShelf {
+    float a1, a2, a3;
+    float m0, m1, m2;
+    float ic1eq, ic2eq;
+    bool active;
+  };
+
   audio_block_t *inputQueue[1];
   float sampleRate;
   bool initialized;
@@ -84,10 +105,27 @@ private:
   PEQBand bands[MAX_PEQ_BANDS];
   SVFBand svf[MAX_PEQ_BANDS];
 
+  // Pad currently written to the pre-EQ amps; NAN until the first write, so
+  // the first call always lands (applyPreEQGain writes the gain directly,
+  // with no ramp, and the dynamic EQ calls it on every volume tick).
+  float appliedPreEqBoostDb;
+
+  SVFShelf shelves[LOUDNESS_SHELF_COUNT];
+  float shelfGainDb;        // gain the coefficients currently realise
+  float shelfStartGainDb;   // morph endpoints
+  float shelfTargetGainDb;
+  unsigned long shelfStartTime;
+  unsigned long shelfDuration;
+  bool shelfMoving;
+
   AnimationState animation;
 
   void updateFilter(int bandIndex);
   void processBand(int bandIndex, float32_t* buffer, int numSamples);
+
+  void updateShelves();
+  void processShelf(int shelfIndex, float32_t* buffer, int numSamples);
+  void processShelfMorph();
 
   void processAnimation();
   float interpolate(float start, float end, float progress);

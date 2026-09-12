@@ -55,6 +55,17 @@
 #define CMD_RESET_INPUT_EQ "resetInputEq"
 #define CMD_SET_INPUT_EQ_ENABLED "setInputEqEnabled"
 
+// Dynamic EQ (docs/DYNAMIC_EQ.md): the input EQ has two volume anchors that
+// share band frequencies and Qs and differ only in gain. Above the reference
+// anchor the Teensy interpolates toward the loud gains and holds beyond it;
+// below it, setLoudness turns on the ISO 226-derived bass compensation.
+//   setInputEqLoudGain <band> <gain>   # loud-anchor gain for one band
+//   setInputEqAnchors  <refPct> <loudPct>  # 0-100; loud 0 = no loud anchor
+//   setLoudness        <0|1>
+#define CMD_SET_INPUT_EQ_LOUD_GAIN "setInputEqLoudGain"
+#define CMD_SET_INPUT_EQ_ANCHORS "setInputEqAnchors"
+#define CMD_SET_LOUDNESS "setLoudness"
+
 // FIR Filter Commands. setFir is channel-indexed: "setFir <ch> <file>",
 // bare "setFir <ch>" clears. setFirEnabled is preset-level.
 //
