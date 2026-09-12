@@ -5,12 +5,14 @@
       <span v-if="showLegend" class="flex items-center gap-3 text-xs text-vybes-text-secondary">
         <span class="flex items-center gap-1"><span class="legend-swatch" style="background:var(--vybes-primary)"></span>measured</span>
         <span v-if="compareMeasurement" class="flex items-center gap-1"><span class="legend-swatch" style="background:var(--vybes-accent)"></span>corrected</span>
+        <span v-if="targetPath" class="flex items-center gap-1"><span class="legend-swatch legend-swatch-target"></span>target</span>
       </span>
     </div>
     <svg :viewBox="`0 0 ${width} ${magHeight}`" class="w-full" :style="{ height: magHeight + 'px' }">
       <rect v-if="bandRect" :x="bandRect.x" y="0" :width="bandRect.w" :height="magHeight" class="band-shade" />
       <line v-for="g in gridFreqs" :key="'mg' + g.freq" :x1="g.x" :x2="g.x" y1="0" :y2="magHeight" class="grid-line" />
       <line x1="0" :x2="width" :y1="magZeroY" :y2="magZeroY" class="grid-line-strong" />
+      <path v-if="targetPath" :d="targetPath" class="trace-target" />
       <path v-if="compareMagPath" :d="compareMagPath" class="trace-compare" />
       <path :d="magPath" class="trace-primary" />
       <text v-for="g in gridFreqs" :key="'mgl' + g.freq" :x="g.x" :y="magHeight - 3" class="axis-label">{{ g.label }}</text>
@@ -38,6 +40,9 @@ import { computed } from 'vue';
 const props = defineProps({
   measurement: { type: Object, required: true },
   compareMeasurement: { type: Object, default: null },
+  // House-curve target on the measurement's own frequencies (fir-wizard.js
+  // targetDbForOutput); absolute level is meaningless, see targetPath.
+  targetDb: { type: [Array, Float64Array], default: null },
   band: { type: Object, default: null }, // {fLo, fHi} shaded for context
   showLegend: { type: Boolean, default: false },
   width: { type: Number, default: 600 },
@@ -98,6 +103,25 @@ const comparePhasePath = computed(() =>
     : ''
 );
 
+// The target's own level is arbitrary - designKernel aims the correction at
+// the target plus the in-band median of (measurement - target), so drawing
+// it needs that same offset, or a curve the kernel matches perfectly would
+// appear to sit tens of dB away from the corrected trace.
+const targetPath = computed(() => {
+  const t = props.targetDb;
+  if (!t || t.length !== props.measurement.freqs.length) return '';
+  const { freqs, magDb } = props.measurement;
+  const deviations = [];
+  for (let i = 0; i < freqs.length; i++) {
+    if (!props.band || (freqs[i] >= props.band.fLo && freqs[i] <= props.band.fHi)) {
+      deviations.push(magDb[i] - t[i]);
+    }
+  }
+  deviations.sort((a, b) => a - b);
+  const ref = deviations.length ? deviations[(deviations.length - 1) >> 1] : 0;
+  return tracePath(freqs, Array.from(t, (v) => v + ref), magY);
+});
+
 // A few round-number gridlines across whatever span this chart covers.
 const gridFreqs = computed(() => {
   const candidates = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
@@ -140,6 +164,12 @@ const bandRect = computed(() => {
   stroke: var(--vybes-accent);
   stroke-width: 1.75;
 }
+.trace-target {
+  fill: none;
+  stroke: var(--vybes-text-secondary);
+  stroke-width: 1.25;
+  stroke-dasharray: 4 3;
+}
 .axis-label {
   fill: var(--vybes-text-secondary);
   font-size: 9px;
@@ -150,5 +180,10 @@ const bandRect = computed(() => {
   width: 8px;
   height: 8px;
   border-radius: 2px;
+}
+.legend-swatch-target {
+  height: 0;
+  border-top: 2px dashed var(--vybes-text-secondary);
+  border-radius: 0;
 }
 </style>

@@ -176,9 +176,15 @@ Numbered acceptance criteria (mirrored in the test file):
    passes to within 1 sample.
 3. **Magnitude correction**: on a synthetic system with two resonances
    (+6 dB @ 400 Hz Q 2, −4 dB @ 2.5 kHz Q 3) inside a 300 Hz–8 kHz band, the
-   corrected system (kernel ⊛ system, computed by the test's own FFT) is flat
-   within ± 1 dB across the band; the kernel's own gain outside the band
-   stays within ± 1.5 dB of unity.
+   corrected system (kernel ⊛ system, computed by the test's own FFT)
+   **matches the target** within ± 1 dB across the band; the kernel's own
+   gain outside the band stays within ± 1.5 dB of unity. Flat is the
+   `targetDb`-omitted instance of that criterion; **3b** (amended
+   2026-09-12, when stage 4 gained a target selector) repeats it on the same
+   plant against a −1 dB/oct tilt, to the same tolerance, and checks the
+   kernel really carries the extra octave slope. Targets are resolved by
+   `WebUI/src/target-curves.js` `targetDbOnFreqs` — the same function the
+   analyzer's auto-EQ aims at, so a house curve means one curve device-wide.
 4. **Minimum-phase render** (budget 0): ≥ 50% of kernel energy in the first
    64 samples, and corrected-system group delay ≤ 1 ms across the band.
 5. **Latency budget**: with budget B samples, the kernel's bulk lead is

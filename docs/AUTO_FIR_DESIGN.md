@@ -180,10 +180,16 @@ budget that matters, and it's unchanged from today's worst case.
 3. **Review** — per-output magnitude and excess phase with automated flags:
    polarity inversions, low-SNR captures, and outputs whose measured passband
    contradicts their hp/lp config (generalizing the 2026-08-27 sub trap).
-4. **Design** — two global choices: per-way targets shared L/R (matching
-   between sides beats absolute accuracy above the transition), and the
-   latency budget. Render gaming + music kernels; show predicted latency for
-   each.
+4. **Design** — two global choices: the **house-curve target** (downward
+   tilt, flat, Harman, B&K, or an imported REW-style file — the same
+   selection the analyzer's auto-EQ offers, stored under one key so picking
+   a curve once applies in both places; default −0.5 dB/oct) and the latency
+   budget. The target is resolved onto each output's measured frequencies by
+   `target-curves.js` `targetDbOnFreqs`, re-centered over that output's own
+   passband, and handed to `designKernel` as `targetDb`; the predicted-result
+   chart overlays it. Per-way targets shared L/R (matching between sides
+   beats absolute accuracy above the transition). Render gaming + music
+   kernels; show predicted latency for each.
 5. **Apply** — copy the preset first (undo and A/B in one move). Write kernels
    as rePhase-compatible WAVs named per output + version, upload to SD, assign
    to outputs, write delays from the same measurement.

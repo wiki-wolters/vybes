@@ -30,6 +30,7 @@ import {
   designKernel,
   encodeFirBin,
 } from './fir-design.js';
+import { targetDbOnFreqs } from './target-curves.js';
 
 // Nominal device sample rate (docs/AUTO_FIR_CONTRACTS.md: "44117.647 Hz
 // (nominal 44100 in the probe schedule contract)") - the SWEEP START event
@@ -520,18 +521,49 @@ export function reachHz(latencyBudgetMs, sampleRate) {
 }
 
 /**
- * Design one output's kernel: smooth the measurement to 1/6 octave (flat
- * target only, per AUTO_FIR_DESIGN v1), then run fir-design.js's designKernel.
+ * The house-curve target, in dB, on one output's measured frequencies.
+ *
+ * The curve is re-centered over the output's own passband (clipped to what
+ * was actually measured) rather than the analyzer's fixed 200-5000 Hz
+ * window, which a tweeter or a woofer never overlaps. It need not be exact:
+ * designKernel re-centers again on the in-band median of (measurement -
+ * target), so only the curve's *shape* inside the band reaches the kernel.
+ *
+ * @param {{freqs:Float64Array}} measurement
+ * @param {{fLo:number, fHi:number}} output
+ * @param {Object|null} target  a target-curves.js selection; null = flat
+ * @returns {Float64Array|null}
+ */
+export function targetDbForOutput(measurement, output, target) {
+  if (!target) return null;
+  const { freqs } = measurement;
+  let loHz = Math.max(output.fLo, freqs[0]);
+  let hiHz = Math.min(output.fHi, freqs[freqs.length - 1]);
+  if (!(hiHz > loHz)) {
+    loHz = freqs[0];
+    hiHz = freqs[freqs.length - 1];
+  }
+  return targetDbOnFreqs(target, freqs, { loHz, hiHz });
+}
+
+/**
+ * Design one output's kernel: smooth the measurement to 1/6 octave, resolve
+ * the chosen house curve onto its frequencies, then run fir-design.js's
+ * designKernel.
  *
  * @param {{freqs:Float64Array, magDb:Float64Array, excessPhaseRad:Float64Array}} measurement
  * @param {{fLo:number, fHi:number, taps:number}} output   passband + planned taps
- * @param {{sampleRate:number, latencyBudgetMs:number, smoothFracOctave?:number,
- *          presenceCap?:Object, maxBoostDb?:number, maxCutDb?:number}} opts
+ * @param {{sampleRate:number, latencyBudgetMs:number, target?:Object,
+ *          smoothFracOctave?:number, presenceCap?:Object,
+ *          maxBoostDb?:number, maxCutDb?:number}} opts
+ *   `target` is a target-curves.js selection ({mode, tiltDbPerOct, ...});
+ *   omitted means a flat target, the pre-target behaviour.
  * @returns {Float32Array}
  */
 export function designOutputKernel(measurement, output, opts) {
-  const { sampleRate, latencyBudgetMs, smoothFracOctave = 1 / 6, presenceCap, maxBoostDb, maxCutDb } = opts;
+  const { sampleRate, latencyBudgetMs, target = null, smoothFracOctave = 1 / 6, presenceCap, maxBoostDb, maxCutDb } = opts;
   const smoothedMagDb = smoothDb(measurement.magDb, measurement.freqs, smoothFracOctave);
+  const targetDb = targetDbForOutput(measurement, output, target);
   const latencyBudgetSamples = Math.max(0, Math.round((latencyBudgetMs / 1000) * sampleRate));
   return designKernel(
     { freqs: measurement.freqs, magDb: smoothedMagDb, excessPhaseRad: measurement.excessPhaseRad },
@@ -540,6 +572,7 @@ export function designOutputKernel(measurement, output, opts) {
       sampleRate,
       latencyBudgetSamples,
       band: { fLo: output.fLo, fHi: output.fHi },
+      ...(targetDb ? { targetDb } : {}),
       ...(presenceCap !== undefined ? { presenceCap } : {}),
       ...(maxBoostDb !== undefined ? { maxBoostDb } : {}),
       ...(maxCutDb !== undefined ? { maxCutDb } : {}),

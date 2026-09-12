@@ -60,8 +60,14 @@ pio run -d Teensy -e teensy41 -t upload
    "Auto-measure & correct with phone mic…". iPhone: set Control Center
    **Mic Mode → Wide Spectrum** first; HTTPS is required for the mic.
    Defaults are ~3 s sweeps at ~4.5 s spacing — roughly a minute of
-   continuous capture for a 6-output rig at 2 passes. Apply lands on a
-   preset copy, so the original is untouched.
+   continuous capture for a 6-output rig at 2 passes. In **stage 4 pick the
+   target curve** (downward tilt / flat / Harman / B&K / imported) before
+   designing — it defaults to −0.5 dB/oct and shares its stored selection
+   with the analyzer's auto-EQ, so whatever was last chosen there is what
+   comes up here; the dashed line on the predicted-result chart is the curve
+   the kernels aim at. Changing the target or the latency budget clears the
+   rendered set — press *Design filters* again. Apply lands on a preset
+   copy, so the original is untouched.
 
 ## Watch items (untested against real hardware)
 

@@ -627,10 +627,15 @@ import {
   BUILTIN_CAL_PRESETS,
   describeCaptureSettings,
 } from '../rta.js';
-import { TARGET_CURVE_PRESETS, targetCurveForGrid } from '../target-curves.js';
+import {
+  TARGET_CURVE_PRESETS,
+  targetCurveForGrid,
+  targetModeHelp as describeTargetMode,
+  readStoredTarget,
+  writeStoredTarget,
+} from '../target-curves.js';
 
 const CAL_STORAGE_KEY = 'vybes-rta-mic-cal';
-const TARGET_STORAGE_KEY = 'vybes-rta-eq-target';
 const RESOLUTION_STORAGE_KEY = 'vybes-rta-resolution';
 const KEEPALIVE_INTERVAL_MS = 2000;
 const MIC_POLL_INTERVAL_MS = 100;
@@ -1514,18 +1519,7 @@ const targetGridCurve = computed(() => {
   );
 });
 
-const targetModeHelp = computed(
-  () =>
-    ({
-      tilt: '0 reproduces the source exactly; negative tilts the target down toward the treble (warmer). In-room responses corrected fully flat often sound bright — −0.5 to −1 is a common preference.',
-      flat: 'Corrects the in-room response dead flat. Often sounds bright and thin — most listeners prefer a tilted or Harman-style target.',
-      harman: 'Bass shelf rising to +6.5 dB at 20 Hz, gently falling treble — the preferred in-room response from Harman’s listening research.',
-      bk: 'Flat through bass and mids, then −1 dB/octave above 400 Hz — B&K’s classic room recommendation.',
-      custom: eqTarget.customPoints
-        ? 'Imported target, interpolated onto the analyzer bands and re-centered around the mids.'
-        : 'Import a REW-style target file (“frequency gain” per line) to use it here.',
-    })[eqTarget.mode] ?? ''
-);
+const targetModeHelp = computed(() => describeTargetMode(eqTarget));
 
 function onTargetFileSelected(event) {
   targetError.value = '';
@@ -1545,10 +1539,11 @@ function onTargetFileSelected(event) {
   reader.readAsText(file);
 }
 
-watch(eqTarget, () => {
-  try {
-    localStorage.setItem(TARGET_STORAGE_KEY, JSON.stringify(eqTarget));
-  } catch (e) { /* storage full or blocked - selection still applies this session */ }
+// One stored selection for both target selectors (the FIR wizard's stage 4
+// reads the same key), so the tilt value rides along with the mode - a
+// house curve chosen in either place applies in the other.
+watch([eqTarget, () => eqGen.tilt], () => {
+  writeStoredTarget({ ...eqTarget, tiltDbPerOct: eqGen.tilt });
 });
 
 const activePresetName = ref('');
@@ -1912,20 +1907,16 @@ onMounted(() => {
     }
   } catch (e) { /* ignore corrupt storage */ }
 
-  // Stored EQ target selection
-  try {
-    const t = JSON.parse(localStorage.getItem(TARGET_STORAGE_KEY));
-    if (t && typeof t.mode === 'string') {
-      if (Array.isArray(t.customPoints) && t.customPoints.length >= 2) {
-        eqTarget.customPoints = t.customPoints;
-        eqTarget.customName = typeof t.customName === 'string' ? t.customName : 'stored target';
-      }
-      const valid = ['tilt', 'flat', 'custom', ...TARGET_CURVE_PRESETS.map((c) => c.id)];
-      if (valid.includes(t.mode) && (t.mode !== 'custom' || eqTarget.customPoints)) {
-        eqTarget.mode = t.mode;
-      }
+  // Stored EQ target selection (shared with the FIR wizard)
+  const storedTarget = readStoredTarget();
+  if (storedTarget) {
+    eqTarget.mode = storedTarget.mode;
+    if (storedTarget.customPoints) {
+      eqTarget.customPoints = storedTarget.customPoints;
+      eqTarget.customName = storedTarget.customName;
     }
-  } catch (e) { /* ignore corrupt storage */ }
+    eqGen.tilt = Math.max(-2, Math.min(1, storedTarget.tiltDbPerOct));
+  }
 
   unsubscribeLive = apiClient.connectLiveUpdates(onLiveMessage);
 

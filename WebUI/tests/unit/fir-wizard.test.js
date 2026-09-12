@@ -5,7 +5,15 @@
 // read-only) and checks the whole stage 2->3 pipeline recovers the known
 // system shape and inter-output delay from it.
 import { describe, it, expect } from 'vitest';
-import { makeSystemIr, convolve, stretch, makeRng, freqResponse } from '../helpers/synth-system.js';
+import {
+  makeSystemIr,
+  convolve,
+  stretch,
+  makeRng,
+  freqResponse,
+  logSpace,
+  measurementOf,
+} from '../helpers/synth-system.js';
 import { generateSweep } from '../../src/sweep-math.js';
 import {
   resolvePassbands,
@@ -19,6 +27,8 @@ import {
   processSweepCapture,
   computeRelativeDelays,
   reachHz,
+  designOutputKernel,
+  targetDbForOutput,
 } from '../../src/fir-wizard.js';
 
 const RATE = 44100;
@@ -239,6 +249,70 @@ describe('computeRelativeDelays', () => {
     const byOutput = new Map(result.map((r) => [r.output, r]));
     expect(byOutput.get(0).newDelayUs).toBe(20000);
     expect(byOutput.get(0).clamped).toBe(true);
+  });
+});
+
+describe('stage 4: the house-curve target', () => {
+  const PLANT = { band: { lo: 100, hi: 16000 }, resonances: [{ freq: 800, q: 2, gainDb: 5 }] };
+  const measurement = measurementOf(makeSystemIr(RATE, PLANT), RATE, {
+    fLo: 200, fHi: 10000, pointsPerOctave: 24,
+  });
+  const OUTPUT = { fLo: 300, fHi: 8000, taps: 2048 };
+
+  function median(values) {
+    const arr = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(arr.length / 2);
+    return arr.length % 2 ? arr[mid] : (arr[mid - 1] + arr[mid]) / 2;
+  }
+
+  it('re-centers the curve over the output passband, not the analyzer window', () => {
+    const tweeter = { fLo: 2500, fHi: 20000 };
+    const db = targetDbForOutput(measurement, tweeter, { mode: 'harman' });
+    // The passband is clipped to what was measured (200-10000 Hz here), so
+    // the median that reads 0 is the one over 2500-10000.
+    const inBand = [...db].filter(
+      (v, i) => measurement.freqs[i] >= 2500 && measurement.freqs[i] <= 10000
+    );
+    expect(median(inBand)).toBeCloseTo(0, 10);
+    expect(targetDbForOutput(measurement, tweeter, null)).toBeNull();
+  });
+
+  it('designs to the target: a -1 dB/oct tilt shows up as exactly that slope', () => {
+    const flat = designOutputKernel(measurement, OUTPUT, { sampleRate: RATE, latencyBudgetMs: 0 });
+    const tilted = designOutputKernel(measurement, OUTPUT, {
+      sampleRate: RATE,
+      latencyBudgetMs: 0,
+      target: { mode: 'tilt', tiltDbPerOct: -1 },
+    });
+    const freqs = Float64Array.from([500, 1000, 2000, 4000]);
+    const flatDb = freqResponse(flat, RATE, freqs).magDb;
+    const tiltedDb = freqResponse(tilted, RATE, freqs).magDb;
+    for (let i = 1; i < freqs.length; i++) {
+      const extraSlope = (tiltedDb[i] - tiltedDb[i - 1]) - (flatDb[i] - flatDb[i - 1]);
+      expect(extraSlope).toBeCloseTo(-1, 1);
+    }
+  });
+
+  it('an explicit flat target is the same kernel as no target at all', () => {
+    const none = designOutputKernel(measurement, OUTPUT, { sampleRate: RATE, latencyBudgetMs: 0 });
+    const flat = designOutputKernel(measurement, OUTPUT, {
+      sampleRate: RATE, latencyBudgetMs: 0, target: { mode: 'flat' },
+    });
+    for (let i = 0; i < none.length; i++) expect(flat[i]).toBe(none[i]);
+  });
+
+  it('corrects toward the target across the whole band, not just its slope', () => {
+    const target = { mode: 'bk' };
+    const kernel = designOutputKernel(measurement, OUTPUT, {
+      sampleRate: RATE, latencyBudgetMs: 0, target,
+    });
+    const freqs = logSpace(OUTPUT.fLo, OUTPUT.fHi, 12);
+    const system = makeSystemIr(RATE, PLANT);
+    const corrected = freqResponse(convolve(kernel, system), RATE, freqs).magDb;
+    const want = targetDbForOutput({ freqs }, OUTPUT, target);
+    const residual = [...corrected].map((db, i) => db - want[i]);
+    // Same tolerance the flat criterion uses (acceptance criterion 3).
+    expect(Math.max(...residual) - Math.min(...residual)).toBeLessThanOrEqual(2);
   });
 });
 

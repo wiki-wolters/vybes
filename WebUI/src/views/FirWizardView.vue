@@ -173,12 +173,47 @@
         </template>
       </p>
 
+      <div class="mb-4 max-w-sm">
+        <SelectGroup v-model="target.mode" label="Target curve">
+          <option value="tilt">Downward tilt</option>
+          <option value="flat">Flat</option>
+          <option v-for="c in TARGET_CURVE_PRESETS" :key="c.id" :value="c.id">{{ c.label }}</option>
+          <option value="custom">Custom (imported)</option>
+        </SelectGroup>
+        <RangeSlider
+          v-if="target.mode === 'tilt'"
+          class="mt-3"
+          label="Tilt"
+          :min="-2"
+          :max="1"
+          :step="0.1"
+          unit="dB/oct"
+          :decimals="1"
+          v-model="target.tiltDbPerOct"
+        />
+        <div v-if="target.mode === 'custom'" class="mt-3 flex flex-wrap items-center gap-3">
+          <label class="btn-secondary cursor-pointer">
+            Import target file
+            <input type="file" accept=".txt,.cal,.frd,.csv" class="hidden" @change="onTargetFileSelected" />
+          </label>
+          <span v-if="target.customName" class="text-xs text-vybes-live">{{ target.customName }}</span>
+        </div>
+        <p v-if="targetError" class="mt-2 text-xs text-red-400">{{ targetError }}</p>
+        <p class="mt-1 text-xs text-vybes-text-secondary">{{ targetHelp }}</p>
+      </div>
+
       <button class="btn-secondary mb-4" @click="runDesign">{{ kernelsReady ? 'Re-design' : 'Design filters' }}</button>
 
       <div v-if="kernelsReady">
         <div v-for="row in designRows" :key="row.output" class="mb-6 pb-6 border-b border-vybes-border last:border-0">
           <h4 class="font-medium mb-2">{{ row.label }} — predicted result</h4>
-          <FirResponseChart :measurement="row.measurement" :compare-measurement="predicted.get(row.output)" :band="row.band" show-legend />
+          <FirResponseChart
+            :measurement="row.measurement"
+            :compare-measurement="predicted.get(row.output)"
+            :target-db="targetCurves.get(row.output)"
+            :band="row.band"
+            show-legend
+          />
         </div>
         <div class="flex justify-end">
           <button class="btn-primary" @click="stage = 'apply'">Continue to apply</button>
@@ -235,16 +270,24 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import apiClient from '../api-client.js';
 import { usePresetStore } from '../stores/preset.js';
 import { useGeneratorStore } from '../stores/generator.js';
 import { MicRecorder, micSupported } from '../audio-capture.js';
-import { describeCaptureSettings } from '../rta.js';
+import { describeCaptureSettings, parseCalibrationFile } from '../rta.js';
 import { formatValue } from '../utilities.js';
+import {
+  TARGET_CURVE_PRESETS,
+  DEFAULT_TARGET,
+  targetModeHelp,
+  readStoredTarget,
+  writeStoredTarget,
+} from '../target-curves.js';
 import CardSection from '../components/shared/CardSection.vue';
 import RangeSlider from '../components/shared/RangeSlider.vue';
+import SelectGroup from '../components/shared/SelectGroup.vue';
 import InputGroup from '../components/shared/InputGroup.vue';
 import FirPoolBar from '../components/shared/FirPoolBar.vue';
 import Loading from '../components/shared/Loading.vue';
@@ -262,6 +305,7 @@ import {
   RENDER_PRESETS,
   reachHz,
   designOutputKernel,
+  targetDbForOutput,
   buildApplyPlan,
   MAX_DELAY_US,
 } from '../fir-wizard.js';
@@ -524,18 +568,54 @@ const latencyBudgetMs = computed(() => {
 const reachHzValue = computed(() => reachHz(latencyBudgetMs.value, DEVICE_SAMPLE_RATE));
 const kernelsReady = ref(false);
 
+// The house curve the kernels aim for. Same selection object the analyzer's
+// auto-EQ uses, stored under one key - a target chosen in either place is
+// the one the other offers next time.
+const target = reactive({ ...DEFAULT_TARGET, customPoints: null, customName: '' });
+const targetError = ref('');
+const targetHelp = computed(() => targetModeHelp(target));
+const targetCurves = reactive(new Map()); // output index -> targetDb on its measured freqs
+
+watch(target, () => writeStoredTarget(target));
+
+// Either knob changes what a kernel would be, so the rendered set stops
+// matching the controls above it - drop it rather than leave a prediction
+// aimed at the previous settings on screen.
+watch([target, latencyBudgetMs], () => { kernelsReady.value = false; });
+
+function onTargetFileSelected(event) {
+  targetError.value = '';
+  const file = event.target.files?.[0];
+  event.target.value = '';
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const points = parseCalibrationFile(String(reader.result));
+    if (!points) {
+      targetError.value = 'No “frequency gain” pairs found in that file.';
+      return;
+    }
+    target.customPoints = points;
+    target.customName = file.name;
+  };
+  reader.readAsText(file);
+}
+
 function runDesign() {
   kernels.clear();
   predicted.clear();
+  targetCurves.clear();
   for (const row of designRows.value) {
     const output = finalizedOutputs.value.find((o) => o.index === row.output);
     if (!output) continue;
     const kernel = designOutputKernel(row.measurement, output, {
       sampleRate: DEVICE_SAMPLE_RATE,
       latencyBudgetMs: latencyBudgetMs.value,
+      target,
     });
     kernels.set(row.output, kernel);
     predicted.set(row.output, predictCorrected(kernel, row.measurement, DEVICE_SAMPLE_RATE));
+    targetCurves.set(row.output, targetDbForOutput(row.measurement, output, target));
   }
   kernelsReady.value = true;
 }
@@ -667,6 +747,9 @@ async function runVerify() {
 // ===== Lifecycle =====
 
 onMounted(async () => {
+  const storedTarget = readStoredTarget();
+  if (storedTarget) Object.assign(target, storedTarget);
+
   // Reached only via the launch button on the active preset's editor page,
   // which keeps the shared preset store pointed at it - a direct/refreshed
   // visit has nothing to measure, so bounce home rather than show a blank page.

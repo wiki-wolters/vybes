@@ -36,6 +36,7 @@ import {
   FIR_TAP_POOL,
   FIR_POOL_QUANTUM,
 } from '../../src/fir-design.js';
+import { targetDbOnFreqs } from '../../src/target-curves.js';
 
 const RATE = 44100;
 
@@ -146,6 +147,42 @@ describe('criteria 3-6: kernel design', () => {
 
     const outBand = freqResponse(kernel, RATE, Float64Array.from([50, 100, 12000, 15000])).magDb;
     for (const db of outBand) expect(Math.abs(db)).toBeLessThanOrEqual(1.5);
+  });
+
+  it('criterion 3b: a tilted house target is tracked as tightly as flat', () => {
+    const system = makeSystemIr(RATE, {
+      band: PLANT_BAND,
+      resonances: [
+        { freq: 400, q: 2, gainDb: 6 },
+        { freq: 2500, q: 3, gainDb: -4 },
+      ],
+    });
+    const measurement = measurementOf(system, RATE, DESIGN_GRID);
+    const targetDb = targetDbOnFreqs({ mode: 'tilt', tiltDbPerOct: -1 }, measurement.freqs, {
+      loHz: CORR_BAND.fLo,
+      hiHz: CORR_BAND.fHi,
+    });
+    const kernel = designKernel(measurement, designOpts(2048, 0, { targetDb }));
+
+    // Criterion 3's flatness test, measured against the target instead of a
+    // flat line: the residual (corrected - target) spans no more than 2 dB.
+    const freqs = logSpace(300, 8000, 24);
+    const corrected = freqResponse(convolve(kernel, system), RATE, freqs).magDb;
+    const want = targetDbOnFreqs({ mode: 'tilt', tiltDbPerOct: -1 }, freqs, {
+      loHz: CORR_BAND.fLo,
+      hiHz: CORR_BAND.fHi,
+    });
+    const residual = corrected.map((db, i) => db - want[i]);
+    expect(Math.max(...residual) - Math.min(...residual)).toBeLessThanOrEqual(2);
+
+    // And it really is tilted: the kernel pulls ~1 dB/octave of slope out of
+    // the (flat-target-wise) identical plant.
+    const flatKernel = designKernel(measurement, designOpts(2048, 0));
+    const octave = [1000, 2000];
+    const tiltedAt = freqResponse(kernel, RATE, Float64Array.from(octave)).magDb;
+    const flatAt = freqResponse(flatKernel, RATE, Float64Array.from(octave)).magDb;
+    const slope = (tiltedAt[1] - tiltedAt[0]) - (flatAt[1] - flatAt[0]);
+    expect(slope).toBeCloseTo(-1, 0);
   });
 
   it('criterion 4: budget 0 renders minimum-phase', () => {
