@@ -24,10 +24,14 @@ overruns + ~1 underrun per 20s window while streaming at 5% CPU.
    buffering. Return nonzero to consume the packet. `AsyncAudioInputUSB`
    (in `fir_filters/`) defines the strong version and owns rate matching via
    resampling; the feedback endpoint then keeps reporting nominal 44.1kHz.
-2. **Deep receive queue** - 8-block ring targeting 3 blocks of occupancy
-   (~8.7ms input latency, ~14.5ms burst absorption) instead of the stock
+2. **Deep receive queue** - 8-block ring targeting 1 block of occupancy
+   (~4.4ms input latency, ~20.3ms burst absorption) instead of the stock
    2-block / 64-sample scheme. Queue depth is exported as
-   `volatile uint8_t usb_audio_rx_queue_count` for monitoring.
+   `volatile uint8_t usb_audio_rx_queue_count` for monitoring. The target and
+   the depth are independent knobs: the target alone sets latency, the depth
+   alone sets how big a host burst is absorbed. It ran at a target of 3
+   (~10.2ms) while `AsyncAudioInputUSB` was the default input; 1 keeps more
+   burst headroom than stock while costing ~1.5ms over it.
 3. **Damped feedback loop** - the stock proportional-only correction acts on
    a double-integrator plant (occupancy integrates rate error, the
    accumulator integrates the correction), i.e. an undamped oscillator that

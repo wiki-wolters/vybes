@@ -81,7 +81,15 @@ ProbeSource              probeSource; // auto delay alignment chirps
 // to host clock drift and packet burst jitter; needs the core_fork packet
 // hook), 0 = the stock AudioInputUSB running on the core_fork's deepened
 // receive queue. Both are stereo with identical patchcords.
-#define USB_INPUT_ASYNC 1
+//
+// 0 is the default: the resampler costs ~88KB of heap (71KB filter tables +
+// 16KB ring) and ~9-10ms of input latency, and the deep queue at a target of
+// 1 block reaches ~4.4ms without it. The async path stays maintained (native
+// tests test_usb_rx_ring / test_usb_resampler) for the case the stock path
+// cannot handle: a host that ignores the isochronous feedback endpoint and
+// so free-runs against our clock. Watch the 20s underrun/overrun print - a
+// climbing count is the signal to set this back to 1.
+#define USB_INPUT_ASYNC 0
 
 //Audio Inputs (Bluetooth, SPDIF, USB, analog)
 AudioInputI2S            Bluetooth_in;

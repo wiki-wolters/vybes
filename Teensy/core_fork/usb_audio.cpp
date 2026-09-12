@@ -87,7 +87,7 @@ volatile uint32_t usb_audio_overrun_count;
 // steady-state input latency is ~(TARGET+0.5) blocks and bursts of up to
 // (QUEUE-TARGET) blocks are absorbed without dropping samples.
 #define USB_AUDIO_RX_QUEUE_BLOCKS  8
-#define USB_AUDIO_RX_TARGET_BLOCKS 3
+#define USB_AUDIO_RX_TARGET_BLOCKS 1
 static audio_block_t *rx_queue_left[USB_AUDIO_RX_QUEUE_BLOCKS];
 static audio_block_t *rx_queue_right[USB_AUDIO_RX_QUEUE_BLOCKS];
 static uint8_t rx_queue_head; // next slot the USB interrupt fills
