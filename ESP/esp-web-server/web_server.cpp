@@ -219,9 +219,15 @@ static void registerRoutes(PsychicHttpServer &s, PsychicWebSocketHandler *ws) {
     s.on("/preset/eq/enabled", HTTP_PUT, handlePutPresetEQEnabled);
     s.on("/preset/crossover/enabled", HTTP_PUT, handlePutPresetCrossoverEnabled);
 
-    // API Routes - Input EQ (shared L/R preference curve + SPL sets)
+    // API Routes - Input EQ (shared L/R preference curve)
     s.on("/preset/eq", HTTP_PUT, (PsychicJsonRequestCallback)handlePutPresetEQPoints);
     s.on("/preset/eq/point", HTTP_PUT, (PsychicJsonRequestCallback)handlePutPresetEQPoint);
+
+    // API Routes - Dynamic EQ (docs/DYNAMIC_EQ.md)
+    s.on("/preset/eq/anchors", HTTP_PUT, (PsychicJsonRequestCallback)handlePutPresetEQAnchors);
+    s.on("/preset/eq/loud", HTTP_PUT, (PsychicJsonRequestCallback)handlePutPresetEQLoud);
+    s.on("/preset/eq/loud", HTTP_DELETE, handleDeletePresetEQLoud);
+    s.on("/preset/eq/loudness", HTTP_PUT, handlePutPresetEQLoudness);
 
     // API Routes - Crossover points
     s.on("/preset/crossover", HTTP_PUT, handlePutPresetCrossover);

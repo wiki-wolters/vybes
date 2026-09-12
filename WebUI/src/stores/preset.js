@@ -32,10 +32,22 @@ export const usePresetStore = defineStore('preset', () => {
   const enabledOutputs = computed(() => outputs.value.filter((o) => o.enabled));
   const crossovers = computed(() => preset.value?.crossovers ?? []);
   const firPool = computed(() => preset.value?.firPool ?? { total: 0, used: 0 });
-  // Shape the EQSection component expects: [{spl, peqs}]
-  const inputEqSets = computed(() =>
-    preset.value ? preset.value.inputEq.sets.map((s) => ({ spl: s.spl, peqs: s.points })) : []
+  // ===== Input EQ / dynamic EQ (docs/DYNAMIC_EQ.md) =====
+  // `spl` is a role tag, not an SPL: 0 reference anchor, 1 loud anchor.
+  const EQ_SET_REFERENCE = 0;
+  const EQ_SET_LOUD = 1;
+  const eqSet = (role) => preset.value?.inputEq.sets.find((s) => s.spl === role) ?? null;
+
+  /** The reference anchor's bands - the curve the editor edits by default */
+  const inputEqPoints = computed(() => eqSet(EQ_SET_REFERENCE)?.points ?? []);
+  /** The loud anchor's gains, aligned to the reference bands; [] = no anchor */
+  const loudGains = computed(() => eqSet(EQ_SET_LOUD)?.points.map((p) => p.gain) ?? []);
+  const hasLoudAnchor = computed(() => (preset.value?.inputEq.loudVolume ?? 0) > 0);
+  const referenceVolume = computed(
+    () => preset.value?.inputEq.referenceVolume ?? 0
   );
+  const loudVolume = computed(() => preset.value?.inputEq.loudVolume ?? 0);
+  const loudness = computed(() => preset.value?.inputEq.loudness ?? true);
 
   /** A crossover point is "enabled" while any filter references it in xover mode */
   function isCrossoverEnabled(id) {
@@ -272,11 +284,69 @@ export const usePresetStore = defineStore('preset', () => {
       'Failed to update EQ setting');
   }
 
+  /**
+   * Replace the reference anchor's bands. The loud anchor shares their
+   * frequencies and Qs, so it is mirrored locally too - the device does the
+   * same on its side, and refetching mid-edit would fight the editor.
+   */
   function saveInputEq(points) {
-    const set = preset.value.inputEq.sets.find((s) => s.spl === 0);
-    if (set) set.points = points;
+    const reference = eqSet(EQ_SET_REFERENCE);
+    if (reference) reference.points = points;
+    const loud = eqSet(EQ_SET_LOUD);
+    if (loud) {
+      loud.points = points.map((p, i) => ({
+        freq: p.freq,
+        gain: loud.points[i]?.gain ?? 0,
+        q: p.q,
+      }));
+    }
     return push(() => apiClient.savePrefEqSet(presetName.value, points),
       'Failed to update EQ points');
+  }
+
+  /** Write the loud anchor's gains (creating the anchor's set if needed) */
+  function saveLoudGains(gains) {
+    const reference = eqSet(EQ_SET_REFERENCE);
+    if (!reference) return Promise.resolve(false);
+    let loud = eqSet(EQ_SET_LOUD);
+    if (!loud) {
+      loud = { spl: EQ_SET_LOUD, points: [] };
+      preset.value.inputEq.sets.push(loud);
+    }
+    loud.points = reference.points.map((p, i) => ({
+      freq: p.freq,
+      gain: gains[i] ?? 0,
+      q: p.q,
+    }));
+    return push(() => apiClient.setInputEqLoudGains(presetName.value, gains),
+      'Failed to update loud EQ gains');
+  }
+
+  /**
+   * Move the volume anchors. A loud anchor at or below the reference means
+   * "none", which is how the device stores it too.
+   */
+  function setEqAnchors(reference, loud) {
+    const eq = preset.value.inputEq;
+    eq.referenceVolume = reference;
+    eq.loudVolume = loud <= reference ? 0 : loud;
+    return push(() => apiClient.setInputEqAnchors(presetName.value, reference, loud),
+      'Failed to update EQ volume anchors');
+  }
+
+  /** Drop the loud anchor; the reference curve then plays at every volume */
+  function clearLoudAnchor() {
+    const eq = preset.value.inputEq;
+    eq.sets = eq.sets.filter((s) => s.spl !== EQ_SET_LOUD);
+    eq.loudVolume = 0;
+    return push(() => apiClient.clearInputEqLoud(presetName.value),
+      'Failed to remove the loud anchor');
+  }
+
+  function setLoudness(enabled) {
+    preset.value.inputEq.loudness = enabled;
+    return push(() => apiClient.setLoudness(presetName.value, enabled),
+      'Failed to update loudness compensation');
   }
 
   function setDelaysEnabled(enabled) {
@@ -364,6 +434,32 @@ export const usePresetStore = defineStore('preset', () => {
       case 'eqEnabledChanged':
         preset.value.inputEq.enabled = msg.enabled;
         break;
+      case 'eqAnchorsChanged':
+        preset.value.inputEq.referenceVolume = msg.referenceVolume;
+        preset.value.inputEq.loudVolume = msg.loudVolume;
+        break;
+      case 'eqLoudChanged': {
+        // Gains only: the bands themselves always come from the reference
+        // anchor, so an empty array means the loud anchor is gone
+        const eq = preset.value.inputEq;
+        eq.loudVolume = msg.loudVolume;
+        const reference = eqSet(EQ_SET_REFERENCE);
+        eq.sets = eq.sets.filter((s) => s.spl !== EQ_SET_LOUD);
+        if (msg.gains?.length && reference) {
+          eq.sets.push({
+            spl: EQ_SET_LOUD,
+            points: reference.points.map((p, i) => ({
+              freq: p.freq,
+              gain: msg.gains[i] ?? 0,
+              q: p.q,
+            })),
+          });
+        }
+        break;
+      }
+      case 'eqLoudnessChanged':
+        preset.value.inputEq.loudness = msg.loudness;
+        break;
       case 'volumeChanged':
         preset.value.volume = msg.volume;
         break;
@@ -374,7 +470,8 @@ export const usePresetStore = defineStore('preset', () => {
     // state
     presetName, preset, isLoading, error, firFiles, templates,
     // getters
-    outputs, enabledOutputs, crossovers, firPool, inputEqSets,
+    outputs, enabledOutputs, crossovers, firPool,
+    inputEqPoints, loudGains, hasLoudAnchor, referenceVolume, loudVolume, loudness,
     isCrossoverEnabled, outputsReferencing,
     // actions
     loadPreset, refresh, loadFirFiles, loadTemplates, clearError,
@@ -382,7 +479,8 @@ export const usePresetStore = defineStore('preset', () => {
     setOutputInvert, setOutputEnabled, setOutputLabel, setOutputSource,
     setOutputFilter, saveOutputEq, setOutputEqEnabled,
     setCrossoverFreq, setCrossoverEnabled,
-    setInputEqEnabled, saveInputEq, setDelaysEnabled, setFirEnabled,
+    setInputEqEnabled, saveInputEq, saveLoudGains, setEqAnchors,
+    clearLoudAnchor, setLoudness, setDelaysEnabled, setFirEnabled,
     setVolume,
     handleLiveMessage,
   };

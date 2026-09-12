@@ -320,11 +320,69 @@ const dbRun = (sql, params = []) => new Promise((resolve, reject) => {
   db.run(sql, params, function (err) { (err ? reject(err) : resolve(this)); });
 });
 
+// Input-EQ set role tags (EQ_SET_* in ESP/esp-web-server/config.h)
+const EQ_SET_REFERENCE = 0;
+const EQ_SET_LOUD = 1;
+
+const findEqSet = (config, role) =>
+  config.inputEq.sets.find((s) => s.spl === role) || null;
+
+/** The set for a role, appended if the preset doesn't have one yet. */
+function getOrCreateEqSet(config, role) {
+  let set = findEqSet(config, role);
+  if (!set) {
+    set = { spl: role, points: [] };
+    config.inputEq.sets.push(set);
+  }
+  return set;
+}
+
+/**
+ * The loud anchor differs from the reference one in gain only, so it follows
+ * every reference edit: same band count, same frequencies, same Qs. New
+ * bands start flat. Mirrors mirror_reference_to_loud in config.cpp.
+ */
+function mirrorReferenceToLoud(config) {
+  const loud = findEqSet(config, EQ_SET_LOUD);
+  if (!loud) return;
+  const reference = findEqSet(config, EQ_SET_REFERENCE);
+  const points = reference ? reference.points : [];
+  loud.points = points.map((p, i) => ({
+    freq: p.freq,
+    gain: loud.points[i] ? loud.points[i].gain : 0,
+    q: p.q,
+  }));
+}
+
+/**
+ * Config v4 -> v5 (docs/DYNAMIC_EQ.md): a preset saved before the input EQ
+ * had volume anchors gets its curve anchored at the level it plays at, with
+ * no loud anchor, so nothing sounds different until one is added. Applied on
+ * every load rather than in a one-shot pass, because the mock's only way to
+ * receive an old config is POST /restore.
+ */
+function migrateInputEq(config) {
+  const eq = config.inputEq;
+  if (!eq) return config;
+  if (typeof eq.referenceVolume !== 'number') {
+    eq.referenceVolume = config.volume ?? PRESET_VOLUME_DEFAULT;
+  }
+  if (typeof eq.loudVolume !== 'number') eq.loudVolume = 0;
+  if (typeof eq.loudness !== 'boolean') eq.loudness = true;
+  if (eq.loudVolume <= eq.referenceVolume) eq.loudVolume = 0;
+  mirrorReferenceToLoud(config);
+  return config;
+}
+
 /** Load a preset row and parse its config. Returns null when missing. */
 async function loadPreset(name) {
   const row = await dbGet("SELECT name, is_current, config FROM presets WHERE name = ?", [name]);
   if (!row) return null;
-  return { name: row.name, isCurrent: Boolean(row.is_current), config: JSON.parse(row.config) };
+  return {
+    name: row.name,
+    isCurrent: Boolean(row.is_current),
+    config: migrateInputEq(JSON.parse(row.config)),
+  };
 }
 
 /** Write a single JSON path inside a preset's config atomically. */
@@ -1692,17 +1750,7 @@ app.post('/comp/solo', wrap(async (req, res) => {
   res.status(204).end();
 }));
 
-// ===== Input EQ (shared L/R bus: preference curve + SPL sets) =====
-
-/** Find the spl=0 set index, creating the set if needed. */
-function getOrCreateSpl0SetIndex(config) {
-  let index = config.inputEq.sets.findIndex((s) => s.spl === 0);
-  if (index === -1) {
-    config.inputEq.sets.push({ spl: 0, points: [] });
-    index = config.inputEq.sets.length - 1;
-  }
-  return index;
-}
+// ===== Input EQ (shared L/R bus: the preference curve and its anchors) =====
 
 // EQ Points (JSON body): array of points, values clamped, replies 204
 app.put('/preset/eq', wrap(async (req, res) => {
@@ -1730,8 +1778,9 @@ app.put('/preset/eq', wrap(async (req, res) => {
     q: clamp(Number(point.q ?? 1), 0.1, 10)
   }));
 
-  const setIndex = getOrCreateSpl0SetIndex(preset.config);
-  preset.config.inputEq.sets[setIndex].points = points;
+  getOrCreateEqSet(preset.config, EQ_SET_REFERENCE).points = points;
+  // The loud anchor only ever differs in gain, so it follows the reference
+  mirrorReferenceToLoud(preset.config);
   await saveConfigPath(presetName, '$.inputEq.sets', preset.config.inputEq.sets);
 
   broadcast({
@@ -1770,8 +1819,7 @@ app.put('/preset/eq/point', wrap(async (req, res) => {
     return res.status(404).json({ error: 'Preset not found' });
   }
 
-  const setIndex = getOrCreateSpl0SetIndex(preset.config);
-  const points = preset.config.inputEq.sets[setIndex].points;
+  const points = getOrCreateEqSet(preset.config, EQ_SET_REFERENCE).points;
   if (id > points.length) {
     return res.status(400).json({ error: 'PEQ point ID would leave a gap' });
   }
@@ -1781,7 +1829,10 @@ app.put('/preset/eq/point', wrap(async (req, res) => {
     gain: clamp(Number(point.gain ?? 0), -15, 15),
     q: clamp(Number(point.q ?? 1), 0.1, 10)
   };
-  await saveConfigPath(presetName, `$.inputEq.sets[${setIndex}].points[${id}]`, points[id]);
+  mirrorReferenceToLoud(preset.config);
+  // The whole sets array, not one point path: the mirror may have changed
+  // the loud set's shape too
+  await saveConfigPath(presetName, '$.inputEq.sets', preset.config.inputEq.sets);
   res.status(204).end();
 }));
 
@@ -1803,6 +1854,138 @@ app.put('/preset/eq/enabled', wrap(async (req, res) => {
 
   await saveConfigPath(presetName, '$.inputEq.enabled', enabled);
   const payload = { messageType: 'eqEnabledChanged', presetName, status: 'ok', enabled };
+  broadcast(payload);
+  res.json(payload);
+}));
+
+// ===== Dynamic EQ (docs/DYNAMIC_EQ.md) =====
+
+// PUT /preset/eq/anchors with {referenceVolume, loudVolume} - volume
+// percents, not dB. An absent key keeps its stored value; a loud anchor at
+// or below the reference has nothing to interpolate across and is stored as
+// 0 ("no loud anchor") rather than rejected.
+app.put('/preset/eq/anchors', wrap(async (req, res) => {
+  const presetName = req.query.preset_name;
+  if (!presetName) {
+    return res.status(400).json({ error: 'Missing required parameters' });
+  }
+  const body = req.body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return res.status(400).json({ error: 'Expected a JSON anchors object' });
+  }
+
+  const preset = await loadPreset(presetName);
+  if (!preset) {
+    return res.status(404).json({ error: 'Preset not found' });
+  }
+
+  const eq = preset.config.inputEq;
+  const referenceVolume = Number(body.referenceVolume ?? eq.referenceVolume);
+  let loudVolume = Number(body.loudVolume ?? eq.loudVolume);
+  const inRange = (v) => Number.isFinite(v) && v >= 0 && v <= 100;
+  if (!inRange(referenceVolume) || !inRange(loudVolume)) {
+    return res.status(400).json({ error: 'Anchor volumes must be between 0 and 100' });
+  }
+  if (loudVolume <= referenceVolume) loudVolume = 0;
+
+  eq.referenceVolume = referenceVolume;
+  eq.loudVolume = loudVolume;
+  await saveConfig(presetName, preset.config);
+
+  const payload = {
+    messageType: 'eqAnchorsChanged', presetName, status: 'ok', referenceVolume, loudVolume,
+  };
+  broadcast(payload);
+  res.json(payload);
+}));
+
+// PUT /preset/eq/loud with {gains: [...]} - gains only, aligned to the
+// reference bands. The loud anchor shares their frequencies and Qs, so it is
+// created by mirroring; a short array leaves the remaining bands flat.
+app.put('/preset/eq/loud', wrap(async (req, res) => {
+  const presetName = req.query.preset_name;
+  if (!presetName) {
+    return res.status(400).json({ error: 'Missing required parameters' });
+  }
+  const gains = req.body ? req.body.gains : null;
+  if (!Array.isArray(gains)) {
+    return res.status(400).json({ error: 'Expected a JSON object with a gains array' });
+  }
+
+  const preset = await loadPreset(presetName);
+  if (!preset) {
+    return res.status(404).json({ error: 'Preset not found' });
+  }
+
+  const reference = findEqSet(preset.config, EQ_SET_REFERENCE);
+  const numPoints = reference ? reference.points.length : 0;
+  if (gains.length > numPoints) {
+    return res.status(400).json({ error: 'More gains than reference EQ points' });
+  }
+
+  getOrCreateEqSet(preset.config, EQ_SET_LOUD);
+  mirrorReferenceToLoud(preset.config);
+  const loud = findEqSet(preset.config, EQ_SET_LOUD);
+  loud.points.forEach((point, i) => {
+    point.gain = i < gains.length ? clamp(Number(gains[i] ?? 0), -15, 15) : 0;
+  });
+  await saveConfig(presetName, preset.config);
+
+  broadcast({
+    messageType: 'eqLoudChanged',
+    presetName,
+    status: 'ok',
+    loudVolume: preset.config.inputEq.loudVolume,
+    gains: loud.points.map((p) => p.gain),
+  });
+  res.status(204).end();
+}));
+
+// DELETE /preset/eq/loud - drop the loud anchor entirely
+app.delete('/preset/eq/loud', wrap(async (req, res) => {
+  const presetName = req.query.preset_name;
+  if (!presetName) {
+    return res.status(400).json({ error: 'Missing required parameters' });
+  }
+
+  const preset = await loadPreset(presetName);
+  if (!preset) {
+    return res.status(404).json({ error: 'Preset not found' });
+  }
+
+  const eq = preset.config.inputEq;
+  eq.sets = eq.sets.filter((s) => s.spl !== EQ_SET_LOUD);
+  eq.loudVolume = 0;
+  await saveConfig(presetName, preset.config);
+
+  const payload = {
+    messageType: 'eqLoudChanged', presetName, status: 'ok', loudVolume: 0, gains: [],
+  };
+  broadcast(payload);
+  res.json(payload);
+}));
+
+// PUT /preset/eq/loudness?enabled= - the ISO 226-derived bass compensation
+// below the reference anchor. It takes no tuning, so this is its whole API.
+// Accepts 1/0 as well as the on/off the sibling toggles use.
+app.put('/preset/eq/loudness', wrap(async (req, res) => {
+  const presetName = req.query.preset_name;
+  if (!presetName) {
+    return res.status(400).json({ error: 'Missing required parameters' });
+  }
+  const raw = req.query.enabled;
+  const enabled = raw === '1' ? true : raw === '0' ? false : parseOnOff(raw);
+  if (enabled === null) {
+    return res.status(400).json({ error: "Invalid state. Must be '1' or '0'" });
+  }
+
+  const preset = await loadPreset(presetName);
+  if (!preset) {
+    return res.status(404).json({ error: 'Preset not found' });
+  }
+
+  await saveConfigPath(presetName, '$.inputEq.loudness', enabled);
+  const payload = { messageType: 'eqLoudnessChanged', presetName, status: 'ok', loudness: enabled };
   broadcast(payload);
   res.json(payload);
 }));
@@ -1922,19 +2105,32 @@ app.get('/backup', (req, res) => {
   });
 });
 
-app.post('/restore', (req, res) => {
-  // Handle file upload for restore
-  // This is a simplified version - in practice you'd handle multipart/form-data
+app.post('/restore', wrap(async (req, res) => {
+  // The device takes a MessagePack config upload; the mock takes the JSON
+  // /backup shape. A body without presets is still acknowledged, which is
+  // all the older tests ask of it.
   const backupData = req.body;
 
   if (!backupData) {
     return res.status(400).json({ error: 'No backup data provided' });
   }
 
-  // Restore would involve parsing the backup file and updating the database
-  // For this mock, we'll just return success
+  if (Array.isArray(backupData.presets)) {
+    // Restoring an older backup runs it through the same schema migration
+    // the device applies on load (config.cpp's migrate_config), so a v4
+    // preset comes back with its curve anchored where it plays.
+    for (const row of backupData.presets) {
+      if (!row || typeof row.name !== 'string') continue;
+      const config = typeof row.config === 'string' ? JSON.parse(row.config) : row.config;
+      await dbRun(
+        "INSERT OR REPLACE INTO presets (name, is_current, config) VALUES (?, ?, ?)",
+        [row.name, row.is_current ? 1 : 0, JSON.stringify(migrateInputEq(config))]
+      );
+    }
+  }
+
   res.json({ success: true, message: 'Configuration restored successfully' });
-});
+}));
 
 // Serve static assets and SPA fallback
 app.use('/assets', express.static(path.join(__dirname, '..', 'WebUI', 'dist', 'assets')));

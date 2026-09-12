@@ -665,6 +665,177 @@ describe('/preset/eq/point', () => {
   })
 })
 
+// ===== Dynamic EQ (docs/DYNAMIC_EQ.md) =====
+
+describe('dynamic EQ anchors and loud curve', () => {
+  const D = `${PREFIX}-dyneq`
+  const inputEq = async (name = D) => (await getPreset(name)).inputEq
+  const setRef = (points) => PUT(`/preset/eq?preset_name=${enc(D)}`, points)
+
+  beforeAll(async () => {
+    expect((await POST(`/preset?action=create&name=${enc(D)}`)).status).toBe(201)
+    // Known reference curve: three bands
+    await setRef([
+      { freq: 60, gain: 4, q: 0.7 },
+      { freq: 800, gain: -3, q: 2 },
+      { freq: 6000, gain: 2, q: 1.5 },
+    ])
+  })
+
+  it('a fresh preset anchors the curve at its own volume, with no loud anchor', async () => {
+    const preset = await getPreset(D)
+    expect(preset.inputEq.referenceVolume).toBe(preset.volume)
+    expect(preset.inputEq.loudVolume).toBe(0)
+    expect(preset.inputEq.loudness).toBe(true)
+    expect(preset.inputEq.sets.some((s) => s.spl === 1)).toBe(false)
+  })
+
+  it('PUT /preset/eq/anchors moves both anchors', async () => {
+    const res = await PUT(`/preset/eq/anchors?preset_name=${enc(D)}`, {
+      referenceVolume: 40, loudVolume: 80,
+    })
+    expect(res.status).toBe(200)
+    expect(res.json).toEqual({
+      messageType: 'eqAnchorsChanged', presetName: D, status: 'ok',
+      referenceVolume: 40, loudVolume: 80,
+    })
+    const eq = await inputEq()
+    expect(eq.referenceVolume).toBe(40)
+    expect(eq.loudVolume).toBe(80)
+  })
+
+  it('stores a loud anchor at or below the reference as 0 (none)', async () => {
+    const res = await PUT(`/preset/eq/anchors?preset_name=${enc(D)}`, {
+      referenceVolume: 60, loudVolume: 60,
+    })
+    expect(res.json.loudVolume).toBe(0)
+    expect((await inputEq()).loudVolume).toBe(0)
+    // Put a usable pair back for the tests below
+    await PUT(`/preset/eq/anchors?preset_name=${enc(D)}`, { referenceVolume: 40, loudVolume: 80 })
+  })
+
+  it('rejects anchors outside 0-100 with 400', async () => {
+    expect((await PUT(`/preset/eq/anchors?preset_name=${enc(D)}`, { referenceVolume: 101 })).status).toBe(400)
+    expect((await PUT(`/preset/eq/anchors?preset_name=${enc(D)}`, { loudVolume: -1 })).status).toBe(400)
+    expect((await PUT(`/preset/eq/anchors?preset_name=${enc(PREFIX + '-missing')}`, {})).status).toBe(404)
+  })
+
+  it('PUT /preset/eq/loud creates the loud set by mirroring the reference bands', async () => {
+    const res = await PUT(`/preset/eq/loud?preset_name=${enc(D)}`, { gains: [8, -6, 5] })
+    expect(res.status).toBe(204)
+
+    const eq = await inputEq()
+    const reference = eq.sets.find((s) => s.spl === 0)
+    const loud = eq.sets.find((s) => s.spl === 1)
+    expect(loud.points).toHaveLength(reference.points.length)
+    expect(loud.points.map((p) => p.gain)).toEqual([8, -6, 5])
+    // Frequencies and Qs are shared, only the gains differ
+    expect(loud.points.map((p) => p.freq)).toEqual(reference.points.map((p) => p.freq))
+    expect(loud.points.map((p) => p.q)).toEqual(reference.points.map((p) => p.q))
+  })
+
+  it('leaves bands past a short gains array flat, and rejects too many', async () => {
+    expect((await PUT(`/preset/eq/loud?preset_name=${enc(D)}`, { gains: [3] })).status).toBe(204)
+    const loud = (await inputEq()).sets.find((s) => s.spl === 1)
+    expect(loud.points.map((p) => p.gain)).toEqual([3, 0, 0])
+
+    expect((await PUT(`/preset/eq/loud?preset_name=${enc(D)}`, { gains: [1, 2, 3, 4] })).status).toBe(400)
+    expect((await PUT(`/preset/eq/loud?preset_name=${enc(D)}`, { gains: 'lots' })).status).toBe(400)
+    expect((await PUT(`/preset/eq/loud?preset_name=${enc(D)}`, {})).status).toBe(400)
+    expect((await PUT(`/preset/eq/loud?preset_name=${enc(PREFIX + '-missing')}`, { gains: [] })).status).toBe(404)
+  })
+
+  it('keeps the loud set aligned when the reference bands change', async () => {
+    await PUT(`/preset/eq/loud?preset_name=${enc(D)}`, { gains: [8, -6, 5] })
+
+    // Move a band and add a fourth: the loud set must follow, keeping its
+    // own gains and starting the new band flat
+    await setRef([
+      { freq: 45, gain: 4, q: 0.5 },
+      { freq: 800, gain: -3, q: 2 },
+      { freq: 6000, gain: 2, q: 1.5 },
+      { freq: 12000, gain: -1, q: 3 },
+    ])
+    let eq = await inputEq()
+    let reference = eq.sets.find((s) => s.spl === 0)
+    let loud = eq.sets.find((s) => s.spl === 1)
+    expect(loud.points.map((p) => p.freq)).toEqual(reference.points.map((p) => p.freq))
+    expect(loud.points.map((p) => p.q)).toEqual(reference.points.map((p) => p.q))
+    expect(loud.points.map((p) => p.gain)).toEqual([8, -6, 5, 0])
+
+    // A single-point edit mirrors too
+    await PUT(`/preset/eq/point?preset_name=${enc(D)}`, { id: 1, freq: 1200, gain: -2, q: 4 })
+    eq = await inputEq()
+    loud = eq.sets.find((s) => s.spl === 1)
+    expect(loud.points[1].freq).toBeCloseTo(1200, 3)
+    expect(loud.points[1].q).toBeCloseTo(4, 3)
+    expect(loud.points[1].gain).toBeCloseTo(-6, 3) // its own gain is kept
+
+    // Removing bands trims the loud set with them
+    await setRef([{ freq: 45, gain: 4, q: 0.5 }, { freq: 1200, gain: -2, q: 4 }])
+    eq = await inputEq()
+    reference = eq.sets.find((s) => s.spl === 0)
+    loud = eq.sets.find((s) => s.spl === 1)
+    expect(loud.points).toHaveLength(2)
+    expect(loud.points.map((p) => p.gain)).toEqual([8, -6])
+    expect(reference.points).toHaveLength(2)
+  })
+
+  it('DELETE /preset/eq/loud drops the set and clears the anchor', async () => {
+    const res = await DEL(`/preset/eq/loud?preset_name=${enc(D)}`)
+    expect(res.status).toBe(200)
+    expect(res.json).toEqual({
+      messageType: 'eqLoudChanged', presetName: D, status: 'ok', loudVolume: 0, gains: [],
+    })
+
+    const eq = await inputEq()
+    expect(eq.sets.some((s) => s.spl === 1)).toBe(false)
+    expect(eq.loudVolume).toBe(0)
+    // The reference curve is untouched
+    expect(eq.sets.find((s) => s.spl === 0).points).toHaveLength(2)
+    expect((await DEL(`/preset/eq/loud?preset_name=${enc(PREFIX + '-missing')}`)).status).toBe(404)
+  })
+
+  it('PUT /preset/eq/loudness toggles the compensation', async () => {
+    const off = await PUT(`/preset/eq/loudness?preset_name=${enc(D)}&enabled=0`)
+    expect(off.status).toBe(200)
+    expect(off.json).toEqual({
+      messageType: 'eqLoudnessChanged', presetName: D, status: 'ok', loudness: false,
+    })
+    expect((await inputEq()).loudness).toBe(false)
+
+    const on = await PUT(`/preset/eq/loudness?preset_name=${enc(D)}&enabled=1`)
+    expect(on.json.loudness).toBe(true)
+    expect((await inputEq()).loudness).toBe(true)
+  })
+
+  it('rejects an invalid loudness state with 400', async () => {
+    expect((await PUT(`/preset/eq/loudness?preset_name=${enc(D)}&enabled=maybe`)).status).toBe(400)
+    expect((await PUT(`/preset/eq/loudness?preset_name=${enc(D)}`)).status).toBe(400)
+    expect((await PUT(`/preset/eq/loudness?preset_name=${enc(PREFIX + '-missing')}&enabled=1`)).status).toBe(404)
+  })
+
+  it('broadcasts anchor, loud and loudness changes', async () => {
+    const ws = await connectWs(t.wsUrl)
+    try {
+      const anchors = ws.expect((m) => m.messageType === 'eqAnchorsChanged' && m.presetName === D)
+      await PUT(`/preset/eq/anchors?preset_name=${enc(D)}`, { referenceVolume: 35, loudVolume: 90 })
+      expect(await anchors).toMatchObject({ referenceVolume: 35, loudVolume: 90 })
+
+      const loud = ws.expect((m) => m.messageType === 'eqLoudChanged' && m.presetName === D)
+      await PUT(`/preset/eq/loud?preset_name=${enc(D)}`, { gains: [5, -5] })
+      expect(await loud).toMatchObject({ loudVolume: 90, gains: [5, -5] })
+
+      const loudness = ws.expect((m) => m.messageType === 'eqLoudnessChanged' && m.presetName === D)
+      await PUT(`/preset/eq/loudness?preset_name=${enc(D)}&enabled=0`)
+      expect(await loudness).toMatchObject({ loudness: false })
+      await PUT(`/preset/eq/loudness?preset_name=${enc(D)}&enabled=1`)
+    } finally {
+      ws.close()
+    }
+  })
+})
+
 describe('PUT /preset/eq/enabled', () => {
   it('toggles the preference EQ, replying with the eqEnabledChanged shape', async () => {
     const on = await PUT(`/preset/eq/enabled?preset_name=${enc(P)}&type=pref&enabled=on`)
@@ -1479,5 +1650,36 @@ describe('delete-last-preset semantics (mock only)', () => {
   itMockOnly('POST /restore acknowledges a body', async () => {
     const res = await POST('/restore', { anything: true })
     expect(res.status).toBe(200)
+  })
+
+  // Restoring a pre-dynamic-EQ backup is the only way to observe the v4 -> v5
+  // migration over HTTP, and it replaces presets wholesale - mock only.
+  itMockOnly('restoring a v4 backup anchors the curve at the preset volume', async () => {
+    const NAME = `${PREFIX}-v4-restore`
+    const legacyConfig = {
+      template: '2.1',
+      crossovers: [],
+      // No referenceVolume / loudVolume / loudness: the v4 shape
+      inputEq: {
+        enabled: true,
+        sets: [{ spl: 0, points: [{ freq: 80, gain: 3, q: 1 }] }],
+      },
+      outputs: [],
+      delaysEnabled: false,
+      firEnabled: false,
+      volume: 37,
+    }
+    const res = await POST('/restore', {
+      version: 4,
+      presets: [{ name: NAME, is_current: 0, config: JSON.stringify(legacyConfig) }],
+    })
+    expect(res.status).toBe(200)
+
+    const restored = await getPreset(NAME)
+    expect(restored.inputEq.referenceVolume).toBe(37)
+    expect(restored.inputEq.loudVolume).toBe(0)
+    expect(restored.inputEq.loudness).toBe(true)
+    // The curve itself comes back untouched
+    expect(restored.inputEq.sets.find((s) => s.spl === 0).points).toHaveLength(1)
   })
 })

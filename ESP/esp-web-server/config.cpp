@@ -59,6 +59,55 @@ int find_crossover_by_id(const Preset& preset, const char* id) {
     return -1;
 }
 
+PEQSet* find_input_eq_set(InputEq& eq, int role) {
+    for (int i = 0; i < MAX_PEQ_SETS; i++) {
+        if (eq.sets[i].spl == role) {
+            return &eq.sets[i];
+        }
+    }
+    return nullptr;
+}
+
+const PEQSet* find_input_eq_set(const InputEq& eq, int role) {
+    return find_input_eq_set(const_cast<InputEq&>(eq), role);
+}
+
+PEQSet* get_or_create_input_eq_set(InputEq& eq, int role) {
+    PEQSet* existing = find_input_eq_set(eq, role);
+    if (existing != nullptr) {
+        return existing;
+    }
+    PEQSet* free_slot = find_input_eq_set(eq, EQ_SET_UNUSED);
+    if (free_slot == nullptr) {
+        return nullptr;
+    }
+    free_slot->spl = role;
+    free_slot->num_points = 0;
+    return free_slot;
+}
+
+void mirror_reference_to_loud(InputEq& eq) {
+    PEQSet* loud = find_input_eq_set(eq, EQ_SET_LOUD);
+    if (loud == nullptr) {
+        return;
+    }
+    const PEQSet* reference = find_input_eq_set(eq, EQ_SET_REFERENCE);
+    if (reference == nullptr) {
+        loud->num_points = 0;
+        return;
+    }
+    for (int i = 0; i < reference->num_points; i++) {
+        // A band the loud anchor has never seen starts flat, so adding a
+        // band to the reference curve doesn't invent a loud gain for it
+        if (i >= loud->num_points) {
+            loud->points[i].gain = 0.0f;
+        }
+        loud->points[i].freq = reference->points[i].freq;
+        loud->points[i].q = reference->points[i].q;
+    }
+    loud->num_points = reference->num_points;
+}
+
 double resolve_filter_freq(const Preset& preset, const FilterSection& section) {
     if (section.mode == FilterMode::Manual) {
         return section.freq;
@@ -159,7 +208,7 @@ void input_eq_to_json(const InputEq& eq, JsonObject obj) {
     obj["enabled"] = eq.enabled;
     JsonArray sets = obj.createNestedArray("sets");
     for (int i = 0; i < MAX_PEQ_SETS; i++) {
-        if (eq.sets[i].spl == -1) continue;
+        if (eq.sets[i].spl == EQ_SET_UNUSED) continue;
         JsonObject set = sets.createNestedObject();
         set["spl"] = eq.sets[i].spl;
         JsonArray points = set.createNestedArray("points");
@@ -170,6 +219,9 @@ void input_eq_to_json(const InputEq& eq, JsonObject obj) {
             point["q"] = eq.sets[i].points[j].q;
         }
     }
+    obj["referenceVolume"] = eq.referenceVolume;
+    obj["loudVolume"] = eq.loudVolume;
+    obj["loudness"] = eq.loudness;
 }
 
 void dynamics_to_json(const Dynamics& dyn, JsonObject obj) {
@@ -207,6 +259,12 @@ static void filter_from_json(JsonObject obj, FilterSection& section) {
     strlcpy(section.xover, obj["xover"] | "", sizeof(section.xover));
     section.freq = obj["freq"] | 0.0;
     strlcpy(section.type, obj["type"] | "LR4", sizeof(section.type));
+}
+
+// Volume percents come from storage, so a hand-edited or corrupt file must
+// not be able to push one out of range
+static int clamp_percent(int value) {
+    return value < 0 ? 0 : (value > 100 ? 100 : value);
 }
 
 static void peq_points_from_json(JsonArray array, PEQPoint* points, int maxPoints, int& count) {
@@ -257,6 +315,12 @@ static void preset_from_json(JsonObject obj, Preset& preset) {
         xo.max = point["max"] | 20000;
     }
 
+    // Absent before v4 (the migration seeds it); clamp so a hand-edited or
+    // corrupt file can't hand the Teensy an out-of-range master gain. Parsed
+    // before the input EQ because the dynamic-EQ anchors fall back to it.
+    int volume = obj["volume"] | PRESET_VOLUME_DEFAULT;
+    preset.volume = volume < 0 ? 0 : (volume > 100 ? 100 : volume);
+
     JsonObject inputEq = obj["inputEq"];
     preset.inputEq.enabled = inputEq["enabled"] | false;
     for (int i = 0; i < MAX_PEQ_SETS; i++) {
@@ -266,9 +330,22 @@ static void preset_from_json(JsonObject obj, Preset& preset) {
     for (JsonObject set : inputEq["sets"].as<JsonArray>()) {
         if (setCount >= MAX_PEQ_SETS) break;
         PEQSet& target = preset.inputEq.sets[setCount++];
-        target.spl = set["spl"] | 0;
+        target.spl = set["spl"] | EQ_SET_REFERENCE;
         peq_points_from_json(set["points"], target.points, MAX_PEQ_POINTS, target.num_points);
     }
+    // Absent before v5 (the migration seeds them). The fallback repeats it so
+    // a hand-edited file without the keys still anchors the curve at the
+    // level the preset plays at, rather than at some unrelated default.
+    int referenceVolume = inputEq["referenceVolume"] | preset.volume;
+    preset.inputEq.referenceVolume = clamp_percent(referenceVolume);
+    int loudVolume = inputEq["loudVolume"] | 0;
+    preset.inputEq.loudVolume = clamp_percent(loudVolume);
+    preset.inputEq.loudness = inputEq["loudness"] | true;
+    // A loud anchor at or below the reference has no room to interpolate in
+    if (preset.inputEq.loudVolume <= preset.inputEq.referenceVolume) {
+        preset.inputEq.loudVolume = 0;
+    }
+    mirror_reference_to_loud(preset.inputEq);
 
     JsonArray outputs = obj["outputs"];
     for (int i = 0; i < NUM_OUTPUTS; i++) {
@@ -277,11 +354,6 @@ static void preset_from_json(JsonObject obj, Preset& preset) {
 
     preset.delaysEnabled = obj["delaysEnabled"] | false;
     preset.firEnabled = obj["firEnabled"] | false;
-
-    // Absent before v4 (the migration seeds it); clamp so a hand-edited or
-    // corrupt file can't hand the Teensy an out-of-range master gain
-    int volume = obj["volume"] | PRESET_VOLUME_DEFAULT;
-    preset.volume = volume < 0 ? 0 : (volume > 100 ? 100 : volume);
 
     // Absent in configs saved before v3 - defaults leave it disabled
     preset.dynamics = Dynamics();
@@ -343,6 +415,21 @@ static bool migrate_config(JsonDocument& doc, uint8_t fromVersion) {
         int legacyVolume = doc["volume"] | PRESET_VOLUME_DEFAULT;
         for (JsonObject preset : doc["presets"].as<JsonArray>()) {
             preset["volume"] = legacyVolume;
+        }
+    }
+    if (fromVersion < 5) {
+        // v4 -> v5: the input EQ gained volume anchors. Anchor every curve at
+        // the level its preset plays at, with no loud anchor, so the upgrade
+        // reproduces exactly what the old static curve did; loudness starts
+        // on because below the reference is where it now applies.
+        for (JsonObject preset : doc["presets"].as<JsonArray>()) {
+            JsonObject inputEq = preset["inputEq"];
+            if (inputEq.isNull()) {
+                inputEq = preset.createNestedObject("inputEq");
+            }
+            inputEq["referenceVolume"] = preset["volume"] | PRESET_VOLUME_DEFAULT;
+            inputEq["loudVolume"] = 0;
+            inputEq["loudness"] = true;
         }
     }
     return true;
@@ -583,6 +670,25 @@ void sendInputEqPointToTeensy(int index, const PEQPoint& point) {
     sendToTeensy(CMD_SET_INPUT_EQ, idStr, pointData);
 }
 
+void sendDynamicEqToTeensy(const InputEq& eq) {
+    // Gains first, anchors second: the Teensy only interpolates once it has
+    // a loud anchor, so a half-sent loud curve is never audible.
+    const PEQSet* loud = find_input_eq_set(eq, EQ_SET_LOUD);
+    if (loud != nullptr) {
+        for (int i = 0; i < loud->num_points; i++) {
+            char idStr[8], gainStr[12];
+            snprintf(idStr, sizeof(idStr), "%d", i);
+            snprintf(gainStr, sizeof(gainStr), "%.2f", loud->points[i].gain);
+            sendToTeensy(CMD_SET_INPUT_EQ_LOUD_GAIN, idStr, gainStr);
+        }
+    }
+    char refStr[8], loudStr[8];
+    snprintf(refStr, sizeof(refStr), "%d", eq.referenceVolume);
+    snprintf(loudStr, sizeof(loudStr), "%d", eq.loudVolume);
+    sendToTeensy(CMD_SET_INPUT_EQ_ANCHORS, refStr, loudStr);
+    sendOnOffToTeensy(CMD_SET_LOUDNESS, eq.loudness);
+}
+
 void sendOutputEqPointToTeensy(int channel, int band, const PEQPoint& point) {
     char chStr[8], bandStr[8];
     snprintf(chStr, sizeof(chStr), "%d", channel);
@@ -689,19 +795,20 @@ void updateTeensyWithActivePresetParameters() {
     // the Teensy has the right curve the moment EQ is enabled.
     sendOnOffToTeensy(CMD_SET_INPUT_EQ_ENABLED, activePreset->inputEq.enabled);
     int num_points = 0;
-    for (int i = 0; i < MAX_PEQ_SETS; i++) {
-        if (activePreset->inputEq.sets[i].spl == 0) {
-            const PEQSet& set = activePreset->inputEq.sets[i];
-            for (int j = 0; j < set.num_points; j++) {
-                sendInputEqPointToTeensy(j, set.points[j]);
-            }
-            num_points = set.num_points;
-            break;
+    const PEQSet* referenceSet = find_input_eq_set(activePreset->inputEq, EQ_SET_REFERENCE);
+    if (referenceSet != nullptr) {
+        for (int j = 0; j < referenceSet->num_points; j++) {
+            sendInputEqPointToTeensy(j, referenceSet->points[j]);
         }
+        num_points = referenceSet->num_points;
     }
-    // Disable all bands beyond the active points
+    // Disable all bands beyond the active points (this also zeroes their
+    // loud gains on the Teensy, so the loud anchor follows below)
     snprintf(a, sizeof(a), "%d", num_points);
     sendToTeensy(CMD_RESET_INPUT_EQ, a);
+
+    // Dynamic EQ: loud-anchor gains, the anchors themselves, loudness
+    sendDynamicEqToTeensy(activePreset->inputEq);
 
     // Send volume (per-preset) and mute state
     sendFloatToTeensy(CMD_SET_VOLUME, activePreset->volume / 100.0f);

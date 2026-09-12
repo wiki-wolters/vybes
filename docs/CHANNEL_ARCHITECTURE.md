@@ -17,7 +17,8 @@ Deferred (discussed, not in scope for V1):
 ```
 inputs (spdif/bt/usb/analog/gen)
   -> input mixers (existing)
-  -> input EQ (shared L/R, preference curve + SPL sets — room/house correction)
+  -> input EQ (shared L/R preference curve — room/house correction, and the
+     volume-following dynamic EQ of docs/DYNAMIC_EQ.md)
   -> routing matrix (per-output source gains for L and R buses)
   -> 8x output channel: HP + LP crossover -> output PEQ -> FIR -> delay
      -> gain / invert / mute
@@ -45,9 +46,14 @@ spec for the ESP32-S3 firmware.
       "crossovers": [                  // shared crossover points (max 4)
         { "id": "sub_xo", "freq": 80, "type": "LR4", "locked": false, "min": 40, "max": 500 }
       ],
-      "inputEq": {
+      "inputEq": {                     // see docs/DYNAMIC_EQ.md
         "enabled": true,
-        "sets": [ { "spl": 0, "points": [ { "freq": 1000, "gain": 0, "q": 1 } ] } ]
+        // spl is a ROLE tag, not an SPL: 0 reference anchor, 1 loud anchor.
+        // Both sets share band count, frequencies and Qs; only gains differ.
+        "sets": [ { "spl": 0, "points": [ { "freq": 1000, "gain": 0, "q": 1 } ] } ],
+        "referenceVolume": 50,         // slider percent the curve is tuned at
+        "loudVolume": 0,               // slider percent; 0 = no loud anchor
+        "loudness": true               // ISO 226 compensation below reference
       },
       "outputs": [                     // always 8 entries
         {
@@ -159,6 +165,9 @@ setOutputEq     <ch> <band> <freq> <q> <gain>
 setFir          <ch> <file>            # bare "setFir <ch>" clears
 setFirEnabled   <ch> <0|1>
 setInputEq      <band> <freq> <q> <gain>   # shared input EQ, unchanged semantics
+setInputEqLoudGain <band> <gain>       # dynamic EQ: loud-anchor gain (docs/DYNAMIC_EQ.md)
+setInputEqAnchors  <refPct> <loudPct>  # 0-100; loud 0 = no loud anchor
+setLoudness        <0|1>               # loudness compensation below reference
 ```
 
 `teensy_protocol.h` stays pure C so the host-native round-trip tests keep
@@ -194,8 +203,8 @@ projection of it, not a separate mode.
   Master volume is stored on the preset, so the slider here writes the active
   one and follows preset switches.
 - **PresetEditorView** becomes tabbed: **Tuning** | **Channels**.
-  - *Tuning* (simple view, per template): input EQ (existing EQSection with
-    SPL sets), Crossovers card, speaker-group levels and delays, FIR per
+  - *Tuning* (simple view, per template): input EQ (EQSection: the curve plus
+    its dynamic-EQ anchors), Crossovers card, speaker-group levels and delays, FIR per
     output. For the 2.1 template this is today's editor, nearly unchanged.
   - *Channels* (advanced): eight channel strips — editable label, source mix,
     HP/LP summary, output PEQ (opens ParametricEQ), FIR file select, delay,

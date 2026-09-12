@@ -56,13 +56,7 @@
           <div v-if="activeTab === 'tuning'" class="max-w-3xl mx-auto">
             <CollapsibleSection title="EQ" :model-value="store.preset.inputEq.enabled" @update:modelValue="store.setInputEqEnabled($event)" :animate="animationsEnabled">
               <div :class="{ 'opacity-50 pointer-events-none': !store.preset.inputEq.enabled }">
-                <EQSection
-                  :eq-sets="store.inputEqSets"
-                  :preset-name="store.presetName"
-                  eq-type="pref"
-                  @update-eq-points="store.saveInputEq($event)"
-                  :is-enabled="store.preset.inputEq.enabled"
-                />
+                <EQSection :preset-name="store.presetName" eq-type="pref" />
               </div>
             </CollapsibleSection>
 

@@ -67,9 +67,11 @@ into eight identical output channels rather than a fixed left/right/sub set. Eac
 preset contains:
 
 * Name (max 15 characters) and a speaker-setup template reference
-* Input EQ (the shared "preference curve"): PEQ sets of up to 15 points each
-  (frequency, gain, Q), plus an enabled flag. Each set carries an SPL value for
-  future volume-dependent EQ, but currently only the default set (spl = 0) is used.
+* Input EQ (the shared "preference curve"): up to 15 points (frequency, gain, Q)
+  plus an enabled flag, and a *dynamic EQ* that follows the volume — a reference
+  anchor, an optional louder one sharing the same bands, and an automatic
+  ISO 226-derived loudness compensation below the reference. See
+  [docs/DYNAMIC_EQ.md](docs/DYNAMIC_EQ.md).
 * Crossover points: named frequency + enabled pairs that outputs reference for
   their high- and low-pass filters (a shared point keeps linked outputs in sync)
 * Eight outputs, each with: label, enable, source mix (per-bus gains), high-pass
@@ -140,7 +142,12 @@ Rename, copy, and delete buttons and a speaker-setup template badge, then two ta
 * EQ: the shared input EQ — an interactive parametric chart with draggable points
   and a calculated frequency-response curve, plus REW import (paste REW's "Export
   filter settings as text" output or choose the exported .txt; peaking (PK)
-  filters are imported, up to the band limit)
+  filters are imported, up to the band limit). Above the chart are the dynamic-EQ
+  controls: the reference volume the curve is tuned at, an optional loud anchor
+  (add / move to the current volume / remove) with a Reference | Loud switch for
+  which set of gains the chart edits, and the loudness-compensation toggle. A
+  dashed "Now at NN%" curve shows what is actually playing when it differs from
+  the curve being edited. See [docs/DYNAMIC_EQ.md](docs/DYNAMIC_EQ.md)
 * FIR filters: a file dropdown per enabled output listing the filter files on the
   device's SD card (a configured-but-missing file stays selectable rather than
   being silently blanked, and there's a free-text fallback when the list is

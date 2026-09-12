@@ -9,6 +9,12 @@ esp_err_t handlePutPresetEQPoints(PsychicRequest *request, JsonVariant &json);
 esp_err_t handlePutPresetEQPoint(PsychicRequest *request, JsonVariant &json);
 esp_err_t handlePutPresetEQEnabled(PsychicRequest *request);
 
+// Dynamic EQ endpoints (docs/DYNAMIC_EQ.md)
+esp_err_t handlePutPresetEQAnchors(PsychicRequest *request, JsonVariant &json);
+esp_err_t handlePutPresetEQLoud(PsychicRequest *request, JsonVariant &json);
+esp_err_t handleDeletePresetEQLoud(PsychicRequest *request);
+esp_err_t handlePutPresetEQLoudness(PsychicRequest *request);
+
 // Crossover endpoints
 esp_err_t handlePutPresetCrossover(PsychicRequest *request);
 esp_err_t handlePutPresetCrossoverEnabled(PsychicRequest *request);

@@ -1,6 +1,7 @@
 /*
  * Shared parametric EQ math: the exact bell (peaking) filter magnitude used
- * by the Teensy, plus fitting of a small set of peaking filters to a
+ * by the Teensy, the dynamic-EQ volume law and loudness compensation
+ * (docs/DYNAMIC_EQ.md), plus fitting of a small set of peaking filters to a
  * correction curve (the analyzer's "convert diff to EQ").
  */
 
@@ -45,6 +46,110 @@ export function peqSumDb(points, freq) {
 // Convert a bandwidth in octaves to the equivalent bell Q.
 export const octavesToQ = (octaves) =>
   Math.pow(2, octaves / 2) / (Math.pow(2, octaves) - 1);
+
+/* ── Dynamic EQ (docs/DYNAMIC_EQ.md) ─────────────────────────────────── */
+
+// The master volume slider's percent as gain in dB. The Teensy cubes the
+// linear 0-1 value, so a percent is 3 * 20*log10(pct/100) dB: 100% = 0,
+// 79% = -6, 50% = -18, 25% = -36. Floored at -60 dB (10% and below), which
+// is the bottom of the useful range and keeps 0% finite.
+export function volumePctToDb(pct) {
+  if (!(pct > 0)) return -60;
+  return Math.max(-60, 60 * Math.log10(pct / 100));
+}
+
+/*
+ * RBJ audio-EQ-cookbook high shelf magnitude in dB, at the device sample
+ * rate, with shelf slope S = 1 (alpha = sin(w0)/sqrt(2), i.e. Q = 1/sqrt(2)
+ * - the steepest slope that stays monotonic). This is the loudness
+ * compensation's only building block, so it is the digital shelf the Teensy
+ * runs, not the analog prototype: drawn and audible have to agree.
+ */
+export function highShelfDb(f, fc, gainDb, fs = DEVICE_SAMPLE_RATE) {
+  if (!gainDb || fc <= 0 || f <= 0) return 0;
+  const A = Math.pow(10, gainDb / 40);
+  const w0 = 2 * Math.PI * Math.min(fc, 0.49 * fs) / fs;
+  const cosW0 = Math.cos(w0);
+  const alpha = Math.sin(w0) / Math.SQRT2;
+  const shelfTerm = 2 * Math.sqrt(A) * alpha;
+  const b = [
+    A * ((A + 1) + (A - 1) * cosW0 + shelfTerm),
+    -2 * A * ((A - 1) + (A + 1) * cosW0),
+    A * ((A + 1) + (A - 1) * cosW0 - shelfTerm),
+  ];
+  const a = [
+    (A + 1) - (A - 1) * cosW0 + shelfTerm,
+    2 * ((A - 1) - (A + 1) * cosW0),
+    (A + 1) - (A - 1) * cosW0 - shelfTerm,
+  ];
+  const w = 2 * Math.PI * f / fs;
+  const magSquared = (c) => {
+    let re = 0;
+    let im = 0;
+    for (let k = 0; k < 3; k++) {
+      re += c[k] * Math.cos(k * w);
+      im -= c[k] * Math.sin(k * w);
+    }
+    return re * re + im * im;
+  };
+  return 10 * Math.log10(magSquared(b) / magSquared(a));
+}
+
+// Loudness-compensation corner frequencies and slope. Two shelves rather
+// than one: the ear's low-frequency sensitivity falls away in two stages
+// (below ~300 Hz, then again below ~60 Hz), and a single shelf can only fit
+// one of them. 0.25 dB of tilt per dB of level drop is what matches the ISO
+// 226 contours; the cap stops an extreme cut at very low volumes.
+const LOUDNESS_SHELVES = [300, 60];
+const LOUDNESS_DB_PER_DB = 0.25;
+const LOUDNESS_MAX_DB = 15;
+
+/*
+ * Loudness compensation as the device applies it: two high-shelf CUTS, so
+ * playing below the reference volume never asks the amplifier for gain it
+ * does not have. `dropDb` is how far below the reference anchor the volume
+ * sits (a positive number of dB).
+ *
+ * The visible consequence of the cut form is that below the reference the
+ * mids fall about 0.5 dB per dB faster than the slider law alone - the bass
+ * is not lifted, everything above it is lowered.
+ */
+export function loudnessCompensationDb(f, dropDb, fs = DEVICE_SAMPLE_RATE) {
+  if (!(dropDb > 0)) return 0;
+  const gain = -Math.min(LOUDNESS_MAX_DB, LOUDNESS_DB_PER_DB * dropDb);
+  let total = 0;
+  for (const fc of LOUDNESS_SHELVES) total += highShelfDb(f, fc, gain, fs);
+  return total;
+}
+
+/*
+ * The same curve read relative to 1 kHz - what the EQ graph draws, because
+ * on screen the compensation reads as a bass lift rather than a broadband
+ * cut. Within 1.5 dB of the ISO 226:2003 equal-loudness prediction
+ * (Lp(f, R-drop) - Lp(f, R) + drop) from 20 Hz to 2 kHz; see the physics
+ * test in tests/unit/eq-math.test.js. The fit is deliberately low-frequency
+ * only - the contours' treble behaviour depends on absolute SPL, which the
+ * device cannot know.
+ */
+export function loudnessCompensationRelDb(f, dropDb, fs = DEVICE_SAMPLE_RATE) {
+  if (!(dropDb > 0)) return 0;
+  return loudnessCompensationDb(f, dropDb, fs) - loudnessCompensationDb(1000, dropDb, fs);
+}
+
+/*
+ * The band gains actually running at a given volume. Between the reference
+ * and loud anchors the two curves are crossfaded band-for-band in volume-dB;
+ * beyond the loud anchor the loud curve holds, and at or below the reference
+ * the reference curve does. Frequencies and Qs are shared, so only the gains
+ * move - which is what makes the interpolation meaningful at all.
+ */
+export function dynamicEqGains(refGains, loudGains, refDb, loudDb, hasLoud, volDb) {
+  if (!hasLoud || !Array.isArray(loudGains) || loudDb <= refDb || volDb <= refDb) {
+    return refGains.slice();
+  }
+  const t = clamp((volDb - refDb) / (loudDb - refDb), 0, 1);
+  return refGains.map((g, i) => g + t * ((loudGains[i] ?? 0) - g));
+}
 
 /*
  * Fit up to maxBands peaking filters to a correction curve sampled at

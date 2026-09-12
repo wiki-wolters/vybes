@@ -145,6 +145,9 @@ const DEFAULT_TEMPLATE = '2.1';
 
 // Default spl=0 input EQ set: three flat points (matches the old ESP
 // handlePostPresetCreate defaults)
+// The shared input EQ of a new preset: one flat reference curve, no loud
+// anchor. `spl` is a role tag, not an SPL - see docs/DYNAMIC_EQ.md and
+// EQ_SET_* in ESP/esp-web-server/config.h (0 reference, 1 loud, -1 unused).
 function defaultInputEq() {
   return {
     enabled: false,
@@ -158,6 +161,9 @@ function defaultInputEq() {
         ],
       },
     ],
+    referenceVolume: PRESET_VOLUME_DEFAULT,
+    loudVolume: 0,
+    loudness: true,
   };
 }
 

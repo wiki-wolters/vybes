@@ -81,6 +81,26 @@
           stroke-linejoin="round"
         />
 
+        <!-- What is playing right now, when it isn't the curve being edited -->
+        <template v-if="overlayPath">
+          <path
+            class="overlay-curve"
+            :d="overlayPath"
+            fill="none"
+            stroke-width="1.8"
+            stroke-dasharray="6 4"
+            stroke-linejoin="round"
+          />
+          <text
+            v-if="overlayLabel"
+            class="overlay-label"
+            :x="width - 10" :y="16"
+            font-size="10" text-anchor="end"
+          >
+            {{ overlayLabel }}
+          </text>
+        </template>
+
         <!-- Band nodes -->
         <g
           v-for="(point, i) in localEqPoints"
@@ -145,14 +165,14 @@
         <span>{{ fmtFreq(point.freq) }} · {{ fmtGain(point.gain) }}</span>
       </button>
       <button
-        v-if="localEqPoints.length < MAX_POINTS"
+        v-if="!gainsOnly && localEqPoints.length < MAX_POINTS"
         type="button"
         class="point-chip chip-ghost"
         @click="addPoint"
       >
         + Add band
       </button>
-      <button type="button" class="point-chip chip-ghost" @click="openImport">
+      <button v-if="!gainsOnly" type="button" class="point-chip chip-ghost" @click="openImport">
         Import REW
       </button>
     </div>
@@ -164,10 +184,18 @@
       <div class="eq-controls-head">
         <span class="chip-dot" :style="{ background: bandColor(selectedPoint) }"></span>
         <h4>Band {{ selectedPoint + 1 }}</h4>
-        <button type="button" class="delete-band-btn" @click="removePoint(selectedPoint)">
+        <button
+          v-if="!gainsOnly"
+          type="button"
+          class="delete-band-btn"
+          @click="removePoint(selectedPoint)"
+        >
           Delete band
         </button>
       </div>
+      <p v-if="gainsOnly" class="gains-only-hint">
+        Bands are shared with the reference curve — only the gains differ here.
+      </p>
       <div class="control-group">
         <range-slider
           label="Frequency"
@@ -177,6 +205,7 @@
           unit="Hz"
           :decimals="0"
           :logarithmic="true"
+          :disabled="gainsOnly"
           v-model="localEqPoints[selectedPoint].freq"
           @update:modelValue="() => requestUpdate()"
         />
@@ -202,6 +231,7 @@
           unit=""
           :decimals="2"
           :logarithmic="true"
+          :disabled="gainsOnly"
           v-model="localEqPoints[selectedPoint].q"
           @update:modelValue="() => requestUpdate()"
         />
@@ -284,6 +314,23 @@ const props = defineProps({
   maxPoints: {
     type: Number,
     default: 15
+  },
+  // Dynamic EQ's loud anchor (docs/DYNAMIC_EQ.md): the two anchors share
+  // their bands, so editing the loud one may move gains and nothing else.
+  // Off for the input EQ's reference curve and every per-output PEQ.
+  gainsOnly: {
+    type: Boolean,
+    default: false
+  },
+  // Optional second curve drawn dashed, as dB at a frequency. Used to show
+  // what is playing right now while a different anchor is being edited.
+  overlayDb: {
+    type: Function,
+    default: null
+  },
+  overlayLabel: {
+    type: String,
+    default: ''
   }
 });
 
@@ -465,8 +512,12 @@ const sendUpdateToAPI = async () => {
   emit('change', pointsToEmit);
 };
 
-const requestUpdate = (fullUpdate = false) => {
+const requestUpdate = (requestedFull = false) => {
   if (isUnmounted) return;
+
+  // The per-point endpoint writes the reference anchor, so the loud anchor
+  // only ever saves through the parent's full-set `change` handler.
+  const fullUpdate = requestedFull || props.gainsOnly;
 
   // Set interaction flag and timeout to clear it
   isInteracting.value = true;
@@ -621,6 +672,20 @@ const combinedFillPath = computed(() => {
   return `${combinedPath.value} L ${width.value},${zeroY} L 0,${zeroY} Z`;
 });
 
+// Second curve (dynamic EQ's "now playing" line). Sampled at this
+// component's own x positions so it lands on the same log frequency axis.
+const overlayPath = computed(() => {
+  if (!props.overlayDb) return '';
+  const samples = [];
+  const steps = 220;
+  for (let i = 0; i <= steps; i++) {
+    const x = (i / steps) * width.value;
+    const gain = clamp(props.overlayDb(xToFrequency(x)), -MAX_GAIN, MAX_GAIN);
+    samples.push(`${x.toFixed(1)},${gainToY(gain).toFixed(1)}`);
+  }
+  return `M ${samples.join(' L ')}`;
+});
+
 const bandPaths = computed(() => localEqPoints.map(point => {
   const samples = [];
   const steps = 120;
@@ -737,7 +802,7 @@ const onPointerDown = (event) => {
   }
   event.preventDefault();
 
-  if (pointers.size === 2 && localEqPoints[selectedPoint.value]) {
+  if (!props.gainsOnly && pointers.size === 2 && localEqPoints[selectedPoint.value]) {
     // Second finger down: abandon any drag/tap and pinch the selected
     // band's Q instead.
     dragInfo = null;
@@ -756,7 +821,9 @@ const onPointerDown = (event) => {
   if (nodeEl) {
     const index = +nodeEl.dataset.index;
     const now = performance.now();
-    if (now - lastTap.time < 300 && lastTap.index === index) {
+    // Double-tap deletes a band, which the loud anchor may not do: its bands
+    // belong to the reference curve
+    if (!props.gainsOnly && now - lastTap.time < 300 && lastTap.index === index) {
       removePoint(index);
       lastTap.time = 0;
       return;
@@ -795,7 +862,11 @@ const onPointerMove = (event) => {
   }
   dragInfo.moved = true;
   const point = localEqPoints[dragInfo.index];
-  point.freq = clamp(xToFrequency(clamp(pos.x, 0, width.value)), MIN_FREQ, MAX_FREQ);
+  // Editing the loud anchor moves nodes up and down only - the frequency
+  // belongs to the shared band list
+  if (!props.gainsOnly) {
+    point.freq = clamp(xToFrequency(clamp(pos.x, 0, width.value)), MIN_FREQ, MAX_FREQ);
+  }
   point.gain = clamp(yToGain(clamp(pos.y, 0, height.value)), -MAX_GAIN, MAX_GAIN);
   requestUpdate();
   showReadout(frequencyToX(point.freq), gainToY(point.gain));
@@ -817,7 +888,8 @@ const finishPointer = (event, cancelled) => {
 
   if (!dragInfo) return;
   if (dragInfo.index < 0) {
-    if (!cancelled && !dragInfo.moved) {
+    // Tap-to-add on empty canvas: same rule as double-tap-to-delete
+    if (!cancelled && !dragInfo.moved && !props.gainsOnly) {
       const pos = svgPos(event);
       addPointAt(xToFrequency(pos.x), yToGain(pos.y));
     }
@@ -834,6 +906,7 @@ const onPointerUp = (event) => finishPointer(event, false);
 const onPointerCancel = (event) => finishPointer(event, true);
 
 const onWheel = (event) => {
+  if (props.gainsOnly) return; // Q belongs to the shared band list
   // Trackpad pinches arrive as wheel events with ctrlKey set, so this
   // gate makes "pinch = Q" on desktop too (or Ctrl/Cmd-scroll on a
   // mouse). Plain two-finger scrolls fall through and scroll the page.
@@ -938,6 +1011,16 @@ onUnmounted(() => {
 
 .combined-curve {
   stroke: var(--vybes-accent);
+}
+
+/* Secondary to the edited curve: same family, deliberately quieter */
+.overlay-curve {
+  stroke: var(--vybes-text-secondary);
+  opacity: 0.75;
+}
+
+.overlay-label {
+  fill: var(--vybes-text-secondary);
 }
 
 .node-dot {
@@ -1128,6 +1211,12 @@ onUnmounted(() => {
 .eq-controls h4 {
   margin: 0;
   font-size: 14px;
+}
+
+.gains-only-hint {
+  margin: -4px 0 12px;
+  font-size: 11px;
+  color: var(--vybes-text-secondary);
 }
 
 .delete-band-btn {

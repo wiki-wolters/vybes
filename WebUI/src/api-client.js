@@ -378,6 +378,48 @@ class VybesAPI {
     return this.request('PUT', `/preset/eq/point?preset_name=${encodeURIComponent(presetName)}`, point);
   }
 
+  // ===== DYNAMIC EQ (docs/DYNAMIC_EQ.md) =====
+  // The input EQ has two volume anchors sharing band frequencies and Qs:
+  // reference (what the preset is tuned at) and an optional loud one.
+
+  /**
+   * Move the input EQ's volume anchors.
+   * @param {string} presetName
+   * @param {number} referenceVolume - slider percent 0-100
+   * @param {number} loudVolume - slider percent; 0 (or <= reference) = none
+   */
+  async setInputEqAnchors(presetName, referenceVolume, loudVolume) {
+    return this.request('PUT', `/preset/eq/anchors?preset_name=${encodeURIComponent(presetName)}`,
+      { referenceVolume, loudVolume });
+  }
+
+  /**
+   * Write the loud anchor's gains, creating it if needed. Gains align to the
+   * reference bands; a short array leaves the rest flat.
+   * @param {string} presetName
+   * @param {number[]} gains - dB per reference band
+   */
+  async setInputEqLoudGains(presetName, gains) {
+    return this.request('PUT', `/preset/eq/loud?preset_name=${encodeURIComponent(presetName)}`,
+      { gains });
+  }
+
+  /** Drop the loud anchor entirely (the reference curve then plays at every volume) */
+  async clearInputEqLoud(presetName) {
+    return this.request('DELETE', `/preset/eq/loud?preset_name=${encodeURIComponent(presetName)}`);
+  }
+
+  /**
+   * Toggle the ISO 226-derived loudness compensation applied below the
+   * reference anchor.
+   * @param {string} presetName
+   * @param {boolean} enabled
+   */
+  async setLoudness(presetName, enabled) {
+    return this.request('PUT',
+      `/preset/eq/loudness?preset_name=${encodeURIComponent(presetName)}&enabled=${enabled ? 1 : 0}`);
+  }
+
   /**
    * Replace a preset's dynamics (multiband compressor) block
    * @param {string} presetName - Name of the preset

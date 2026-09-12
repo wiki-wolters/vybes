@@ -53,13 +53,11 @@ static void xoverRef(FilterSection& section, const char* id) {
     strlcpy(section.xover, id, sizeof(section.xover));
 }
 
-// Default spl=0 input EQ set: three flat points at 100/1000/10000 Hz
+// Default reference input EQ set: three flat points at 100/1000/10000 Hz.
+// No loud anchor - a new preset has one curve until the user adds one.
 static void defaultInputEq(InputEq& eq) {
-    eq.enabled = false;
-    for (int i = 0; i < MAX_PEQ_SETS; i++) {
-        eq.sets[i] = PEQSet();
-    }
-    eq.sets[0].spl = 0;
+    eq = InputEq();
+    eq.sets[0].spl = EQ_SET_REFERENCE;
     eq.sets[0].num_points = 3;
     for (int k = 0; k < 3; k++) {
         eq.sets[0].points[k] = PEQPoint();

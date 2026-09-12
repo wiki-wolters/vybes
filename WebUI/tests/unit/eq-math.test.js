@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { peakingBellDb, peqSumDb, octavesToQ, fitPeqPoints, peqPointsMatch } from '../../src/eq-math.js'
+import {
+  peakingBellDb, peqSumDb, octavesToQ, fitPeqPoints, peqPointsMatch,
+  volumePctToDb, highShelfDb, loudnessCompensationDb, loudnessCompensationRelDb,
+  dynamicEqGains,
+} from '../../src/eq-math.js'
 import { DEVICE_SAMPLE_RATE } from '../../src/device.js'
 
 /*
@@ -377,5 +381,172 @@ describe('peqPointsMatch', () => {
 
   it('matches empty against empty - clearing the bands is a real outcome', () => {
     expect(peqPointsMatch([], [])).toBe(true)
+  })
+})
+
+/* ── Dynamic EQ (docs/DYNAMIC_EQ.md) ─────────────────────────────────── */
+
+describe('volumePctToDb', () => {
+  it('reads the slider as the gain the Teensy applies', () => {
+    // The Teensy cubes the linear value, so a halving of percent is 18 dB
+    expect(volumePctToDb(100)).toBeCloseTo(0, 6)
+    expect(volumePctToDb(79)).toBeCloseTo(-6, 0)
+    expect(volumePctToDb(63)).toBeCloseTo(-12, 0)
+    expect(volumePctToDb(50)).toBeCloseTo(-18, 0)
+    expect(volumePctToDb(25)).toBeCloseTo(-36, 0)
+  })
+
+  it('floors at -60 dB so 0% stays finite', () => {
+    expect(volumePctToDb(10)).toBeCloseTo(-60, 6)
+    expect(volumePctToDb(1)).toBe(-60)
+    expect(volumePctToDb(0)).toBe(-60)
+    expect(volumePctToDb(-5)).toBe(-60)
+  })
+
+  it('is monotonic across the slider', () => {
+    for (let pct = 11; pct <= 100; pct++) {
+      expect(volumePctToDb(pct)).toBeGreaterThan(volumePctToDb(pct - 1))
+    }
+  })
+})
+
+describe('highShelfDb', () => {
+  it('is flat well below the corner and at the shelf gain well above it', () => {
+    expect(highShelfDb(20, 1000, 6)).toBeCloseTo(0, 1)
+    expect(highShelfDb(20000, 1000, 6)).toBeCloseTo(6, 1)
+    expect(highShelfDb(20, 1000, -6)).toBeCloseTo(0, 1)
+    expect(highShelfDb(20000, 1000, -6)).toBeCloseTo(-6, 1)
+  })
+
+  it('passes through half the shelf gain at the corner', () => {
+    // S=1 shelf: the midpoint sits at the corner frequency
+    expect(highShelfDb(1000, 1000, 12)).toBeCloseTo(6, 1)
+    expect(highShelfDb(1000, 1000, -12)).toBeCloseTo(-6, 1)
+  })
+
+  it('is exactly flat with no gain, and monotonic in between', () => {
+    expect(highShelfDb(500, 1000, 0)).toBe(0)
+    let previous = -Infinity
+    for (let f = 50; f <= 15000; f *= 1.2) {
+      const value = highShelfDb(f, 1000, 8)
+      expect(value).toBeGreaterThan(previous)
+      previous = value
+    }
+  })
+})
+
+describe('loudnessCompensationDb', () => {
+  it('is a cut: nothing is ever boosted above unity', () => {
+    for (const drop of [5, 20, 40]) {
+      for (const f of [20, 60, 300, 1000, 10000]) {
+        expect(loudnessCompensationDb(f, drop)).toBeLessThanOrEqual(0.001)
+      }
+    }
+  })
+
+  it('does nothing at or above the reference volume', () => {
+    expect(loudnessCompensationDb(100, 0)).toBe(0)
+    expect(loudnessCompensationDb(100, -10)).toBe(0)
+    expect(loudnessCompensationRelDb(100, 0)).toBe(0)
+  })
+
+  it('caps the per-shelf tilt at 15 dB', () => {
+    // 0.25 dB/dB hits the cap at a 60 dB drop; beyond it nothing moves
+    const atCap = loudnessCompensationRelDb(20, 60)
+    expect(atCap).toBeCloseTo(30, 0)
+    expect(loudnessCompensationRelDb(20, 120)).toBeCloseTo(atCap, 6)
+  })
+
+  it('reads as a bass lift relative to 1 kHz', () => {
+    expect(loudnessCompensationRelDb(1000, 20)).toBeCloseTo(0, 6)
+    expect(loudnessCompensationRelDb(20, 20)).toBeGreaterThan(loudnessCompensationRelDb(100, 20))
+    expect(loudnessCompensationRelDb(100, 20)).toBeGreaterThan(loudnessCompensationRelDb(1000, 20))
+  })
+})
+
+/*
+ * Physics check: the compensation has to track the real equal-loudness
+ * contours, not just look plausible. ISO 226:2003 gives af / Lu / Tf per
+ * band; Lp is the SPL of a pure tone at that frequency which sounds as loud
+ * as a 1 kHz tone at Ln phon.
+ */
+const ISO226 = {
+  freq: [20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500,
+    630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500],
+  af: [0.532, 0.506, 0.480, 0.455, 0.432, 0.409, 0.387, 0.367, 0.349, 0.330,
+    0.315, 0.301, 0.288, 0.276, 0.267, 0.259, 0.253, 0.250, 0.246, 0.244,
+    0.243, 0.243, 0.243, 0.242, 0.242, 0.245, 0.254, 0.271, 0.301],
+  Lu: [-31.6, -27.2, -23.0, -19.1, -15.9, -13.0, -10.3, -8.1, -6.2, -4.5,
+    -3.1, -2.0, -1.1, -0.4, 0.0, 0.3, 0.5, 0.0, -2.7, -4.1,
+    -1.0, 1.7, 2.5, 1.2, -2.1, -7.1, -11.2, -10.7, -3.1],
+  Tf: [78.5, 68.7, 59.5, 51.1, 44.0, 37.5, 31.5, 26.5, 22.1, 17.9,
+    14.4, 11.4, 8.6, 6.2, 4.4, 3.0, 2.2, 2.4, 3.5, 1.7,
+    -1.3, -4.2, -6.0, -5.4, -1.5, 6.0, 12.6, 13.9, 12.3],
+}
+
+function isoSpl(bandIndex, phon) {
+  const af = ISO226.af[bandIndex]
+  const Lu = ISO226.Lu[bandIndex]
+  const Tf = ISO226.Tf[bandIndex]
+  const Af = 4.47e-3 * (Math.pow(10, 0.025 * phon) - 1.15)
+    + Math.pow(0.4 * Math.pow(10, (Tf + Lu) / 10 - 9), af)
+  return (10 / af) * Math.log10(Af) - Lu + 94
+}
+
+describe('loudness compensation against ISO 226:2003', () => {
+  it('reproduces the standard at its own anchor', () => {
+    // 1 kHz is the definition of the phon, so Lp must return it
+    const kHz = ISO226.freq.indexOf(1000)
+    expect(isoSpl(kHz, 40)).toBeCloseTo(40, 1)
+    expect(isoSpl(kHz, 80)).toBeCloseTo(80, 1)
+  })
+
+  it('tracks the contours to 1.5 dB from 20 Hz to 2 kHz', () => {
+    const reference = 80 // phon at the reference volume
+    for (const drop of [5, 10, 15, 20, 25, 30, 35, 40]) {
+      for (let i = 0; i < ISO226.freq.length; i++) {
+        const f = ISO226.freq[i]
+        if (f < 20 || f > 2000) continue
+        // How much louder f has to play, relative to 1 kHz, for the quieter
+        // reproduction to keep the same perceived balance
+        const wanted = isoSpl(i, reference - drop) - isoSpl(i, reference) + drop
+        const got = loudnessCompensationRelDb(f, drop)
+        expect(Math.abs(got - wanted), `${f} Hz at -${drop} dB: ${got} vs ${wanted}`)
+          .toBeLessThanOrEqual(1.5)
+      }
+    }
+  })
+})
+
+describe('dynamicEqGains', () => {
+  const ref = [3, -2, 0]
+  const loud = [6, -6, 4]
+
+  it('holds the reference curve at and below the reference anchor', () => {
+    expect(dynamicEqGains(ref, loud, -18, 0, true, -18)).toEqual(ref)
+    expect(dynamicEqGains(ref, loud, -18, 0, true, -30)).toEqual(ref)
+  })
+
+  it('interpolates linearly in volume-dB between the anchors', () => {
+    // Halfway from -18 dB to 0 dB
+    expect(dynamicEqGains(ref, loud, -18, 0, true, -9)).toEqual([4.5, -4, 2])
+  })
+
+  it('holds the loud curve beyond the loud anchor', () => {
+    expect(dynamicEqGains(ref, loud, -18, 0, true, 0)).toEqual(loud)
+    expect(dynamicEqGains(ref, loud, -18, -6, true, 0)).toEqual(loud)
+  })
+
+  it('stays on the reference curve without a loud anchor', () => {
+    expect(dynamicEqGains(ref, loud, -18, 0, false, -3)).toEqual(ref)
+    expect(dynamicEqGains(ref, null, -18, 0, true, -3)).toEqual(ref)
+    // A loud anchor at or below the reference has nothing to cross
+    expect(dynamicEqGains(ref, loud, -18, -18, true, -3)).toEqual(ref)
+  })
+
+  it('treats a missing loud gain as flat, and never mutates its inputs', () => {
+    expect(dynamicEqGains(ref, [6], -18, 0, true, 0)).toEqual([6, 0, 0])
+    expect(ref).toEqual([3, -2, 0])
+    expect(loud).toEqual([6, -6, 4])
   })
 })

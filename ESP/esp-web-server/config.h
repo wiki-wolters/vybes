@@ -19,7 +19,12 @@
 // 4 - Master volume moved from global state into each preset, so switching
 //     presets restores the level it was last played at. The migration seeds
 //     every preset with the old global value.
-#define CONFIG_CURRENT_VERSION 4
+// 5 - Dynamic EQ (docs/DYNAMIC_EQ.md): the input EQ gained two volume
+//     anchors (referenceVolume/loudVolume) and a loudness-compensation flag,
+//     and PEQSet.spl stopped being an SPL value and became a role tag. The
+//     migration anchors every preset's curve at the volume it plays at, so
+//     nothing sounds different until a loud anchor is added.
+#define CONFIG_CURRENT_VERSION 5
 
 #define MAX_PRESETS 12
 // Long enough for the contract suite's generated "contract-test-…" names
@@ -30,7 +35,7 @@
 #define MAX_CROSSOVER_POINTS 4
 #define MAX_OUTPUT_PEQ 10
 #define MAX_PEQ_SETS 3
-#define MAX_PEQ_POINTS 15   // input EQ points per SPL set
+#define MAX_PEQ_POINTS 15   // input EQ points per anchor set
 #define FIR_TAP_POOL 12288  // taps shared across all outputs
 #define MAX_DELAY_US 20000
 #define OUTPUT_GAIN_MIN_DB -40.0
@@ -58,18 +63,40 @@ struct PEQPoint {
     float q = 1.0f;
 };
 
-// Represents a set of PEQs for a specific SPL. spl == -1 means the slot is unused.
+// Role tags for PEQSet::spl. The field was an "EQ per SPL" idea that was
+// never implemented; from config v5 it names which volume anchor a set
+// belongs to (docs/DYNAMIC_EQ.md). The JSON key keeps its old name so older
+// backups parse without a rewrite.
+#define EQ_SET_UNUSED -1
+#define EQ_SET_REFERENCE 0
+#define EQ_SET_LOUD 1
+
+// One anchor's worth of input-EQ bands. spl == EQ_SET_UNUSED means the slot
+// is free.
 struct PEQSet {
-    int spl = -1;
+    int spl = EQ_SET_UNUSED;
     PEQPoint points[MAX_PEQ_POINTS];
     int num_points = 0; // Number of active PEQ points in this set
 };
 
-// Shared input EQ (preference curve + SPL sets) applied to the L/R buses
-// ahead of the routing matrix
+// Shared input EQ (preference curve) applied to the L/R buses ahead of the
+// routing matrix.
+//
+// Dynamic EQ: the curve has two anchors. The reference set (EQ_SET_REFERENCE)
+// is what the preset sounds like at referenceVolume; the optional loud set
+// (EQ_SET_LOUD) is what it should sound like at loudVolume. Band count,
+// frequencies and Qs are shared - only gains differ - and the ESP enforces
+// that on every write so the Teensy can interpolate band-for-band. Below the
+// reference anchor, `loudness` turns on the ISO 226-derived bass
+// compensation, which takes no user configuration at all.
 struct InputEq {
     bool enabled = false;
     PEQSet sets[MAX_PEQ_SETS];
+    // Volume percent (0-100) the reference curve is tuned at
+    int referenceVolume = PRESET_VOLUME_DEFAULT;
+    // Volume percent of the loud anchor; 0 = no loud anchor configured
+    int loudVolume = 0;
+    bool loudness = true;
 };
 
 // A named, shared crossover point. Output filters reference it by id so one
@@ -265,6 +292,21 @@ bool is_valid_device_name(const char* name);
 // Index of the crossover point with the given id, or -1
 int find_crossover_by_id(const Preset& preset, const char* id);
 
+// The input-EQ set carrying the given role tag (EQ_SET_REFERENCE /
+// EQ_SET_LOUD), or nullptr when the preset has none.
+PEQSet* find_input_eq_set(InputEq& eq, int role);
+const PEQSet* find_input_eq_set(const InputEq& eq, int role);
+
+// Same, creating the set in a free slot when it is missing. Returns nullptr
+// only when every slot is taken by another role.
+PEQSet* get_or_create_input_eq_set(InputEq& eq, int role);
+
+// Force the loud set to mirror the reference set's band count, frequencies
+// and Qs (its own gains are kept; new bands start flat). The two anchors are
+// interpolated band-for-band on the Teensy, so they may never disagree on
+// anything but gain. No-op when there is no loud set.
+void mirror_reference_to_loud(InputEq& eq);
+
 // The concrete frequency of a filter section: the manual value, the
 // referenced crossover's frequency, or 0 when off/unresolvable.
 double resolve_filter_freq(const Preset& preset, const FilterSection& section);
@@ -294,6 +336,10 @@ void updateTeensyWithActivePresetParameters();
 
 // Queue a single shared-input-EQ point for the Teensy (band index + freq/q/gain)
 void sendInputEqPointToTeensy(int index, const PEQPoint& point);
+
+// Queue the dynamic-EQ state of one preset's input EQ: the loud-anchor gains
+// (when a loud set exists), the two anchors, and the loudness flag.
+void sendDynamicEqToTeensy(const InputEq& eq);
 
 // Queue a single output-PEQ point for the Teensy
 void sendOutputEqPointToTeensy(int channel, int band, const PEQPoint& point);
