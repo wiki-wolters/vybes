@@ -18,7 +18,7 @@ static float curveNetDb(float freq, const PEQBand* bands, int numBands,
   for (int j = 0; j < numBands; j++) {
     if (bands[j].enabled) {
       total += calculateBellFilter(freq, bands[j].frequency,
-                                   bands[j].gain, bands[j].q);
+                                   bands[j].gain, bands[j].q, sampleRate);
     }
   }
   total += xoverBranchResponseDb(freq, hpFreq, hpType, true, sampleRate);
@@ -53,10 +53,9 @@ float headroomMaxBoostDb(const PEQBand* bands, int numBands,
   return maxBoost;
 }
 
-float headroomMaxBoostDb(const PEQBand* bands, int numBands) {
-  // Branches off; the sample rate only feeds the branch corner clamp, so
-  // any value serves here
+float headroomMaxBoostDb(const PEQBand* bands, int numBands, float sampleRate) {
+  // Branches off
   return headroomMaxBoostDb(bands, numBands,
                             0.0f, CROSSOVER_LR4, 0.0f, CROSSOVER_LR4,
-                            44100.0f);
+                            sampleRate);
 }

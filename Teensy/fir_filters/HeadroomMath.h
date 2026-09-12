@@ -43,7 +43,8 @@ float headroomMaxBoostDb(const PEQBand* bands, int numBands,
                          float lpFreq, CrossoverType lpType,
                          float sampleRate);
 
-// Full-range variant for the shared input EQ (no crossover in that path)
-float headroomMaxBoostDb(const PEQBand* bands, int numBands);
+// Full-range variant for the shared input EQ (no crossover in that path).
+// sampleRate is the rate the bells run at: it shapes them toward fs/2.
+float headroomMaxBoostDb(const PEQBand* bands, int numBands, float sampleRate);
 
 #endif // HEADROOM_MATH_H

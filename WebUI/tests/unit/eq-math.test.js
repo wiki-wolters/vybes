@@ -1,48 +1,72 @@
 import { describe, it, expect } from 'vitest'
 import { peakingBellDb, peqSumDb, octavesToQ, fitPeqPoints, peqPointsMatch } from '../../src/eq-math.js'
+import { DEVICE_SAMPLE_RATE } from '../../src/device.js'
 
 /*
- * Independent reference implementation of the RBJ analog-prototype peaking
- * bell magnitude, evaluated with explicit complex arithmetic (double
- * precision) rather than the closed-form magnitude expression used by the
- * production code:
- *
- *   H(s) = (s^2 + s*(A/Q) + 1) / (s^2 + s/(A*Q) + 1),  s = j*(f/f0)
- *   A = 10^(gainDb/40)
+ * Independent reference: the RBJ audio-EQ-cookbook peaking biquad, cooked
+ * from the cookbook's own alpha / cos(w0) recipe and evaluated on the unit
+ * circle with explicit complex arithmetic. The production code takes a
+ * different route (the analog prototype's closed-form magnitude at the
+ * bilinear-warped frequency), so agreement here is a real check that the
+ * curve the UI draws is the biquad the Teensy runs.
  */
-function referencePeakingDb(freq, centerFreq, gainDb, q) {
+function referencePeakingDb(freq, centerFreq, gainDb, q, fs = DEVICE_SAMPLE_RATE) {
+  const A = Math.pow(10, gainDb / 40)
+  const w0 = 2 * Math.PI * centerFreq / fs
+  const alpha = Math.sin(w0) / (2 * q)
+  const b = [1 + alpha * A, -2 * Math.cos(w0), 1 - alpha * A]
+  const a = [1 + alpha / A, -2 * Math.cos(w0), 1 - alpha / A]
+  const w = 2 * Math.PI * freq / fs
+  // sum c[k] * e^(-j*k*w)
+  const poly = (c) => {
+    let re = 0
+    let im = 0
+    for (let k = 0; k < 3; k++) {
+      re += c[k] * Math.cos(k * w)
+      im -= c[k] * Math.sin(k * w)
+    }
+    return [re, im]
+  }
+  const [nr, ni] = poly(b)
+  const [dr, di] = poly(a)
+  return 10 * Math.log10((nr * nr + ni * ni) / (dr * dr + di * di))
+}
+
+// The analog prototype the digital bell is derived from - what the UI used
+// to draw. Kept only to pin down where the two agree and where they part.
+function analogPeakingDb(freq, centerFreq, gainDb, q) {
   const A = Math.pow(10, gainDb / 40)
   const w = freq / centerFreq
-  // s = j*w  =>  s^2 = -w^2
   const numRe = 1 - w * w
   const numIm = (A / q) * w
   const denRe = 1 - w * w
   const denIm = w / (A * q)
-  const magSq = (numRe * numRe + numIm * numIm) / (denRe * denRe + denIm * denIm)
-  return 10 * Math.log10(magSq)
+  return 10 * Math.log10((numRe * numRe + numIm * numIm) / (denRe * denRe + denIm * denIm))
 }
 
-const CENTERS = [50, 250, 1000, 4000, 12000]
+const NYQUIST = DEVICE_SAMPLE_RATE / 2
+const CENTERS = [50, 250, 1000, 4000, 12000, 20000]
 const GAINS = [-15, -9, -3, -0.5, 0.5, 3, 9, 15]
 const QS = [0.1, 0.5, 1, 2.5, 10]
 
 describe('peakingBellDb', () => {
-  it('matches the independent RBJ reference across a freq/gain/Q grid', () => {
+  it('matches the independent RBJ biquad across a freq/gain/Q grid', () => {
     for (const fc of CENTERS) {
       for (const gain of GAINS) {
         for (const q of QS) {
-          // At center, off center (near and far, both sides), and extremes
+          // At center, off center (near and far, both sides), and extremes -
+          // everything the device can actually reproduce, i.e. below fs/2
           const freqs = [
             fc,
             fc * Math.pow(2, 0.1), fc / Math.pow(2, 0.1),
             fc * 2, fc / 2,
             fc * 8, fc / 8,
-            20, 20000,
-          ]
+            20, 20000, NYQUIST * 0.999,
+          ].filter((f) => f < NYQUIST)
           for (const f of freqs) {
             const actual = peakingBellDb(f, fc, gain, q)
             const expected = referencePeakingDb(f, fc, gain, q)
-            expect(actual, `f=${f} fc=${fc} gain=${gain} q=${q}`).toBeCloseTo(expected, 10)
+            expect(actual, `f=${f} fc=${fc} gain=${gain} q=${q}`).toBeCloseTo(expected, 8)
           }
         }
       }
@@ -50,19 +74,68 @@ describe('peakingBellDb', () => {
   })
 
   it('reaches exactly the specified gain at the center frequency', () => {
-    for (const gain of GAINS) {
-      for (const q of QS) {
-        expect(peakingBellDb(1000, 1000, gain, q)).toBeCloseTo(gain, 10)
+    // The bilinear transform is exact at the prewarped center
+    for (const fc of CENTERS) {
+      for (const gain of GAINS) {
+        for (const q of QS) {
+          expect(peakingBellDb(fc, fc, gain, q)).toBeCloseTo(gain, 10)
+        }
       }
     }
   })
 
-  it('is symmetric on the log-frequency axis', () => {
-    // |H(j*w)| == |H(j/w)| for the analog prototype
-    for (const ratio of [1.5, 2, 4, 10]) {
-      const above = peakingBellDb(1000 * ratio, 1000, 6, 1.4)
-      const below = peakingBellDb(1000 / ratio, 1000, 6, 1.4)
-      expect(above).toBeCloseTo(below, 10)
+  it('is exactly flat at and above Nyquist', () => {
+    for (const fc of CENTERS) {
+      for (const q of QS) {
+        expect(peakingBellDb(NYQUIST, fc, 12, q)).toBe(0)
+        expect(peakingBellDb(NYQUIST * 1.5, fc, 12, q)).toBe(0)
+      }
+    }
+    // ...and gets there smoothly: just short of fs/2 a 20 kHz Q1 bell that
+    // the textbook shape would still hold at +5.8 dB has all but vanished
+    expect(Math.abs(peakingBellDb(NYQUIST * 0.9999, 20000, 6, 1))).toBeLessThan(0.1)
+  })
+
+  it('agrees with the analog prototype where warping is negligible', () => {
+    // Below a few kHz the drawn curve is also the textbook bell
+    for (const fc of [50, 250, 1000]) {
+      for (const q of QS) {
+        for (const f of [fc / 4, fc / 1.2, fc, fc * 1.2, fc * 2]) {
+          const err = Math.abs(peakingBellDb(f, fc, 6, q) - analogPeakingDb(f, fc, 6, q))
+          expect(err, `f=${f} fc=${fc} q=${q}`).toBeLessThan(0.05)
+        }
+      }
+    }
+  })
+
+  it('is squeezed toward Nyquist as the center rises, more on the high side', () => {
+    // The same octave-fraction above the center gets less of the boost than
+    // below it once the center is up where the warp bites...
+    const r = Math.pow(2, 1 / 6)
+    for (const fc of [8000, 12000, 16000]) {
+      const above = peakingBellDb(fc * r, fc, 6, 2)
+      const below = peakingBellDb(fc / r, fc, 6, 2)
+      expect(above, `fc=${fc}`).toBeLessThan(below)
+    }
+    // ...but stays log-symmetric to within a hair well below Nyquist
+    for (const ratio of [1.5, 2, 4]) {
+      const above = peakingBellDb(200 * ratio, 200, 6, 1.4)
+      const below = peakingBellDb(200 / ratio, 200, 6, 1.4)
+      expect(above).toBeCloseTo(below, 2)
+    }
+  })
+
+  it('takes an explicit sample rate', () => {
+    // At 96 kHz the same 15 kHz bell sits much closer to the textbook shape
+    const f = 15000 * Math.pow(2, 1 / 6)
+    const errAt = (fs) => Math.abs(peakingBellDb(f, 15000, 6, 4, fs) - analogPeakingDb(f, 15000, 6, 4))
+    expect(errAt(96000)).toBeLessThan(errAt(44100) / 4)
+  })
+
+  it('caps the center frequency the way the device does', () => {
+    // A 30 kHz center can't run; the device runs 0.49*fs, so that is drawn
+    for (const f of [1000, 10000, 20000]) {
+      expect(peakingBellDb(f, 30000, 6, 1)).toBe(peakingBellDb(f, 0.49 * DEVICE_SAMPLE_RATE, 6, 1))
     }
   })
 

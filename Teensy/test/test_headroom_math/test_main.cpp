@@ -10,6 +10,7 @@
 #include <unity.h>
 
 #include <cmath>
+#include <complex>
 
 #include "HeadroomMath.h"
 
@@ -17,15 +18,21 @@ static const float FS = 44100.0f;
 
 // --- independent double-precision references ---
 
-// RBJ analog bell magnitude in dB (mirrors calculateBellFilter)
+// RBJ cookbook peaking biquad magnitude in dB at FS - the filter the Teensy
+// runs (calculateBellFilter must describe that, not the analog prototype) -
+// evaluated with complex arithmetic on the unit circle
 static double refBellDb(double f, double fc, double gainDb, double q) {
     if (gainDb == 0.0) return 0.0;
+    const double pi = 3.14159265358979323846;
     double A = pow(10.0, gainDb / 40.0);
-    double O = f / fc;
-    double c = (1.0 - O * O) * (1.0 - O * O);
-    double nb = A * O / q;
-    double db = O / (A * q);
-    return 10.0 * log10((c + nb * nb) / (c + db * db));
+    double w0 = 2.0 * pi * fc / FS;
+    double alpha = sin(w0) / (2.0 * q);
+    double b0 = 1.0 + alpha * A, b1 = -2.0 * cos(w0), b2 = 1.0 - alpha * A;
+    double a0 = 1.0 + alpha / A, a1 = b1, a2 = 1.0 - alpha / A;
+    std::complex<double> z = std::polar(1.0, -2.0 * pi * f / FS); // z^-1
+    std::complex<double> num = b0 + b1 * z + b2 * z * z;
+    std::complex<double> den = a0 + a1 * z + a2 * z * z;
+    return 20.0 * log10(std::abs(num / den));
 }
 
 static double refAllowanceDb(double f) {
@@ -100,12 +107,12 @@ static void test_allowance_shape(void) {
 
 static void test_low_boost_pays_full_price(void) {
     PEQBand bands[1] = {band(30.0f, 5.0f, 1.0f)};
-    TEST_ASSERT_FLOAT_WITHIN(0.02f, 5.0f, headroomMaxBoostDb(bands, 1));
+    TEST_ASSERT_FLOAT_WITHIN(0.02f, 5.0f, headroomMaxBoostDb(bands, 1, FS));
 }
 
 static void test_high_boost_pays_reduced_price(void) {
     PEQBand bands[1] = {band(10000.0f, 5.0f, 1.0f)};
-    float pad = headroomMaxBoostDb(bands, 1);
+    float pad = headroomMaxBoostDb(bands, 1, FS);
     TEST_ASSERT_FLOAT_WITHIN(0.05f, (float)refMaxNetDb(bands, 1, 0, CROSSOVER_LR4, 0, CROSSOVER_LR4), pad);
     // ~5 - 4.19; well under the 5dB a frequency-blind pad would charge
     TEST_ASSERT_TRUE(pad < 1.0f);
@@ -115,23 +122,23 @@ static void test_high_boost_pays_reduced_price(void) {
 static void test_same_boost_cheaper_at_hf_than_lf(void) {
     PEQBand lf[1] = {band(30.0f, 5.0f, 1.0f)};
     PEQBand hf[1] = {band(10000.0f, 5.0f, 1.0f)};
-    TEST_ASSERT_TRUE(headroomMaxBoostDb(hf, 1) < headroomMaxBoostDb(lf, 1));
+    TEST_ASSERT_TRUE(headroomMaxBoostDb(hf, 1, FS) < headroomMaxBoostDb(lf, 1, FS));
 }
 
 static void test_cuts_cost_nothing(void) {
     PEQBand bands[2] = {band(100.0f, -6.0f, 1.0f), band(5000.0f, -3.0f, 2.0f)};
-    TEST_ASSERT_EQUAL_FLOAT(0.0f, headroomMaxBoostDb(bands, 2));
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, headroomMaxBoostDb(bands, 2, FS));
 }
 
 static void test_disabled_bands_ignored(void) {
     PEQBand bands[2] = {band(100.0f, 12.0f, 1.0f), offBand()};
     bands[0].enabled = false;
-    TEST_ASSERT_EQUAL_FLOAT(0.0f, headroomMaxBoostDb(bands, 2));
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, headroomMaxBoostDb(bands, 2, FS));
 }
 
 static void test_overlapping_boosts_sum(void) {
     PEQBand bands[2] = {band(100.0f, 3.0f, 1.0f), band(100.0f, 3.0f, 1.0f)};
-    TEST_ASSERT_FLOAT_WITHIN(0.02f, 6.0f, headroomMaxBoostDb(bands, 2));
+    TEST_ASSERT_FLOAT_WITHIN(0.02f, 6.0f, headroomMaxBoostDb(bands, 2, FS));
 }
 
 // A narrow high-Q band centered between grid points must still be charged
@@ -139,7 +146,7 @@ static void test_overlapping_boosts_sum(void) {
 static void test_high_q_off_grid_center_fully_counted(void) {
     PEQBand bands[1] = {band(9700.0f, 8.0f, 10.0f)};
     float expected = 8.0f - headroomAllowanceDb(9700.0f);
-    TEST_ASSERT_FLOAT_WITHIN(0.05f, expected, headroomMaxBoostDb(bands, 1));
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, expected, headroomMaxBoostDb(bands, 1, FS));
 }
 
 // --- crossover fold (output EQ) ---
@@ -187,7 +194,7 @@ static void test_input_variant_matches_branches_off(void) {
     PEQBand bands[2] = {band(60.0f, 4.0f, 2.0f), band(8000.0f, 6.0f, 3.0f)};
     TEST_ASSERT_EQUAL_FLOAT(
         headroomMaxBoostDb(bands, 2, 0.0f, CROSSOVER_LR4, 0.0f, CROSSOVER_LR4, FS),
-        headroomMaxBoostDb(bands, 2));
+        headroomMaxBoostDb(bands, 2, FS));
 }
 
 void setUp(void) {}

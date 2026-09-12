@@ -4,7 +4,10 @@
 //  1. the intermediate quantities (A, g, k and the SVF coefficients) match
 //     an independent double-precision recomputation, and
 //  2. the full frequency response of the SVF difference equations matches
-//     the RBJ biquad's response across the audio band.
+//     the RBJ biquad's response across the audio band, and
+//  3. the shared response helper calculateBellFilter (what the headroom pad
+//     and, via eq-math.js, the WebUI curve are built on) is that same RBJ
+//     biquad response - not the analog prototype it used to be.
 // Plus the edge clamps (20Hz-20kHz, +/-15dB, Q 0.1-10).
 
 #include <unity.h>
@@ -106,6 +109,22 @@ static void assertResponseMatchesRbj(float f0, float gainDb, float Q) {
     }
 }
 
+// 3. The shared response helper is the RBJ digital response too, so the
+// headroom pad charges for the bell that runs (a 15kHz Q10 bell is 2.6dB
+// away from the analog prototype at this sample rate)
+static void assertBellHelperMatchesRbj(float f0, float gainDb, float Q) {
+    Biquad bq = rbjPeaking(f0, gainDb, Q, kFs);
+    for (int i = 0; i <= 24; i++) {
+        double freq = 15.0 * pow(21000.0 / 15.0, i / 24.0);
+        double want = biquadMagnitudeDb(bq, freq, kFs);
+        float got = calculateBellFilter((float)freq, f0, gainDb, Q, (float)kFs);
+        char msg[128];
+        snprintf(msg, sizeof(msg), "f0=%g gain=%g Q=%g probe=%.1fHz helper=%.4f rbj=%.4f",
+                 f0, gainDb, Q, freq, got, want);
+        TEST_ASSERT_TRUE_MESSAGE(std::fabs(got - want) <= 0.01, msg);
+    }
+}
+
 static const float kFreqs[] = {20.0f, 62.5f, 250.0f, 1000.0f, 4000.0f, 12000.0f, 20000.0f};
 static const float kGains[] = {-15.0f, -9.0f, -3.0f, 1.5f, 6.0f, 15.0f};
 static const float kQs[] = {0.1f, 0.5f, 0.707f, 1.0f, 4.0f, 10.0f};
@@ -122,6 +141,27 @@ static void test_response_matches_rbj_cookbook(void) {
         for (float g : kGains)
             for (float q : kQs)
                 assertResponseMatchesRbj(f, g, q);
+}
+
+static void test_bell_helper_matches_rbj_cookbook(void) {
+    for (float f : kFreqs)
+        for (float g : kGains)
+            for (float q : kQs)
+                assertBellHelperMatchesRbj(f, g, q);
+}
+
+// The helper applies the device's clamps, so it describes the band that
+// runs, and it is exactly flat at and beyond fs/2
+static void test_bell_helper_applies_device_clamps(void) {
+    float fs = (float)kFs;
+    TEST_ASSERT_EQUAL_FLOAT(calculateBellFilter(15000.0f, 20000.0f, 6.0f, 1.0f, fs),
+                            calculateBellFilter(15000.0f, 30000.0f, 6.0f, 1.0f, fs));
+    TEST_ASSERT_EQUAL_FLOAT(calculateBellFilter(1000.0f, 1000.0f, 15.0f, 1.0f, fs),
+                            calculateBellFilter(1000.0f, 1000.0f, 40.0f, 1.0f, fs));
+    TEST_ASSERT_EQUAL_FLOAT(calculateBellFilter(1100.0f, 1000.0f, 6.0f, 10.0f, fs),
+                            calculateBellFilter(1100.0f, 1000.0f, 6.0f, 50.0f, fs));
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, calculateBellFilter(22050.0f, 20000.0f, 15.0f, 1.0f, fs));
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, calculateBellFilter(30000.0f, 20000.0f, 15.0f, 1.0f, fs));
 }
 
 // Edge clamps: out-of-range parameters produce exactly the coefficients of
@@ -165,8 +205,8 @@ static void test_bell_shape_anchors(void) {
     TEST_ASSERT_DOUBLE_WITHIN(0.05, 0.0, svfMagnitudeDb(c, 20.0, kFs));
 
     // And the shared calculateBellFilter helper agrees at the center
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, 9.0f, calculateBellFilter(1000.0f, 1000.0f, 9.0f, 1.0f));
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, calculateBellFilter(20000.0f, 20.0f, 9.0f, 4.0f));
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 9.0f, calculateBellFilter(1000.0f, 1000.0f, 9.0f, 1.0f, (float)kFs));
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, calculateBellFilter(20000.0f, 20.0f, 9.0f, 4.0f, (float)kFs));
 }
 
 void setUp(void) {}
@@ -176,6 +216,8 @@ int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_coefficients_match_rbj_derivation);
     RUN_TEST(test_response_matches_rbj_cookbook);
+    RUN_TEST(test_bell_helper_matches_rbj_cookbook);
+    RUN_TEST(test_bell_helper_applies_device_clamps);
     RUN_TEST(test_edge_clamps);
     RUN_TEST(test_freq_clamp_tracks_sample_rate);
     RUN_TEST(test_bell_shape_anchors);

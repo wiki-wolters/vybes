@@ -729,7 +729,7 @@ void setNoise(float volumePercent) {
 void applyPreEQGainCompensation() {
   float padDb = 0.0f;
   if (state.inputEqEnabled) {
-    padDb = headroomMaxBoostDb(state.inputEqBands, MAX_PEQ_BANDS);
+    padDb = headroomMaxBoostDb(state.inputEqBands, MAX_PEQ_BANDS, AUDIO_SAMPLE_RATE);
   }
   peqLeft.applyPreEQGain(padDb, Left_Pre_EQ_amp, Right_Pre_EQ_amp);
 }

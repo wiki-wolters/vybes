@@ -4,15 +4,31 @@
  * correction curve (the analyzer's "convert diff to EQ").
  */
 
+import { DEVICE_SAMPLE_RATE } from './device.js';
+
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
-// Exact bell (peaking EQ) magnitude in dB, from the RBJ analog prototype.
-// This is the same math the Teensy uses, so drawn and predicted curves
-// match the audible response.
-export function peakingBellDb(freq, centerFreq, gain, q) {
+// Exact bell (peaking EQ) magnitude in dB as the device runs it: the RBJ
+// audio-EQ-cookbook peaking biquad at the device sample rate.
+//
+// The Teensy's SVF is the bilinear transform of the analog prototype
+//   H(s) = (s^2 + s*(A/Q) + 1) / (s^2 + s/(A*Q) + 1),  A = 10^(gain/40)
+// with only the center frequency prewarped, so its response is that
+// prototype evaluated at the warped ratio tan(pi*f/fs) / tan(pi*fc/fs)
+// rather than f/fc. Below ~3 kHz the two are indistinguishable; higher up
+// the digital bell is narrower than the textbook one and always returns to
+// 0 dB at fs/2 (1.2 dB apart at 10 kHz Q4, 2.6 dB at 15 kHz Q10). REW's
+// Generic equaliser predicts this same digital curve, so drawn, fitted,
+// REW-predicted and audible responses all agree.
+//
+// centerFreq is capped the way the device caps it (0.49*fs), so the curve
+// is the band that actually runs.
+export function peakingBellDb(freq, centerFreq, gain, q, sampleRate = DEVICE_SAMPLE_RATE) {
   if (!gain || q <= 0 || centerFreq <= 0 || freq <= 0) return 0;
+  if (freq >= sampleRate / 2) return 0; // a bilinear bell is exactly flat at Nyquist
+  const fc = Math.min(centerFreq, 0.49 * sampleRate);
   const A = Math.pow(10, gain / 40);
-  const O = freq / centerFreq;
+  const O = Math.tan(Math.PI * freq / sampleRate) / Math.tan(Math.PI * fc / sampleRate);
   const c = (1 - O * O) ** 2;
   const num = c + (A * O / q) ** 2;
   const den = c + (O / (A * q)) ** 2;

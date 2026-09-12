@@ -15,6 +15,7 @@
  */
 
 import { fft, nextPow2 } from './fft.js';
+import { DEVICE_SAMPLE_RATE } from './device.js';
 import {
   generateSweep,
   deconvolve,
@@ -33,9 +34,10 @@ import {
 // Nominal device sample rate (docs/AUTO_FIR_CONTRACTS.md: "44117.647 Hz
 // (nominal 44100 in the probe schedule contract)") - the SWEEP START event
 // doesn't echo a rate token (there's nothing to disambiguate; every sample
-// count in the schedule is already on this clock), so it's a shared
-// constant, the same role PROBE_SCHEDULE.sampleRate plays for the delay probe.
-export const DEVICE_SAMPLE_RATE = 44100;
+// count in the schedule is already on this clock), so it's the shared
+// constant from device.js, re-exported here - the same role
+// PROBE_SCHEDULE.sampleRate plays for the delay probe.
+export { DEVICE_SAMPLE_RATE };
 
 export const DEFAULT_FLO_HZ = 20;
 export const DEFAULT_FHI_HZ = 20000;

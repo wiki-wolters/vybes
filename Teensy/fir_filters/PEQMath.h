@@ -27,9 +27,13 @@ struct PeqSvfCoeffs {
 // only the resulting coefficients are narrowed to float32.
 PeqSvfCoeffs peqComputeBellSvf(float frequency, float gain, float q, float sampleRate);
 
-// Exact magnitude response of a bell (peaking) filter in dB at 'freq'.
-// This is the same math used by the WebUI to draw the curve, so what you
-// see, what is compensated for, and what you hear all agree.
-float calculateBellFilter(float freq, float centerFreq, float gain, float q);
+// Exact magnitude response in dB at 'freq' of the bell peqComputeBellSvf
+// realises for these parameters (same clamps applied): the RBJ peaking
+// biquad at 'sampleRate', not the analog prototype, which drifts from the
+// running filter above a few kHz. The WebUI draws this same digital curve
+// (eq-math.js peakingBellDb), so what you see, what is compensated for,
+// and what you hear all agree. Returns 0 at and above fs/2.
+float calculateBellFilter(float freq, float centerFreq, float gain, float q,
+                          float sampleRate);
 
 #endif // PEQ_MATH_H
