@@ -70,6 +70,18 @@ esp_err_t handleGetStatus(PsychicRequest *request) {
     health["psramSize"] = healthPsramSize();
     health["restartStreak"] = healthRestartStreak();
     health["degraded"] = healthDegradedMode();
+    // WiFi link quality. Everything above can read clean while the UI still
+    // will not load: 2026-09-14 the page crawled at ~4.5KB/s and HTTPS reset
+    // partway through, on a device reporting 73 minutes of uptime and 121KB
+    // free. The cause was 25% packet loss on the radio, and with no link
+    // telemetry here it took pinging the device against another host on the
+    // same AP to see it. minRssi is the one to read - rssi alone swings
+    // several dB between samples - and wifiChannel is what to weigh against
+    // the neighbours, this silicon being 2.4GHz only. All three read 0 in
+    // standalone AP mode, which has no upstream link to measure.
+    health["rssi"] = healthRssi();
+    health["minRssi"] = healthMinRssi();
+    health["wifiChannel"] = healthWifiChannel();
 
     String response;
     serializeJson(doc, response);

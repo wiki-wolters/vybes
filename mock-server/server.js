@@ -602,7 +602,13 @@ app.get('/status', async (req, res) => {
         // Parity with the S3's PSRAM telemetry (8MB octal, carrying the TLS
         // record buffers). Zero would mean PSRAM is not in play.
         psramFree: 8200000,
-        psramSize: 8388608
+        psramSize: 8388608,
+        // Parity with the ESP's WiFi link telemetry (health.cpp). Healthy
+        // values: minRssi is the watermark worth reading, rssi alone swings
+        // several dB between samples. All three are 0 on a standalone AP.
+        rssi: -52,
+        minRssi: -61,
+        wifiChannel: 6
       }
     });
   } catch (error) {

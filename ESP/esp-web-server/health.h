@@ -34,6 +34,21 @@ uint32_t healthMinLargestFreeBlock();
 // without it, which is itself the check that memory_type took effect.
 uint32_t healthPsramFree();
 uint32_t healthPsramSize();
+
+// WiFi link quality. Every number above can read perfectly healthy while the
+// device still fails to serve the UI: on 2026-09-14 the page crawled at
+// ~4.5KB/s and HTTPS reset mid-transfer, and the cause was 25% packet loss on
+// the radio - which took a control-host ping from a laptop to find, because
+// nothing here reported the link at all. rssi is a spot value that swings
+// several dB between samples, so minRssi carries the watermark for the same
+// reason minLargestFreeBlock does. Both read 0 in standalone AP mode, where
+// there is no upstream link to measure.
+int32_t healthRssi();
+int32_t healthMinRssi();
+// 2.4GHz only on this silicon, so once the link goes bad the channel is the
+// first thing to weigh against the neighbouring networks.
+uint32_t healthWifiChannel();
+
 const char *healthLastRestartCause();
 const char *healthResetReasonName();
 

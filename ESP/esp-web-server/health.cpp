@@ -128,6 +128,7 @@ static const char *lastRestartCause = "none";
 static bool healthStandalone = false;
 static volatile uint32_t loopHeartbeat = 0;
 static volatile uint32_t minLargestBlock = UINT32_MAX;
+static volatile int32_t minRssi = INT32_MAX;
 static volatile uint32_t listenersReadyAt = 0;
 static bool degradedMode = false;
 
@@ -177,6 +178,35 @@ uint32_t healthMinLargestFreeBlock() {
 // moving under a TLS burst that used to collapse it.
 uint32_t healthPsramFree() { return heap_caps_get_free_size(MALLOC_CAP_SPIRAM); }
 uint32_t healthPsramSize() { return heap_caps_get_total_size(MALLOC_CAP_SPIRAM); }
+
+// Spot RSSI, recording the low-water mark on every call for the reason
+// healthLargestFreeBlock does the same: what matters is the worst the link
+// got, not what it happens to read while someone is looking. The monitor task
+// below samples this at 4Hz so the watermark stays meaningful even if nobody
+// ever polls GET /status. Standalone AP mode has no upstream link, and a
+// disconnected station reports a value that means nothing, so both report 0
+// and leave the watermark untouched rather than poisoning it with a fake
+// floor the next healthy reading could never lift.
+int32_t healthRssi() {
+    if (healthStandalone || WiFi.status() != WL_CONNECTED) {
+        return 0;
+    }
+    int32_t rssi = WiFi.RSSI();
+    if (rssi < minRssi) {
+        minRssi = rssi;
+    }
+    return rssi;
+}
+
+int32_t healthMinRssi() {
+    int32_t low = minRssi;
+    return low == INT32_MAX ? healthRssi() : low;
+}
+
+uint32_t healthWifiChannel() {
+    return (healthStandalone || WiFi.status() != WL_CONNECTED) ? 0 : WiFi.channel();
+}
+
 const char *healthLastRestartCause() { return lastRestartCause; }
 
 void healthListenersReady() {
@@ -285,6 +315,7 @@ static void healthMonitorTask(void *) {
         uint32_t now = millis();
         uint32_t freeInternal = healthFreeInternal();
         uint32_t largest = healthLargestFreeBlock(); // also records the watermark
+        healthRssi(); // ditto - this 4Hz sampling is what makes minRssi mean something
 
         uint32_t beat = loopHeartbeat;
         if (beat != lastBeat) {
@@ -295,10 +326,11 @@ static void healthMonitorTask(void *) {
         if (now - lastLog >= HEALTH_LOG_INTERVAL_MS) {
             lastLog = now;
             DebugSerial.printf("Health: uptime=%lus freeInternal=%u minFree=%u "
-                               "largestBlock=%u minLargest=%u\n",
+                               "largestBlock=%u minLargest=%u rssi=%d minRssi=%d\n",
                                (unsigned long)(now / 1000), (unsigned)freeInternal,
                                (unsigned)healthMinFreeInternal(), (unsigned)largest,
-                               (unsigned)healthMinLargestFreeBlock());
+                               (unsigned)healthMinLargestFreeBlock(),
+                               (int)healthRssi(), (int)healthMinRssi());
         }
 
         // A healthy stretch forgives the past, so restarts weeks apart never
