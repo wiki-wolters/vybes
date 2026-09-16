@@ -1,72 +1,58 @@
 <template>
   <div class="space-y-4">
-    <!-- Volume anchors: which level each curve is tuned at -->
-    <div class="anchor-row">
-      <div class="min-w-0">
-        <p class="anchor-title">Reference volume {{ store.referenceVolume }}%</p>
-        <p class="anchor-note">The level this curve is tuned at.</p>
-      </div>
-      <button
-        type="button"
-        class="btn-secondary flex-none"
-        :disabled="store.referenceVolume === currentVolume"
-        @click="store.setEqAnchors(currentVolume, store.loudVolume)"
-      >
-        Set to current volume
-      </button>
-    </div>
-
-    <div class="anchor-row">
-      <div class="min-w-0">
-        <p class="anchor-title">
-          Loud anchor<template v-if="store.hasLoudAnchor">: {{ store.loudVolume }}%</template>
-          <template v-else>: none</template>
-        </p>
-        <p class="anchor-note">
-          {{ store.hasLoudAnchor
-            ? 'Above the reference the curve moves toward this one, then holds.'
-            : 'Add one to make the curve follow the volume upwards.' }}
-        </p>
-      </div>
-      <div class="flex gap-2 flex-none">
-        <template v-if="store.hasLoudAnchor">
+    <!-- Volume anchors. The chips double as the graph's tab strip: the one
+         picked is the curve the graph edits, so the anchors and the choice of
+         what to edit cost a single row instead of three -->
+    <div>
+      <div class="anchor-bar">
+        <div class="anchor-tabs" role="tablist" aria-label="Anchor to edit">
           <button
             type="button"
-            class="btn-secondary"
-            :disabled="!canAnchorLoudHere"
-            @click="store.setEqAnchors(store.referenceVolume, currentVolume)"
-          >
-            Move to current
-          </button>
-          <button type="button" class="btn-secondary" @click="removeLoudAnchor">Remove</button>
-        </template>
-        <button
-          v-else
-          type="button"
-          class="btn-secondary"
-          :disabled="!canAnchorLoudHere"
-          @click="addLoudAnchor"
-        >
-          Add loud anchor at current volume
-        </button>
-      </div>
-    </div>
-    <p v-if="!canAnchorLoudHere" class="anchor-note">
-      Turn the volume above {{ store.referenceVolume }}% to place the loud anchor.
-    </p>
+            role="tab"
+            :aria-selected="editing === 'reference'"
+            :class="['anchor-chip', editing === 'reference' ? 'anchor-chip-active' : '']"
+            @click="editing = 'reference'"
+          >Reference <span class="tabular-nums">{{ store.referenceVolume }}%</span></button>
 
-    <!-- Which anchor the graph below edits -->
-    <div v-if="store.hasLoudAnchor" class="segmented" role="tablist" aria-label="Editing">
-      <span class="segmented-label">Editing</span>
-      <button
-        v-for="option in EDIT_MODES"
-        :key="option.id"
-        type="button"
-        role="tab"
-        :aria-selected="editing === option.id"
-        :class="['segment', editing === option.id ? 'segment-active' : '']"
-        @click="editing = option.id"
-      >{{ option.label }}</button>
+          <button
+            v-if="store.hasLoudAnchor"
+            type="button"
+            role="tab"
+            :aria-selected="editing === 'loud'"
+            :class="['anchor-chip', editing === 'loud' ? 'anchor-chip-active' : '']"
+            @click="editing = 'loud'"
+          >Loud <span class="tabular-nums">{{ store.loudVolume }}%</span></button>
+
+          <button
+            v-else
+            type="button"
+            class="anchor-chip anchor-chip-add"
+            :disabled="!canAnchorLoudHere"
+            @click="addLoudAnchor"
+          >+ Loud anchor</button>
+        </div>
+
+        <!-- Whatever the selected chip can have done to it -->
+        <div class="anchor-actions">
+          <button
+            v-if="editing === 'reference'"
+            type="button"
+            class="anchor-action"
+            :disabled="store.referenceVolume === currentVolume"
+            @click="store.setEqAnchors(currentVolume, store.loudVolume)"
+          >Set to current</button>
+          <template v-else>
+            <button
+              type="button"
+              class="anchor-action"
+              :disabled="!canAnchorLoudHere"
+              @click="store.setEqAnchors(store.referenceVolume, currentVolume)"
+            >Move to current</button>
+            <button type="button" class="anchor-action" @click="removeLoudAnchor">Remove</button>
+          </template>
+        </div>
+      </div>
+      <p class="anchor-hint">{{ anchorHint }}</p>
     </div>
 
     <ParametricEQ
@@ -127,10 +113,6 @@ defineProps({
 
 const store = usePresetStore();
 
-const EDIT_MODES = [
-  { id: 'reference', label: 'Reference' },
-  { id: 'loud', label: 'Loud' },
-];
 const editing = ref('reference');
 
 // Removing the loud anchor leaves nothing to edit in Loud mode
@@ -141,6 +123,23 @@ watch(() => store.hasLoudAnchor, (has) => {
 const currentVolume = computed(() => store.preset?.volume ?? 0);
 // A loud anchor at or below the reference has no range to interpolate across
 const canAnchorLoudHere = computed(() => currentVolume.value > store.referenceVolume);
+
+/*
+ * One line under the chips, carrying whichever explanation is useful in the
+ * state the anchors are actually in. The gains-only rule for the loud curve is
+ * ParametricEQ's own hint, so it is not repeated here.
+ */
+const anchorHint = computed(() => {
+  if (store.hasLoudAnchor) {
+    return `Between ${store.referenceVolume}% and ${store.loudVolume}% the curve moves `
+      + 'from Reference to Loud, then holds.';
+  }
+  return canAnchorLoudHere.value
+    ? `The curve is tuned at ${store.referenceVolume}%. Add a loud anchor to make it `
+      + 'follow the volume upwards.'
+    : `The curve is tuned at ${store.referenceVolume}%. Turn the volume above that to `
+      + 'add a loud anchor for it to follow upwards.';
+});
 
 const referenceGains = computed(() => store.inputEqPoints.map((p) => p.gain));
 
@@ -224,21 +223,44 @@ async function removeLoudAnchor() {
   @apply text-xs text-vybes-text-secondary mt-0.5;
 }
 
-.segmented {
-  @apply flex items-center gap-1;
+.anchor-bar {
+  @apply flex flex-wrap items-center justify-between gap-x-4 gap-y-2;
 }
 
-.segmented-label {
-  @apply text-sm text-vybes-text-secondary mr-2;
+.anchor-hint {
+  @apply text-xs text-vybes-text-secondary mt-2;
 }
 
-.segment {
-  @apply px-3 py-1.5 rounded-md text-sm cursor-pointer
-         bg-vybes-dark-card border border-vybes-border text-vybes-text-secondary;
+.anchor-tabs {
+  @apply flex flex-wrap items-center gap-2;
+}
+
+/* Same chip language as the channel rail and the EQ band rail */
+.anchor-chip {
+  @apply flex-none rounded-full px-3 py-1.5 text-xs whitespace-nowrap cursor-pointer
+         bg-vybes-dark-card border border-vybes-border text-vybes-text-secondary
+         disabled:opacity-50 disabled:cursor-not-allowed;
 }
 
 /* Blue, like the editor's tabs: this picks a view, it is not a live state */
-.segment-active {
+.anchor-chip-active {
   @apply bg-vybes-dark-input text-vybes-text-primary border-vybes-primary;
+}
+
+/* Dashed: a slot for an anchor rather than one that exists */
+.anchor-chip-add {
+  @apply border-dashed;
+}
+
+.anchor-actions {
+  @apply flex flex-wrap items-center gap-2;
+}
+
+.anchor-action {
+  @apply rounded-md px-3 py-2 text-xs whitespace-nowrap cursor-pointer transition-colors
+         bg-vybes-dark-element hover:bg-vybes-dark-input
+         text-vybes-text-secondary hover:text-vybes-text-primary
+         disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-vybes-dark-element
+         disabled:hover:text-vybes-text-secondary;
 }
 </style>

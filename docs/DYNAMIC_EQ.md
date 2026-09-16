@@ -248,17 +248,20 @@ setInputEqAnchors  →  setLoudness  →  setVolume
 
 In the preset editor's EQ section (`WebUI/src/components/shared/EQSection.vue`):
 
-* **Reference volume NN%** with a *Set to current volume* button. Tune by ear at
-  a level you like, then anchor the curve there.
-* **Loud anchor** — *Add loud anchor at current volume* when there is none
-  (disabled, with a hint, until the volume is above the reference), or the
-  anchor's percent with *Move to current* and *Remove*. A new loud anchor starts
-  as a copy of the reference curve, so placing it changes nothing audibly until
-  its gains are edited.
-* **Editing: Reference | Loud** — shown only once a loud anchor exists. In *Loud*
-  mode the graph edits gains only: frequency and Q inputs are disabled, node
-  drags are vertical, REW import and add/delete band are hidden, and a one-line
-  hint says why.
+* **An anchor chip strip** — `Reference NN%`, then either `Loud NN%` or a dashed
+  `+ Loud anchor` when there is none (disabled until the volume is above the
+  reference). The chips are the graph's tab strip as well as its anchor display:
+  the selected chip is the curve the graph edits, so there is no separate
+  *Editing* control. In *Loud* mode the graph edits gains only: frequency and Q
+  inputs are disabled, node drags are vertical, REW import and add/delete band
+  are hidden, and a one-line hint says why.
+* **Actions for the selected chip**, right-aligned on the same row: *Set to
+  current* for the reference, *Move to current* and *Remove* for the loud anchor.
+  A new loud anchor starts as a copy of the reference curve, so placing it
+  changes nothing audibly until its gains are edited.
+* **One hint line** under the strip, carrying whichever explanation fits the
+  state: where the curve is tuned, why the loud anchor cannot be placed yet, or
+  the range it interpolates across.
 * **Loudness compensation below reference** — the on/off switch, with a one-line
   explanation.
 * On the graph, a dashed **"Now at NN%"** curve shows what is actually playing —

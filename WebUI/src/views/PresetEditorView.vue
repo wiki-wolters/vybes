@@ -54,6 +54,26 @@
 
           <!-- ===== Tuning tab ===== -->
           <div v-if="activeTab === 'tuning'" class="max-w-3xl mx-auto">
+            <!-- Master volume is stored per preset, so each one plays at the
+                 level it was last left at -->
+            <CollapsibleSection title="Master Volume" :toggleable="false" :animate="animationsEnabled">
+              <RangeSlider
+                :model-value="store.preset.volume"
+                label="Master Volume"
+                :min="0"
+                :max="100"
+                :step="1"
+                unit="%"
+                :decimals="0"
+                @update:modelValue="store.setVolume($event)"
+              />
+              <p class="mt-3 text-sm text-vybes-text-secondary">
+                {{ store.preset.isCurrent
+                  ? 'The level playing now — this preset restores it whenever it is activated.'
+                  : 'The level this preset will play at once it is activated.' }}
+              </p>
+            </CollapsibleSection>
+
             <CollapsibleSection title="EQ" :model-value="store.preset.inputEq.enabled" @update:modelValue="store.setInputEqEnabled($event)" :animate="animationsEnabled">
               <div :class="{ 'opacity-50 pointer-events-none': !store.preset.inputEq.enabled }">
                 <EQSection :preset-name="store.presetName" eq-type="pref" />
@@ -152,26 +172,6 @@
                   @update:modelValue="store.setOutputGain(output.index, $event)"
                 />
               </div>
-            </CollapsibleSection>
-
-            <!-- Master volume is stored per preset, so each one plays at the
-                 level it was last left at -->
-            <CollapsibleSection title="Master Volume" :toggleable="false" :animate="animationsEnabled">
-              <RangeSlider
-                :model-value="store.preset.volume"
-                label="Master Volume"
-                :min="0"
-                :max="100"
-                :step="1"
-                unit="%"
-                :decimals="0"
-                @update:modelValue="store.setVolume($event)"
-              />
-              <p class="mt-3 text-sm text-vybes-text-secondary">
-                {{ store.preset.isCurrent
-                  ? 'The level playing now — this preset restores it whenever it is activated.'
-                  : 'The level this preset will play at once it is activated.' }}
-              </p>
             </CollapsibleSection>
           </div>
 
