@@ -127,6 +127,7 @@
           :output="output.index"
           :max-points="10"
           @change="store.saveOutputEq(output.index, $event)"
+          @point-change="store.applyOutputEqPoint(output.index, $event)"
         />
       </CollapsibleSection>
 

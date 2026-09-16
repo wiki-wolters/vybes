@@ -334,7 +334,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['change']);
+const emit = defineEmits(['change', 'point-change']);
 
 const MAX_POINTS = computed(() => props.maxPoints);
 const MIN_FREQ = 20;
@@ -528,6 +528,13 @@ const requestUpdate = (requestedFull = false) => {
     isInteracting.value = false;
   }, 500); // Wait for a bit after interaction stops
 
+  // A per-point write goes straight to the device, so `change` never fires and
+  // the parent's copy keeps the pre-edit values: stale enough to repaint over
+  // the edit on the next re-render, and to send the old gain back over it on
+  // the next full-set save. Tell the parent separately, and unthrottled -
+  // this is local state, not traffic.
+  if (!fullUpdate) emitSelectedPoint();
+
   if (throttleTimeout) {
     trailingCall = true; // Mark that a call is waiting
     if (fullUpdate) trailingFullUpdate = true; // Don't downgrade a full-set update
@@ -552,6 +559,18 @@ const requestUpdate = (requestedFull = false) => {
       requestUpdate(full);
     }
   }, THROTTLE_DELAY);
+};
+
+// The band the per-point path is about to write, for the parent's local copy
+const emitSelectedPoint = () => {
+  const point = localEqPoints[selectedPoint.value];
+  if (!point) return;
+  emit('point-change', {
+    id: selectedPoint.value,
+    freq: point.freq,
+    gain: point.gain,
+    q: point.q
+  });
 };
 
 const sendPointUpdateToAPI = async () => {

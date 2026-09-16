@@ -63,6 +63,7 @@
       :overlay-db="showNowCurve ? nowCurveDb : null"
       :overlay-label="showNowCurve ? `Now at ${currentVolume}%` : ''"
       @change="onChange"
+      @point-change="onPointChange"
       class="min-h-[400px] h-auto"
     />
 
@@ -159,6 +160,16 @@ function onChange(points) {
   } else {
     store.saveInputEq(points);
   }
+}
+
+/*
+ * One band the graph has already written through the per-point endpoint. Only
+ * the reference curve takes that path - `gainsOnly` forces the loud anchor
+ * through the full-set save - so this only ever merges a reference band.
+ */
+function onPointChange(point) {
+  if (editing.value === 'loud') return;
+  store.applyInputEqPoint(point);
 }
 
 // ── What is playing right now ──────────────────────────

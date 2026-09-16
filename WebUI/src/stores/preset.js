@@ -225,6 +225,18 @@ export const usePresetStore = defineStore('preset', () => {
       'Failed to update output EQ');
   }
 
+  /**
+   * Merge one band the EQ editor has already written with its own per-point
+   * endpoint. Local only - the push has happened. Without it the store keeps
+   * the pre-edit band, repaints it over the edit, and sends it back to the
+   * device on the next full-set save.
+   */
+  function applyOutputEqPoint(index, point) {
+    const peq = preset.value?.outputs[index]?.peq;
+    if (!peq || point.id < 0 || point.id > peq.length) return;
+    peq[point.id] = { freq: point.freq, gain: point.gain, q: point.q };
+  }
+
   /** Non-destructive PEQ bypass: the stored points stay */
   function setOutputEqEnabled(index, eqEnabled) {
     setOutput(index, { eqEnabled });
@@ -302,6 +314,26 @@ export const usePresetStore = defineStore('preset', () => {
     }
     return push(() => apiClient.savePrefEqSet(presetName.value, points),
       'Failed to update EQ points');
+  }
+
+  /**
+   * Merge one reference band the EQ editor has already written with its own
+   * per-point endpoint - the input-EQ twin of applyOutputEqPoint. The loud
+   * anchor shares the band and keeps its own gain, the same rule
+   * saveInputEq and the device both follow.
+   */
+  function applyInputEqPoint(point) {
+    const reference = eqSet(EQ_SET_REFERENCE);
+    if (!reference || point.id < 0 || point.id > reference.points.length) return;
+    reference.points[point.id] = { freq: point.freq, gain: point.gain, q: point.q };
+    const loud = eqSet(EQ_SET_LOUD);
+    if (loud) {
+      loud.points[point.id] = {
+        freq: point.freq,
+        gain: loud.points[point.id]?.gain ?? 0,
+        q: point.q,
+      };
+    }
   }
 
   /** Write the loud anchor's gains (creating the anchor's set if needed) */
@@ -477,9 +509,9 @@ export const usePresetStore = defineStore('preset', () => {
     loadPreset, refresh, loadFirFiles, loadTemplates, clearError,
     setOutputDelay, setOutputGain, setOutputFir, setOutputMute,
     setOutputInvert, setOutputEnabled, setOutputLabel, setOutputSource,
-    setOutputFilter, saveOutputEq, setOutputEqEnabled,
+    setOutputFilter, saveOutputEq, applyOutputEqPoint, setOutputEqEnabled,
     setCrossoverFreq, setCrossoverEnabled,
-    setInputEqEnabled, saveInputEq, saveLoudGains, setEqAnchors,
+    setInputEqEnabled, saveInputEq, applyInputEqPoint, saveLoudGains, setEqAnchors,
     clearLoudAnchor, setLoudness, setDelaysEnabled, setFirEnabled,
     setVolume,
     handleLiveMessage,

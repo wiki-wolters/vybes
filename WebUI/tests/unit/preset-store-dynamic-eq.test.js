@@ -118,6 +118,44 @@ describe('preset store: loud anchor follows the reference bands', () => {
   })
 })
 
+describe('preset store: bands written through the per-point endpoint', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  // The graph PUTs single bands itself while a control is being worked, and
+  // only reconciles the full set on release - so an interaction with no
+  // release (a number input, a Ctrl+scroll) used to leave the store holding
+  // the pre-edit gain. Switching anchors then repainted the old value over
+  // the edit, and the next full-set save sent it back to the device.
+  it('merges the band the editor already wrote', () => {
+    const store = seedStore({ loudGains: [9, -7], loudVolume: 85 })
+    store.applyInputEqPoint({ id: 0, freq: 60, gain: 6, q: 0.7 })
+    expect(store.inputEqPoints.map((p) => p.gain)).toEqual([6, -3])
+  })
+
+  it('keeps the loud anchor mirrored, gains untouched', () => {
+    const store = seedStore({ loudGains: [9, -7], loudVolume: 85 })
+    store.applyInputEqPoint({ id: 1, freq: 1200, gain: -5, q: 4 })
+    const loud = store.preset.inputEq.sets.find((s) => s.spl === 1)
+    expect(loud.points[1]).toEqual({ freq: 1200, gain: -7, q: 4 })
+  })
+
+  it('ignores a band index that would leave a gap', () => {
+    const store = seedStore()
+    store.applyInputEqPoint({ id: 5, freq: 300, gain: 2, q: 1 })
+    expect(store.inputEqPoints).toHaveLength(2)
+  })
+
+  it('merges an output band without disturbing its neighbours', () => {
+    const store = seedStore()
+    store.preset.outputs = [{ peq: [{ freq: 100, gain: 0, q: 1 }, { freq: 900, gain: 2, q: 3 }] }]
+    store.applyOutputEqPoint(0, { id: 0, freq: 120, gain: -4, q: 2 })
+    expect(store.preset.outputs[0].peq).toEqual([
+      { freq: 120, gain: -4, q: 2 },
+      { freq: 900, gain: 2, q: 3 },
+    ])
+  })
+})
+
 describe('preset store: dynamic EQ live updates', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
