@@ -33,9 +33,14 @@ static int8_t sweepOrder[NUM_OUTPUTS * SWEEP_MAX_PASSES]; // ascending, repeated
 static int    sweepChirps = 0;
 
 // The active session's own schedule, so probeLoop()'s slot arithmetic works
-// for either kind without hardcoding the delay probe's fixed constants.
+// for either kind without hardcoding the delay probe's fixed constants. The
+// chirp length is part of that: the solo has to switch inside the SILENCE
+// between chirps, and where that silence sits depends on chirp vs spacing
+// (the sweep's chirp fills three quarters of its spacing, the delay probe's
+// only a third).
 static uint32_t activePreRoll = PROBE_PRE_ROLL_SAMPLES;
 static uint32_t activeSpacing = PROBE_SPACING_SAMPLES;
+static uint32_t activeChirpSamples = PROBE_CHIRP_SAMPLES;
 static int      activeChirps = 0;
 
 bool probeIsActive() {
@@ -135,6 +140,7 @@ void startDelayProbe(int mask, float levelPercent) {
   sweepMode = false;
   activePreRoll = PROBE_PRE_ROLL_SAMPLES;
   activeSpacing = PROBE_SPACING_SAMPLES;
+  activeChirpSamples = PROBE_CHIRP_SAMPLES;
   activeChirps = probeChirps;
 
   AudioNoInterrupts();
@@ -211,6 +217,7 @@ void startSweepProbe(int mask, float levelPercent, double f0Hz, double f1Hz,
   sweepMode = true;
   activePreRoll = preRoll;
   activeSpacing = spacing;
+  activeChirpSamples = chirpSamples;
   activeChirps = sweepChirps;
 
   AudioNoInterrupts();
@@ -242,10 +249,13 @@ void handleStartSweepProbe(const String& command, String* args, int argCount, Ou
 }
 
 // Track the chirp schedule from loop(): switch the soloed output at the
-// midpoint of each inter-chirp gap. Timing here is deliberately
-// non-critical; only the chirps themselves are sample-exact, and they live
-// in ProbeSource. Works for either kind of session via the active
-// preRoll/spacing/chirps captured at start time.
+// midpoint of each inter-chirp gap - i.e. half a GAP before the next chirp
+// starts, never half a SPACING, which for the sweep (chirp 131072, spacing
+// 197222) lands 75% of the way INTO the chirp that is still playing and
+// hands its top octaves to the next output in the order. Timing here is
+// deliberately non-critical; only the chirps themselves are sample-exact,
+// and they live in ProbeSource. Works for either kind of session via the
+// active preRoll/spacing/chirp/chirps captured at start time.
 void probeLoop() {
   if (!probeActive) return;
   if (probeSource.isFinished()) {
@@ -253,9 +263,11 @@ void probeLoop() {
     return;
   }
   uint32_t s = probeSource.samplesElapsed();
+  // Both starters guarantee spacing > chirpSamples, so this is the half-gap.
+  const uint32_t halfGap = (activeSpacing - activeChirpSamples) / 2;
   int slot = 0;
-  if (s + activeSpacing / 2 >= activePreRoll) {
-    slot = (int)((s + activeSpacing / 2 - activePreRoll) / activeSpacing);
+  if (s + halfGap >= activePreRoll) {
+    slot = (int)((s + halfGap - activePreRoll) / activeSpacing);
   }
   if (slot >= activeChirps) slot = activeChirps - 1;
   if (slot != probeLastSlot) {
