@@ -126,6 +126,12 @@
         Gated magnitude and excess phase, one output at a time. Reflections after the gate
         window don't show up here by design (quasi-anechoic time-gating).
       </p>
+      <p class="text-sm text-vybes-text-secondary mb-2">
+        Distortion comes free with a swept measurement: each harmonic order lands ahead of
+        the impulse in the deconvolution, so the charts below are the same capture, read
+        earlier. They include the phone microphone's own distortion, and anything sitting
+        on the dashed floor is below what this measurement can see.
+      </p>
       <p class="text-xs text-vybes-text-secondary mb-4">
         Drift: {{ measureResult.driftPpm.toFixed(1) }} ppm (confidence {{ (measureResult.driftConfidence * 100).toFixed(0) }}%)
       </p>
@@ -144,6 +150,9 @@
           check this output's crossover and routing.
         </p>
         <FirResponseChart :measurement="row.measurement" :band="row.band" />
+        <div v-if="row.harmonics" class="mt-4">
+          <FirDistortionChart :harmonics="row.harmonics" :band="row.band" />
+        </div>
       </div>
 
       <div class="flex justify-end mt-4">
@@ -292,6 +301,7 @@ import InputGroup from '../components/shared/InputGroup.vue';
 import FirPoolBar from '../components/shared/FirPoolBar.vue';
 import Loading from '../components/shared/Loading.vue';
 import FirResponseChart from '../components/fir-wizard/FirResponseChart.vue';
+import FirDistortionChart from '../components/fir-wizard/FirDistortionChart.vue';
 import {
   DEVICE_SAMPLE_RATE,
   planWizardTapBudget,
@@ -548,6 +558,7 @@ const reviewRows = computed(() => {
     lowSnr: o.snrDb < LOW_SNR_DB,
     contradiction: passbandContradiction(o.measurement, passbandByOutput.get(o.output) ?? { fLo: 20, fHi: 20000 }),
     band: passbandByOutput.get(o.output),
+    harmonics: o.harmonics,
   }));
 });
 

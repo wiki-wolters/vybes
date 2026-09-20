@@ -81,6 +81,11 @@ export function generateSweep(sampleRate, schedule) {
 // response starting at that same instant.
 const DECONV_REG_ALPHA = 1e-6;
 
+// How much negative time deconvolve() hands back for harmonic analysis.
+// The 5th order sits 692ms ahead of the linear impulse for the wizard's
+// chirp; 1.5s leaves room for its own gate window and for longer chirps.
+const PRE_IR_SECONDS = 1.5;
+
 /**
  * Deconvolve one capture segment against the reference sweep, returning a
  * linear impulse response. Zero-time convention: index `zeroIndex` of the
@@ -124,12 +129,42 @@ export function deconvolve(segment, reference, sampleRate) {
   fft(outRe, outIm, true);
 
   // Keep the causal side plus a little headroom; the wrapped negative-time
-  // tail lives near the far end of `n` and is dropped here rather than
-  // exposed as if it were part of the causal response.
+  // tail lives near the far end of `n` and is never folded into `ir`, which
+  // would present it as part of the causal response.
   const keep = Math.min(n, segment.length);
   const ir = new Float32Array(keep);
   for (let i = 0; i < keep; i++) ir[i] = outRe[i];
-  return { ir, zeroIndex: 0 };
+
+  // That negative-time region is not noise: an exponential sweep parks each
+  // harmonic distortion order there as its own impulse response, a fixed
+  // distance ahead of the linear one (see harmonicOffsetSeconds). Return it
+  // separately, time-ordered and ending at t = -1, so harmonicResponse can
+  // read the packets without anything mistaking them for causal response.
+  // Capped at PRE_IR_SECONDS: everything past the 5th order is out of reach
+  // of a phone mic's own distortion floor anyway, and the cap keeps three
+  // outputs x two passes of these arrays to a few MB.
+  const preLen = Math.max(0, Math.min(n - keep, Math.round(PRE_IR_SECONDS * sampleRate)));
+  const preIr = new Float32Array(preLen);
+  for (let i = 0; i < preLen; i++) preIr[i] = outRe[n - preLen + i];
+  return { ir, zeroIndex: 0, preIr };
+}
+
+/**
+ * Where the k-th harmonic's impulse response sits relative to the linear
+ * one in an exponential-sweep deconvolution: BEFORE it, by
+ * T*ln(k)/ln(f1/f0) seconds (Farina). A log sweep spends the same time in
+ * every octave, so the k-th harmonic of the instantaneous frequency was
+ * excited exactly that much earlier. For the wizard's 2.97s 20Hz-20kHz
+ * chirp: 298ms (2nd), 473ms (3rd), 596ms (4th), 692ms (5th).
+ *
+ * @param {number} order  harmonic order k >= 2
+ * @param {number} sweepSeconds  chirp length T (device time)
+ * @param {number} f0
+ * @param {number} f1
+ * @returns {number} seconds ahead of the linear impulse
+ */
+export function harmonicOffsetSeconds(order, sweepSeconds, f0, f1) {
+  return (sweepSeconds * Math.log(order)) / Math.log(f1 / f0);
 }
 
 /**
@@ -587,4 +622,138 @@ export function smoothDb(magDb, freqs, fracOctave) {
     out[i] = sumWeight > 0 ? 10 * Math.log10(sumPow / sumWeight) : magDb[i];
   }
   return out;
+}
+
+/**
+ * Harmonic distortion of a swept measurement, read off the packets the
+ * deconvolution leaves at negative time (deconvolve's `preIr`).
+ *
+ * Each order is measured exactly the way gatedResponse measures the linear
+ * response - a raised-cosine window centred on the packet, `cycles` periods
+ * of the analysis frequency wide, evaluated with a Goertzel at that
+ * frequency. Both are impulse responses, so a centred window contributes
+ * unity gain at its centre and the window length sets only how much of the
+ * room comes in, not the scale: the harmonic-to-linear magnitude ratio is a
+ * true amplitude ratio, and the frequency-dependent gate keeps each packet's
+ * window far shorter than the spacing between packets.
+ *
+ * Reported against the FUNDAMENTAL frequency: relDb[i] is the level of the
+ * k-th harmonic PRODUCED BY a fundamental at freqs[i], relative to the
+ * output at that fundamental. A driver breaking up at 1.2kHz shows as a
+ * bump at 1.2kHz in order 3, radiating at 3.6kHz.
+ *
+ * Two honest limits, both of which `floorDb` exists to expose: the phone's
+ * own microphone distorts too and nothing here can separate that from the
+ * speaker's, and each packet sits on the decaying tails of the orders
+ * behind it. Readings within a few dB of floorDb mean "below what this
+ * measurement can see", not "clean".
+ *
+ * @param {Float32Array} ir      causal IR from deconvolve
+ * @param {Float32Array} preIr   negative-time region from deconvolve
+ * @param {number} sampleRate    capture rate, Hz
+ * @param {{fLo:number, fHi:number, f0:number, f1:number, sweepSeconds:number,
+ *          orders?:number[], pointsPerOctave?:number, cycles?:number}} opts
+ *   f0/f1/sweepSeconds describe the chirp (schedule.f0/f1, chirpSamples/deviceRate)
+ * @returns {{freqs: Float64Array, orders: Array<{order:number, relDb:Float64Array}>,
+ *            thdDb: Float64Array, floorDb: Float64Array}}
+ *   relDb/thdDb/floorDb are dB relative to the fundamental; NaN where the
+ *   harmonic lands above Nyquist or its packet falls outside `preIr`.
+ */
+export function harmonicResponse(ir, preIr, sampleRate, opts) {
+  const {
+    fLo, fHi, f0, f1, sweepSeconds,
+    orders = [2, 3, 4, 5],
+    pointsPerOctave = 12,
+    cycles = 5,
+  } = opts;
+
+  // One timeline with negative time in front, so every packet is an index.
+  const zero = preIr ? preIr.length : 0;
+  const line = new Float64Array(zero + ir.length);
+  if (preIr) line.set(preIr, 0);
+  line.set(ir, zero);
+
+  let peakIndex = zero;
+  let peakVal = 0;
+  for (let i = zero; i < line.length; i++) {
+    if (Math.abs(line[i]) > peakVal) { peakVal = Math.abs(line[i]); peakIndex = i; }
+  }
+
+  const nyquist = sampleRate / 2;
+  const topFundamental = Math.min(fHi, nyquist / Math.min(...orders));
+  const freqs = [];
+  const step = Math.pow(2, 1 / pointsPerOctave);
+  for (let f = fLo; f <= topFundamental * 1.0001; f *= step) freqs.push(f);
+  const freqArr = Float64Array.from(freqs);
+
+  const offsets = orders.map((k) => harmonicOffsetSeconds(k, sweepSeconds, f0, f1) * sampleRate);
+  const maxOffset = Math.max(...offsets);
+
+  // Magnitude of `line` at `freq`, gated on `centre`. halfWidth is clamped
+  // to `maxHalf` so a low-frequency window can never reach the neighbouring
+  // packet (the clamp only bites in the bottom octaves, where the packets
+  // are closest together relative to the gate).
+  const magAt = (centre, freq, maxHalf) => {
+    const halfWidth = Math.min(Math.max(4, (cycles / freq) * sampleRate / 2), maxHalf);
+    if (centre - halfWidth < 0 || centre + halfWidth > line.length - 1) return NaN;
+    const { window, start } = taperedWindow(line, centre, halfWidth);
+    const { re, im } = goertzelAt(window, start, centre, freq, sampleRate);
+    return Math.hypot(re, im);
+  };
+
+  // Noise/contamination floor: the same measurement taken further back than
+  // every packet, where only the capture's own noise and whatever the
+  // previous slot left behind can live.
+  const floorCentre = peakIndex - maxOffset * 1.35;
+
+  const relByOrder = orders.map(() => new Float64Array(freqArr.length).fill(NaN));
+  const thdDb = new Float64Array(freqArr.length).fill(NaN);
+  const floorDb = new Float64Array(freqArr.length).fill(NaN);
+
+  for (let i = 0; i < freqArr.length; i++) {
+    const f = freqArr[i];
+    // The linear reference keeps its own natural gate - no neighbour to hit
+    // on the causal side, so only the array bound clamps it.
+    const linMag = magAt(peakIndex, f, peakIndex);
+    if (!(linMag > 0)) continue;
+
+    let sumPower = 0;
+    let anyOrder = false;
+    for (let o = 0; o < orders.length; o++) {
+      const k = orders[o];
+      const fh = k * f;
+      if (fh > nyquist * 0.95) continue;
+      const centre = peakIndex - offsets[o];
+      // Nearest neighbouring packet on either side (the linear impulse
+      // counts as the neighbour of the lowest order).
+      let nearest = Math.abs(offsets[o]);
+      for (let j = 0; j < offsets.length; j++) {
+        if (j !== o) nearest = Math.min(nearest, Math.abs(offsets[o] - offsets[j]));
+      }
+      const mag = magAt(centre, fh, nearest * 0.4);
+      if (!(mag > 0)) continue;
+      const rel = 20 * Math.log10(mag / linMag);
+      relByOrder[o][i] = rel;
+      sumPower += Math.pow(10, rel / 10);
+      anyOrder = true;
+
+      if (!Number.isFinite(floorDb[i])) {
+        const fl = magAt(floorCentre, fh, nearest * 0.4);
+        if (fl > 0) floorDb[i] = 20 * Math.log10(fl / linMag);
+      }
+    }
+    if (anyOrder) thdDb[i] = 10 * Math.log10(sumPower);
+  }
+
+  return {
+    freqs: freqArr,
+    orders: orders.map((order, o) => ({ order, relDb: relByOrder[o] })),
+    thdDb,
+    floorDb,
+  };
+}
+
+/** dB relative to the fundamental -> percent, the way THD is usually quoted. */
+export function relDbToPercent(db) {
+  return Number.isFinite(db) ? 100 * Math.pow(10, db / 20) : NaN;
 }

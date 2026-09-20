@@ -339,8 +339,13 @@ describe('end-to-end: synthetic two-output sweep session', () => {
                                 // session "starts" - exercises the anchor
                                 // search rather than trivially finding it at t=0
 
-  function buildSession() {
-    const ref = generateSweep(RATE, SCHEDULE);
+  // `distortA` (a2 coefficient) makes output 0's chain clip softly before
+  // the room gets it - x + a2*x^2, so the 2nd harmonic comes out at a2/2 of
+  // the fundamental. Default 0 = the linear session the other tests use.
+  function buildSession(distortA = 0) {
+    const clean = generateSweep(RATE, SCHEDULE);
+    const ref = clean;
+    const drive = distortA === 0 ? clean : Float32Array.from(clean, (x) => x + distortA * x * x);
     const systemA = makeSystemIr(RATE, {
       delayS: 0.004,
       band: { lo: 100, hi: 16000 },
@@ -351,7 +356,7 @@ describe('end-to-end: synthetic two-output sweep session', () => {
       band: { lo: 100, hi: 16000 },
       resonances: [{ freq: 2000, q: 2, gainDb: -4 }],
     });
-    const wetA = convolve(ref, systemA);
+    const wetA = convolve(drive, systemA);
     const wetB = convolve(ref, systemB);
     const nSlots = ORDER.length * SCHEDULE.nPasses;
     const tail = Math.max(wetA.length, wetB.length);
@@ -373,6 +378,43 @@ describe('end-to-end: synthetic two-output sweep session', () => {
 
     return { session, systemA, systemB };
   }
+
+  it('reports harmonic distortion per output, and pins it to the output that has it', () => {
+    const A2 = 0.03; // 2nd harmonic at a2/2 = 1.5% = -36.5dB of the fundamental
+    const { session } = buildSession(A2);
+
+    const result = processSweepCapture(session, RATE, SCHEDULE, ORDER, {
+      bandForOutput: () => ({ fLo: 300, fHi: 8000 }),
+    });
+    const byOutput = new Map(result.outputs.map((o) => [o.output, o]));
+    const dirty = byOutput.get(0).harmonics;
+    const clean = byOutput.get(1).harmonics;
+
+    // Median 2nd-order reading over a span where both the fundamental and
+    // its harmonic sit inside the harness system's flat band.
+    const medianH2 = (h) => {
+      const row = h.orders.find((o) => o.order === 2);
+      const vals = [];
+      for (let i = 0; i < h.freqs.length; i++) {
+        if (h.freqs[i] >= 3000 && h.freqs[i] <= 5000 && Number.isFinite(row.relDb[i])) {
+          vals.push(row.relDb[i]);
+        }
+      }
+      vals.sort((a, b) => a - b);
+      return vals[Math.floor(vals.length / 2)];
+    };
+
+    // Not exact, and shouldn't be: what a mic hears at 2f has passed through
+    // the system's own response at 2f, while the fundamental passed through
+    // it at f. The harness's band rolls off toward 16kHz, which costs the
+    // 6-10kHz harmonics about 0.7dB here. That is the real quantity - a
+    // speaker's distortion is what it radiates, not what its motor generated.
+    expect(Math.abs(medianH2(dirty) - 20 * Math.log10(A2 / 2))).toBeLessThan(1.5);
+    // The other output shared the room, the capture and the noise floor but
+    // not the nonlinearity - the reading has to follow the chain, not the
+    // session.
+    expect(medianH2(dirty) - medianH2(clean)).toBeGreaterThan(20);
+  });
 
   it('recovers per-output magnitude shape and the inter-output delay', () => {
     const { session, systemA, systemB } = buildSession();

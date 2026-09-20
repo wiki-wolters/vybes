@@ -23,6 +23,7 @@ import {
   estimateDrift,
   resampleByPpm,
   gatedResponse,
+  harmonicResponse,
   smoothDb,
 } from './sweep-math.js';
 import {
@@ -280,6 +281,44 @@ function trimToAnchor(capture, offsetSamples) {
   return out;
 }
 
+// Distortion curves are smooth and each point costs a Goertzel over its
+// own window, so they get a coarser grid than the correction measurement.
+const HARMONIC_POINTS_PER_OCTAVE = 12;
+
+// Average harmonicResponse results across passes in the power domain, the
+// same way averageIrsAcrossPasses treats magnitude. NaN means "this order
+// wasn't measurable here" (above Nyquist, or its packet fell outside the
+// captured pre-roll) and stays NaN rather than being averaged as if it were
+// a zero reading; a point measurable on only some passes averages over the
+// passes that had it.
+function averageHarmonicsAcrossPasses(passes) {
+  if (passes.length === 0) return null;
+  if (passes.length === 1) return passes[0];
+  const first = passes[0];
+  const meanDb = (pick) => {
+    const out = new Float64Array(first.freqs.length).fill(NaN);
+    for (let i = 0; i < out.length; i++) {
+      let sum = 0;
+      let n = 0;
+      for (const p of passes) {
+        const v = pick(p)[i];
+        if (Number.isFinite(v)) { sum += Math.pow(10, v / 10); n++; }
+      }
+      if (n > 0) out[i] = 10 * Math.log10(sum / n);
+    }
+    return out;
+  };
+  return {
+    freqs: first.freqs,
+    orders: first.orders.map((row, o) => ({
+      order: row.order,
+      relDb: meanDb((p) => p.orders[o].relDb),
+    })),
+    thdDb: meanDb((p) => p.thdDb),
+    floorDb: meanDb((p) => p.floorDb),
+  };
+}
+
 // Average several equal-length deconvolved IRs into one: magnitude
 // averaged in the power domain across passes (reduces noise the way
 // signal-averaging normally does), phase taken from the first pass only
@@ -404,19 +443,33 @@ export function processSweepCapture(capture, sampleRate, schedule, order, opts =
     ? resampleByPpm(trimmedForExtraction, -ppm)
     : trimmedForExtraction;
 
+  const sweepSeconds = schedule.chirpSamples / schedule.deviceRate;
+
   const outputs = order.map((output, pos) => {
     const irs = [];
     const passArrivals = [];
+    const passHarmonics = [];
+    const band = bandForOutput(output);
     for (let pass = 0; pass < schedule.nPasses; pass++) {
       const slot = pass * order.length + pos;
       const segment = extractSegment(corrected, sampleRate, schedule, slot, 0);
-      const { ir } = deconvolve(segment, ref, sampleRate);
+      const { ir, preIr } = deconvolve(segment, ref, sampleRate);
       irs.push(ir);
       passArrivals.push(argmaxAbsFrom(ir, 0));
+      // Harmonic packets live at negative time, so they have to be read per
+      // pass, before averageIrsAcrossPasses discards everything but the
+      // causal side.
+      passHarmonics.push(harmonicResponse(ir, preIr, sampleRate, {
+        ...band,
+        f0: schedule.f0,
+        f1: schedule.f1,
+        sweepSeconds,
+        pointsPerOctave: HARMONIC_POINTS_PER_OCTAVE,
+        cycles,
+      }));
     }
 
     const merged = averageIrsAcrossPasses(irs);
-    const band = bandForOutput(output);
     const measurement = gatedResponse(merged, 0, sampleRate, { ...band, pointsPerOctave, cycles });
 
     const spreadSamples = passArrivals.length > 1
@@ -432,6 +485,7 @@ export function processSweepCapture(capture, sampleRate, schedule, order, opts =
       delayUs: (measurement.peakIndex / sampleRate) * 1e6,
       snrDb: irSnrDb(merged, measurement.peakIndex, sampleRate),
       consistencyUs: (spreadSamples / sampleRate) * 1e6,
+      harmonics: averageHarmonicsAcrossPasses(passHarmonics),
     };
   });
 
