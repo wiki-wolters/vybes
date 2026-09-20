@@ -596,8 +596,8 @@ static bool slewToward(float& current, float target, float alpha) {
 // The gain an output's amp should settle at: output gain (dB) * master
 // volume, negated for invert, zero when muted. Smoothing rides the whole
 // product, so volume, gain, mute and invert changes are all click-free.
-// While a delay probe runs, the soloed output gets the fixed probe level
-// instead (see the probe state block above) and every other output is
+// While a delay probe runs, the soloed output gets the probe level times
+// its own trim (see the probe state block above) and every other output is
 // silenced; normal targets return through the same ramp when it ends.
 static float outputTargetGain(int ch, const OutputState& o) {
   // A config sync applies hundreds of commands one at a time, so until it
@@ -609,7 +609,17 @@ static float outputTargetGain(int ch, const OutputState& o) {
   // release click-free.
   if (audioHold.held()) return 0.0f;
   if (probeIsActive()) {
-    float gain = probeGainForOutput(ch);
+    // The probe level stands in for master volume and mute (neither may
+    // silence a measurement) but NOT for the output's own trim: sweeping a
+    // -6dB sub at the full probe level drives it harder than anything it
+    // sees in use, which is how the auto-FIR sweep made the sub distort.
+    // Safe for the result: the designer re-centers every output's curve on
+    // its own in-band median and reads arrival time from the correlation
+    // peak, so the trim moves only the measured level and its SNR (which
+    // the wizard already reports per output), never the designed kernel.
+    // Clamped because gainDb reaches +10dB.
+    float gain = probeGainForOutput(ch) * powf(10.0f, o.gainDb / 20.0f);
+    if (gain > 1.0f) gain = 1.0f;
     return o.invert ? -gain : gain;
   }
   // Per-output EQ measurement: everything but the soloed output is silenced;
